@@ -142,14 +142,6 @@ async fn load(path: &Path, payload_override: Option<&Path>) -> Result<Loaded, St
     let id = manifest["id"].as_str().unwrap_or("plugin").to_string();
     let language = manifest["language"].as_str().unwrap_or_default().to_ascii_lowercase();
     let payload_uri = manifest["payloadURI"].as_str().unwrap_or_default().trim().to_string();
-    let mut preferences = HashMap::new();
-    if let Some(fields) = manifest["userConfig"]["fields"].as_array() {
-        for field in fields {
-            if let (Some(name), Some(default)) = (field["name"].as_str(), field["default"].as_str()) {
-                preferences.insert(name.to_string(), default.to_string());
-            }
-        }
-    }
 
     let (source, origin) = if let Some(file) = payload_override {
         let source = std::fs::read_to_string(file).map_err(|e| format!("{}: {}", file.display(), e))?;
@@ -186,6 +178,10 @@ async fn load(path: &Path, payload_override: Option<&Path>) -> Result<Loaded, St
         "javascript" => false,
         _ => is_typescript(&origin) || is_typescript(&payload_uri),
     };
+    // The manifest's settings at their defaults, as the app runs a plugin nobody configured.
+    let config = anilili_lib::plugins::userconfig::UserConfig::from_manifest(&manifest);
+    let (source, preferences) = anilili_lib::plugins::userconfig::apply(&source, config.as_ref(), None)
+        .map_err(|e| e.message().to_string())?;
     Ok(Loaded {
         id,
         source,

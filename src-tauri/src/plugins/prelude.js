@@ -715,7 +715,7 @@
       contentType: headers['Content-Type'] || '',
       contentLength: bytes.length,
       text() {
-        if (text === undefined) text = host.utf8Decode(bytes);
+        if (text === undefined) text = typeof meta.text === 'string' ? meta.text : host.utf8Decode(bytes);
         return text;
       },
       json() {
@@ -1155,6 +1155,30 @@
     length: () => store.size,
     clear: () => store.clear(),
   });
+
+  // Seanime's title helpers for search queries, implemented by the host.
+  const scannerUtils = {};
+  for (const name of [
+    'normalizeTitle',
+    'extractPartNumber',
+    'extractSeasonNumber',
+    'extractYear',
+    'compareTitles',
+    'findBestMatch',
+    'getSignificantTokens',
+    'buildSearchQuery',
+    'buildAdvancedQuery',
+    'sanitizeQuery',
+    'buildSeasonQuery',
+    'buildPartQuery',
+    'buildSmartSearchTitles',
+  ]) {
+    scannerUtils[name] = function () {
+      const args = Array.prototype.map.call(arguments, (value) => (value === undefined ? null : value));
+      return JSON.parse(host.scannerUtils(name, JSON.stringify(args)));
+    };
+  }
+  define('$scannerUtils', Object.freeze(scannerUtils));
 
   const preferences = config.preferences || {};
   define('$getUserPreference', function $getUserPreference(key) {

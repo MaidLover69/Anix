@@ -133,6 +133,12 @@ fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }
 
+const MOVIE_BYTES: usize = 300_000;
+
+fn movie_bytes() -> Vec<u8> {
+    (0..MOVIE_BYTES as u32).map(|i| (i.wrapping_mul(31) % 253) as u8).collect()
+}
+
 /// A stand-in for a provider CDN: refuses requests without the provider's Referer.
 fn start_fake_cdn() -> (Arc<Server>, u16) {
     let server = Arc::new(Server::http("127.0.0.1:0").unwrap());
@@ -195,6 +201,33 @@ fn start_fake_cdn() -> (Arc<Server>, u16) {
                             );
                         }
                     }
+                }
+                "/show/movie.mp4" => {
+                    // A file host as the Italian CDNs behave: ranges of every form, a 206 that
+                    // does not repeat Accept-Ranges, HEAD with the full length.
+                    let data = movie_bytes();
+                    let total = data.len();
+                    let range = get("Range").and_then(|r| {
+                        let (start, end) = r.strip_prefix("bytes=")?.split_once('-')?;
+                        match (start.parse::<usize>().ok(), end.parse::<usize>().ok()) {
+                            (Some(start), Some(end)) => Some((start, end.min(total - 1))),
+                            (Some(start), None) => Some((start, total - 1)),
+                            (None, Some(suffix)) => Some((total - suffix.min(total), total - 1)),
+                            (None, None) => None,
+                        }
+                    });
+                    let response = match range {
+                        Some((start, end)) => Response::from_data(data[start..=end].to_vec())
+                            .with_status_code(StatusCode(206))
+                            .with_header(header("Content-Range", &format!("bytes {}-{}/{}", start, end, total))),
+                        None => Response::from_data(data).with_header(header("Accept-Ranges", "bytes")),
+                    };
+                    let _ = request.respond(
+                        response
+                            .with_header(header("Content-Type", "video/mp4"))
+                            .with_header(header("ETag", "\"movie\""))
+                            .with_chunked_threshold(usize::MAX),
+                    );
                 }
                 "/show/sub.srt" => {
                     let _ = request.respond(Response::from_string(
@@ -285,4 +318,63 @@ async fn test_stream_proxy_end_to_end() {
     assert_eq!(missing.status(), 404);
     let unreachable = client.get(via("proxy", "http://127.0.0.1:1/x.m3u8", provider)).send().await.unwrap();
     assert_eq!(unreachable.status(), 502);
+}
+
+/// A media element needs the length of what it is sent: without it WebKit cannot seek and
+/// refuses a file whose index sits at its end.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_stream_proxy_serves_files_with_their_length_for_every_kind_of_range() {
+    let (_cdn, port) = start_fake_cdn();
+    let base = anilili_lib::stream_proxy::start().expect("proxy starts");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut url = Url::parse(&format!("{}/proxy", base)).unwrap();
+    url.query_pairs_mut()
+        .append_pair("url", &format!("http://127.0.0.1:{}/show/movie.mp4", port))
+        .append_pair("referer", "https://provider.example/");
+    let data = movie_bytes();
+    let total = data.len();
+
+    let header_of = |response: &reqwest::Response, name: &str| {
+        response.headers().get(name).map(|v| v.to_str().unwrap().to_string())
+    };
+
+    let plain = client.get(url.clone()).send().await.unwrap();
+    assert_eq!(plain.status(), 200);
+    assert_eq!(header_of(&plain, "content-length"), Some(total.to_string()));
+    assert_eq!(header_of(&plain, "transfer-encoding"), None);
+    assert_eq!(header_of(&plain, "accept-ranges").as_deref(), Some("bytes"));
+    assert_eq!(header_of(&plain, "content-type").as_deref(), Some("video/mp4"));
+    assert_eq!(header_of(&plain, "etag").as_deref(), Some("\"movie\""));
+    assert_eq!(plain.bytes().await.unwrap().as_ref(), data.as_slice());
+
+    // (Range sent, first byte, last byte) for an open-ended, a mid-file and a suffix range.
+    let cases = [
+        ("bytes=0-", 0, total - 1),
+        ("bytes=100000-249999", 100_000, 249_999),
+        ("bytes=250000-", 250_000, total - 1),
+        ("bytes=-4096", total - 4096, total - 1),
+    ];
+    for (range, first, last) in cases {
+        let ranged = client.get(url.clone()).header("Range", range).send().await.unwrap();
+        assert_eq!(ranged.status(), 206, "{}", range);
+        assert_eq!(
+            header_of(&ranged, "content-range"),
+            Some(format!("bytes {}-{}/{}", first, last, total)),
+            "{}",
+            range
+        );
+        assert_eq!(header_of(&ranged, "content-length"), Some((last - first + 1).to_string()), "{}", range);
+        assert_eq!(header_of(&ranged, "transfer-encoding"), None, "{}", range);
+        // The host did not repeat Accept-Ranges on its partial answer; the proxy states it.
+        assert_eq!(header_of(&ranged, "accept-ranges").as_deref(), Some("bytes"), "{}", range);
+        assert_eq!(ranged.bytes().await.unwrap().as_ref(), &data[first..=last], "{}", range);
+    }
+
+    let head = client.head(url.clone()).send().await.unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(header_of(&head, "content-length"), Some(total.to_string()));
+    assert_eq!(header_of(&head, "transfer-encoding"), None);
+    assert_eq!(header_of(&head, "accept-ranges").as_deref(), Some("bytes"));
+    assert_eq!(header_of(&head, "content-type").as_deref(), Some("video/mp4"));
+    assert!(head.bytes().await.unwrap().is_empty());
 }

@@ -550,3 +550,212 @@ async fn a_site_that_refuses_the_browser_too_is_reported_as_needing_verification
         .to_string();
     assert!(blocked.contains("guarded: blocked by anti-bot check"), "{}", blocked);
 }
+
+// ---------------------------------------------------------------- plugin settings (userConfig)
+
+mod settings {
+    use super::*;
+    use anilili_lib::plugins::userconfig::{self, ConfigError, SavedConfig, UserConfig};
+    use std::collections::HashMap;
+
+    fn config(manifest: serde_json::Value) -> UserConfig {
+        UserConfig::from_manifest(&manifest).expect("a userConfig")
+    }
+
+    fn saved(version: i64, values: &[(&str, &str)]) -> SavedConfig {
+        SavedConfig {
+            version,
+            values: values.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    /// The rules of Seanime's `loadUserConfig`.
+    #[test]
+    fn placeholders_are_replaced_the_way_seanime_replaces_them() {
+        let manifest = json!({ "userConfig": { "version": 2, "requiresConfig": false, "fields": [
+            { "type": "text", "name": "domain", "label": "Domain", "default": "https://site.example" },
+            { "type": "select", "name": "server", "label": "Server", "default": "a",
+              "options": [{ "value": "a", "label": "Alpha" }, { "value": "b", "label": "Beta" }] },
+            { "type": "switch", "name": "dub", "label": "Dub", "default": "false" },
+            { "type": "text", "name": "blank", "label": "Blank" },
+            { "name": "count", "default": 3 },
+            { "label": "nameless" },
+        ] } });
+        let config = config(manifest);
+        assert_eq!(config.version, 2);
+        assert_eq!(config.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["domain", "server", "dub", "blank", "count"]);
+        assert_eq!(config.fields[1].options.len(), 2);
+        assert_eq!((config.fields[4].kind.as_str(), config.fields[4].default.as_str(), config.fields[4].label.as_str()), ("text", "3", "count"));
+
+        let payload = "const u = '{{domain}}/api/{{server}}'; const again = \"{{domain}}\"; const n = {{count}}; const d = {{dub}}; const b = '{{blank}}'; const other = '{{unknown}}';";
+
+        // Nothing saved, not required: the defaults, every occurrence, unknown names untouched.
+        let (code, values) = userconfig::apply(payload, Some(&config), None).unwrap();
+        assert_eq!(
+            code,
+            "const u = 'https://site.example/api/a'; const again = \"https://site.example\"; const n = 3; const d = false; const b = ''; const other = '{{unknown}}';"
+        );
+        assert_eq!(values["domain"], "https://site.example");
+        assert_eq!(values["blank"], "");
+        assert_eq!(values.len(), 5);
+
+        // Saved values win field by field; a field without one keeps its default.
+        let (code, values) =
+            userconfig::apply(payload, Some(&config), Some(&saved(2, &[("domain", "https://mirror.example"), ("dub", "true")]))).unwrap();
+        assert!(code.starts_with("const u = 'https://mirror.example/api/a'; const again = \"https://mirror.example\";"), "{}", code);
+        assert!(code.contains("const d = true;"));
+        assert_eq!((values["domain"].as_str(), values["server"].as_str()), ("https://mirror.example", "a"));
+
+        // The value goes in as it is, as in Seanime: no quoting or escaping of any kind.
+        let (code, _) = userconfig::apply("x = '{{domain}}'", Some(&config), Some(&saved(2, &[("domain", "a'b\\c\"d")]))).unwrap();
+        assert_eq!(code, "x = 'a'b\\c\"d'");
+        // Fields are replaced one after the other, so a value can name a later field.
+        let (code, _) = userconfig::apply("{{domain}}", Some(&config), Some(&saved(2, &[("domain", "{{server}}!")]))).unwrap();
+        assert_eq!(code, "a!");
+
+        // Values saved for another version of the configuration are not used.
+        assert_eq!(userconfig::apply(payload, Some(&config), Some(&saved(1, &[]))).unwrap_err(), ConfigError::Incompatible);
+
+        // A plugin that requires configuration does not run on defaults.
+        let mut required = config.clone();
+        required.requires_config = true;
+        assert_eq!(userconfig::apply(payload, Some(&required), None).unwrap_err(), ConfigError::Missing);
+        assert!(userconfig::apply(payload, Some(&required), Some(&saved(2, &[]))).is_ok());
+
+        // No userConfig: the code is left alone, braces and all.
+        let (code, values) = userconfig::apply(payload, None, None).unwrap();
+        assert_eq!(code, payload);
+        assert!(values.is_empty());
+        assert!(UserConfig::from_manifest(&json!({ "id": "x" })).is_none());
+
+        // What is saved for the user: known fields only, as text, for the current version.
+        let entered: HashMap<String, serde_json::Value> = HashMap::from([
+            ("domain".to_string(), json!("https://new.example")),
+            ("dub".to_string(), json!(true)),
+            ("count".to_string(), json!(12)),
+            ("server".to_string(), serde_json::Value::Null),
+            ("nonsense".to_string(), json!("x")),
+        ]);
+        assert_eq!(config.saved_from(&entered), saved(2, &[("domain", "https://new.example"), ("dub", "true"), ("count", "12")]));
+    }
+
+    const CONFIGURED_PLUGIN: &str = r#"
+class Provider {
+  getSettings() { return { episodeServers: ['{{mode}}-server', $getUserPreference('mode') + '-pref', String({{count}} + 1)], supportsDub: {{dub}} }; }
+  async search() { return []; }
+  async findEpisodes() { return []; }
+  async findEpisodeServer() { return null; }
+}
+"#;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn settings_are_stored_applied_and_reload_the_plugin() {
+        let version = Arc::new(AtomicUsize::new(1));
+        let served = version.clone();
+        let site = Site::start(move |request: &Req| match request.route() {
+            "/index.json" => Resp::json(json!([
+                { "id": "configured", "name": "Configured", "version": "1", "type": "onlinestream-provider", "language": "javascript",
+                  "payload": CONFIGURED_PLUGIN,
+                  "userConfig": { "version": served.load(Ordering::SeqCst), "requiresConfig": false, "fields": [
+                      { "type": "select", "name": "mode", "label": "Mode", "default": "a",
+                        "options": [{ "value": "a", "label": "Alpha" }, { "value": "b", "label": "Beta" }] },
+                      { "type": "text", "name": "count", "label": "Count", "default": "3" },
+                      { "type": "switch", "name": "dub", "label": "Dub", "default": "false" },
+                  ] } },
+                { "id": "needy", "name": "Needy", "version": "1", "type": "onlinestream-provider", "language": "javascript",
+                  "payload": "class Provider { getSettings() { return { episodeServers: ['{{where}}'], supportsDub: false }; } }",
+                  "userConfig": { "version": 1, "requiresConfig": true, "fields": [
+                      { "type": "text", "name": "where", "label": "Where", "default": "somewhere" } ] } },
+                { "id": "plain", "name": "Plain", "version": "1", "type": "onlinestream-provider", "language": "javascript",
+                  "payload": "class Provider { getSettings() { return { episodeServers: ['{{kept}}'], supportsDub: false }; } }" },
+            ])),
+            _ => Resp::status(404),
+        })
+        .await;
+        let dir = scratch_dir("settings");
+        let registry = open(&dir);
+        registry.add_repo(&site.url("/index.json")).await.unwrap();
+        let info = |registry: &PluginRegistry, id: &str| registry.list_plugins().into_iter().find(|p| p.id == id).unwrap();
+
+        // Installed with nothing saved: the defaults are in the code and behind $getUserPreference.
+        let configured = info(&registry, "configured");
+        assert_eq!((configured.status.as_str(), configured.configurable), ("ready", true));
+        assert_eq!(configured.servers, ["a-server", "a-pref", "4"]);
+        assert!(!configured.supports_dub);
+        // A plugin without settings keeps its braces and has nothing to configure.
+        let plain = info(&registry, "plain");
+        assert_eq!((plain.servers.as_slice(), plain.configurable), (&["{{kept}}".to_string()][..], false));
+        // One that requires settings waits for them.
+        let needy = info(&registry, "needy");
+        assert_eq!(needy.status, "error");
+        assert_eq!(needy.error.as_deref(), Some("This plugin has to be configured before it can be used."));
+        assert!(!registry.providers().iter().any(|p| p.name() == "needy"));
+
+        // What the settings form is given.
+        assert_eq!(
+            serde_json::to_value(registry.plugin_config("configured").unwrap()).unwrap(),
+            json!({
+                "fields": [
+                    { "name": "mode", "label": "Mode", "type": "select", "default": "a", "value": "a",
+                      "options": [{ "value": "a", "label": "Alpha" }, { "value": "b", "label": "Beta" }] },
+                    { "name": "count", "label": "Count", "type": "text", "default": "3", "value": "3" },
+                    { "name": "dub", "label": "Dub", "type": "switch", "default": "false", "value": "false" },
+                ],
+                "requires_config": false,
+                "configured": false,
+            })
+        );
+        assert_eq!(serde_json::to_value(registry.plugin_config("plain").unwrap()).unwrap(), json!({ "fields": [], "requires_config": false, "configured": false }));
+        assert!(registry.plugin_config("absent").is_err());
+
+        // Saving values starts the plugin again with them.
+        let changes = Arc::new(AtomicUsize::new(0));
+        let counter = changes.clone();
+        registry.set_notifier(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        let values = HashMap::from([("mode".to_string(), json!("b")), ("dub".to_string(), json!(true)), ("stray".to_string(), json!("x"))]);
+        registry.set_plugin_config("configured", &values).await.unwrap();
+        assert_eq!(changes.load(Ordering::SeqCst), 1);
+        let configured = info(&registry, "configured");
+        assert_eq!(configured.servers, ["b-server", "b-pref", "4"]);
+        assert!(configured.supports_dub);
+        let form = registry.plugin_config("configured").unwrap();
+        assert!(form.configured);
+        assert_eq!(form.fields.iter().map(|f| f.value.as_str()).collect::<Vec<_>>(), ["b", "3", "true"]);
+        // The provider the manager uses is the reloaded one.
+        let provider = registry.providers().into_iter().find(|p| p.name() == "configured").unwrap();
+        assert!(provider.supports_dub());
+
+        registry.set_plugin_config("needy", &HashMap::new()).await.unwrap();
+        let needy = info(&registry, "needy");
+        assert_eq!((needy.status.as_str(), needy.servers.as_slice()), ("ready", &["somewhere".to_string()][..]));
+        assert_eq!(registry.set_plugin_config("plain", &HashMap::new()).await.unwrap_err(), "This plugin has no settings.");
+        assert!(registry.set_plugin_config("absent", &HashMap::new()).await.is_err());
+
+        // The values survive a restart and a refresh of the repository.
+        let reopened = open(&dir);
+        reopened.load_all().await;
+        assert_eq!(info(&reopened, "configured").servers, ["b-server", "b-pref", "4"]);
+        reopened.refresh_repos().await;
+        assert_eq!(info(&reopened, "configured").servers, ["b-server", "b-pref", "4"]);
+        assert_eq!(reopened.plugin_config("configured").unwrap().fields[0].value, "b");
+
+        // The plugin's update changes its configuration version: the saved values are not used
+        // and the plugin waits until its settings are saved again.
+        version.store(2, Ordering::SeqCst);
+        reopened.refresh_repos().await;
+        let outdated = info(&reopened, "configured");
+        assert_eq!(outdated.status, "error");
+        assert_eq!(
+            outdated.error.as_deref(),
+            Some("This plugin's settings changed with its update; review and save them again.")
+        );
+        let form = reopened.plugin_config("configured").unwrap();
+        assert!(!form.configured);
+        assert_eq!(form.fields[0].value, "a");
+        reopened.set_plugin_config("configured", &HashMap::from([("mode".to_string(), json!("b"))])).await.unwrap();
+        assert_eq!(info(&reopened, "configured").servers, ["b-server", "b-pref", "4"]);
+        assert_eq!(info(&reopened, "configured").status, "ready");
+    }
+}

@@ -7,7 +7,7 @@
 ### *Native, Ultra-Fast Anime Streaming & Library Management for Linux*
 
 [![CI](https://github.com/MaidLover69/Anilili_Linux/actions/workflows/ci.yml/badge.svg)](https://github.com/MaidLover69/Anilili_Linux/actions)
-[![Release](https://img.shields.io/badge/Release-v1.0.2-blue.svg)](https://github.com/MaidLover69/Anilili_Linux/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.3-blue.svg)](https://github.com/MaidLover69/Anilili_Linux/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev)
@@ -112,29 +112,29 @@ Pre-compiled production packages are available on the [Releases](https://github.
 Bundles its own media plugins; release builds are produced in CI on Ubuntu 22.04:
 ```bash
 # Make executable
-chmod +x Anilili_1.0.2_amd64.AppImage
+chmod +x Anilili_1.0.3_amd64.AppImage
 
 # Launch Anilili
-./Anilili_1.0.2_amd64.AppImage
+./Anilili_1.0.3_amd64.AppImage
 
 # Note for Wayland users (Fedora/Niri/Sway/Hyprland) if EGL display error occurs:
-LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anilili_1.0.2_amd64.AppImage
+LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anilili_1.0.3_amd64.AppImage
 ```
 
 ### RPM (Fedora, RHEL, openSUSE)
 Native RPM package registered with your desktop environment and system menu:
 ```bash
 # Install via dnf
-sudo dnf install ./Anilili-1.0.2-1.x86_64.rpm
+sudo dnf install ./Anilili-1.0.3-1.x86_64.rpm
 
 # Or install via rpm
-sudo rpm -i Anilili-1.0.2-1.x86_64.rpm
+sudo rpm -i Anilili-1.0.3-1.x86_64.rpm
 ```
 
 ### DEB (Debian, Ubuntu, Linux Mint)
 Native Debian package:
 ```bash
-sudo apt install ./anilili_1.0.2_amd64.deb
+sudo apt install ./anilili_1.0.3_amd64.deb
 ```
 
 ---
@@ -266,7 +266,7 @@ Generated packages will be in:
 
 The repository includes GitHub Actions workflows under `.github/workflows/`:
 - **`ci.yml`**: Runs on every pull request and push to `main`. Executes TypeScript validation, Vite production build, Rust `cargo check`, and the complete test suite.
-- **`release.yml`**: Triggers on tag pushes (e.g. `v1.0.2`) or manual workflow dispatch. Compiles production packages across `.AppImage`, `.rpm`, and `.deb` and publishes them to GitHub Releases.
+- **`release.yml`**: Triggers on tag pushes (e.g. `v1.0.3`) or manual workflow dispatch. Compiles production packages across `.AppImage`, `.rpm`, and `.deb` and publishes them to GitHub Releases.
 
 ---
 

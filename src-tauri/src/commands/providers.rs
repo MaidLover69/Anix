@@ -317,29 +317,38 @@ pub struct SiteVerificationStatus {
     pub providers: Vec<String>,
 }
 
+/// The entries the frontend offers a "Verify" button for: each pending site with the keys of
+/// the providers it serves. `providers_of` names the providers of a site key.
+pub fn verification_entries(
+    pending: Vec<web_session::SiteVerification>,
+    providers_of: impl Fn(&str) -> Vec<String>,
+) -> Vec<SiteVerificationStatus> {
+    pending
+        .into_iter()
+        .map(|pending| SiteVerificationStatus {
+            providers: providers_of(&pending.site),
+            site: pending.site,
+            label: pending.label,
+            origin: pending.origin,
+        })
+        .collect()
+}
+
 /// Sites that currently need the user to verify before their providers can answer.
 #[tauri::command]
 pub async fn get_site_verification_status(
     state: State<'_, AppState>,
 ) -> Result<Vec<SiteVerificationStatus>, String> {
-    Ok(web_session::verification_status()
-        .into_iter()
-        .map(|pending| SiteVerificationStatus {
-            providers: {
-                // Plugins whose requests met the site's check, plus providers bound to the site.
-                let mut names = crate::plugins::net::plugins_for_site(&pending.site);
-                for name in state.provider_manager.providers_for_site(&pending.site) {
-                    if !names.iter().any(|known| known == name) {
-                        names.push(name.to_string());
-                    }
-                }
-                names
-            },
-            site: pending.site,
-            label: pending.label,
-            origin: pending.origin,
-        })
-        .collect())
+    Ok(verification_entries(web_session::verification_status(), |site| {
+        // Plugins whose requests met the site's check, plus providers bound to the site.
+        let mut names = crate::plugins::net::plugins_for_site(site);
+        for name in state.provider_manager.providers_for_site(site) {
+            if !names.iter().any(|known| known == name) {
+                names.push(name.to_string());
+            }
+        }
+        names
+    }))
 }
 
 /// Shows the site's own window so the user can pass its check. The frontend hears the outcome

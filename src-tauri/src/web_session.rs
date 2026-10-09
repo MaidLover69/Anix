@@ -5,7 +5,9 @@
 //! loaded: a same-origin `fetch()` inside it carries that webview's own session. When the site
 //! wants the visitor to pass a check, the window is shown and the user passes it themselves;
 //! afterwards the same webview keeps being used. Nothing here solves, simulates or skips a check,
-//! and nothing the webview earned is used outside it.
+//! and nothing the webview earned is used outside it: the page scripts never read cookies or
+//! storage, response headers that set cookies are withheld, and the only thing remembered on
+//! disk by this module is the list of origins that answered (the webview keeps its own cookies).
 //!
 //! The windows load remote pages. No capability lists them, so they cannot call the app's
 //! commands, and answers are read back by evaluating a script in the page rather than by giving
@@ -14,12 +16,14 @@
 
 use crate::error::AppError;
 use async_trait::async_trait;
+use base64::Engine as _;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::hash_map::RandomState;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::hash::{BuildHasher, Hasher};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -68,11 +72,24 @@ const PROBE_FOR: Duration = Duration::from_secs(5 * 60);
 const IDLE_CLOSE_AFTER: Duration = Duration::from_secs(10 * 60);
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Largest response body, in UTF-16 units as the page counts them, handed back to the app.
-pub const MAX_BODY_CHARS: usize = 2 * 1024 * 1024;
-const MAX_HEADER_CHARS: usize = 1024;
-/// Response headers read back from the page.
-pub const CAPTURED_HEADERS: [&str; 4] = ["content-type", "cf-mitigated", "retry-after", "server"];
+/// File under the app's local data directory that lists the origins whose session answered.
+const KNOWN_ORIGINS_FILE: &str = "site-sessions.json";
+/// A single-origin site's page may fail this many requests in a row before the page itself is
+/// taken to be the problem.
+const MAX_REQUEST_FAILURES: u32 = 3;
+
+/// Largest response body, in bytes, handed back to the app.
+pub const MAX_BODY_BYTES: usize = 6 * 1024 * 1024;
+/// Largest request body sent through a page.
+pub const MAX_REQUEST_BODY_BYTES: usize = 512 * 1024;
+pub const MAX_HEADER_CHARS: usize = 4096;
+const MAX_HEADER_NAME_CHARS: usize = 128;
+/// How many response headers are read back from the page.
+pub const MAX_HEADERS: usize = 96;
+/// Response headers never read back, should a page ever be able to see them.
+pub const WITHHELD_HEADERS: [&str; 2] = ["set-cookie", "set-cookie2"];
+/// Request methods a page may be asked to use.
+pub const SESSION_METHODS: [&str; 6] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 /// A site that can be asked through the in-app browser.
 #[derive(Debug)]
@@ -120,20 +137,71 @@ pub fn site_for_origin(origin: &str) -> Option<&'static SiteSpec> {
     Some(site)
 }
 
+/// A same-origin request to make inside the site's page.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WebRequest {
+    /// One of `SESSION_METHODS`.
+    pub method: String,
+    /// Path with optional query on the site; see `valid_request_path`.
+    pub path: String,
+    /// Headers a page may set on its own request; the browser supplies the rest.
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+    /// A path on the site to name as the referrer instead of the loaded page.
+    pub referrer: Option<String>,
+}
+
+impl WebRequest {
+    pub fn get(path: &str) -> Self {
+        Self {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Why this request cannot be made inside a page, if it cannot.
+    pub fn problem(&self) -> Option<&'static str> {
+        if !SESSION_METHODS.contains(&self.method.as_str()) {
+            return Some("request method");
+        }
+        if !valid_request_path(&self.path) {
+            return Some("path");
+        }
+        if self.referrer.as_deref().map_or(false, |path| !valid_request_path(path)) {
+            return Some("referrer");
+        }
+        match &self.body {
+            Some(_) if matches!(self.method.as_str(), "GET" | "HEAD") => Some("body on a request without one"),
+            Some(body) if body.len() > MAX_REQUEST_BODY_BYTES => Some("request body size"),
+            _ => None,
+        }
+    }
+}
+
 /// What a same-origin request inside the site's page answered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebResponse {
     pub status: u16,
     /// The mirror that answered.
     pub origin: String,
-    /// The headers in `CAPTURED_HEADERS` that were present, by lower-case name.
+    /// The address that answered, after any redirects the page followed.
+    pub url: String,
+    pub redirected: bool,
+    /// The response headers the page could read, by lower-case name; repeated ones joined.
     pub headers: HashMap<String, String>,
-    pub body: String,
+    /// The body exactly as the site sent it.
+    pub body: Vec<u8>,
 }
 
 impl WebResponse {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(&name.to_ascii_lowercase()).map(String::as_str)
+    }
+
+    /// The start of the body as text, for telling a check page from an answer.
+    pub fn head_text(&self) -> String {
+        String::from_utf8_lossy(&self.body[..self.body.len().min(BARRIER_SCAN_BYTES)]).into_owned()
     }
 
     pub fn is_success(&self) -> bool {
@@ -146,7 +214,8 @@ impl WebResponse {
 /// delivered, so a lookup that merely includes the site among many must not start one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionUse {
-    /// Only a session that already exists and answers may be asked; none is created.
+    /// Only a session that answers, or that answered before (a site the user already got
+    /// through), may be asked; a site never reached through the browser is not loaded.
     Existing,
     /// The site's window may be created and its page loaded.
     Create,
@@ -159,6 +228,9 @@ pub enum SessionState {
     Cold,
     /// A window exists and the site answered through it.
     Warm,
+    /// No window in this process, but the site answered through its session in an earlier run;
+    /// the cookies that made it answer are still in the webview's storage.
+    Resumable,
     /// The site last refused the session from this origin and waits for the user to verify.
     Refused(String),
 }
@@ -180,7 +252,9 @@ pub fn choose(session: &dyn SiteSession, site: &'static SiteSpec, access: Sessio
         return SessionChoice::Keep;
     }
     match (access, session.state(site)) {
-        (SessionUse::Create, _) | (SessionUse::Existing, SessionState::Warm) => SessionChoice::Ask,
+        (SessionUse::Create, _)
+        | (SessionUse::Existing, SessionState::Warm)
+        | (SessionUse::Existing, SessionState::Resumable) => SessionChoice::Ask,
         (SessionUse::Existing, SessionState::Cold) => SessionChoice::Keep,
         (SessionUse::Existing, SessionState::Refused(origin)) => {
             SessionChoice::Refused(verification_required(site, &origin))
@@ -196,12 +270,11 @@ pub trait SiteSession: Send + Sync {
 
     fn state(&self, site: &'static SiteSpec) -> SessionState;
 
-    /// A GET of `path_and_query` on the site, made inside its page with the page's session.
+    /// The request, made on the site inside its page with the page's session.
     async fn fetch(
         &self,
         site: &'static SiteSpec,
-        path_and_query: &str,
-        headers: &[(&str, &str)],
+        request: &WebRequest,
         timeout: Duration,
     ) -> Result<WebResponse, AppError>;
 }
@@ -222,11 +295,10 @@ impl SiteSession for AppSession {
     async fn fetch(
         &self,
         site: &'static SiteSpec,
-        path_and_query: &str,
-        headers: &[(&str, &str)],
+        request: &WebRequest,
         timeout: Duration,
     ) -> Result<WebResponse, AppError> {
-        fetch(site, path_and_query, headers, timeout).await
+        fetch(site, request, timeout).await
     }
 }
 
@@ -300,6 +372,50 @@ pub fn detect_barrier(status: u16, headers: &HashMap<String, String>, body: &str
     }
 }
 
+/// What marks the document a window shows as a check or block page. A document has no status
+/// to go by, so only what the site's own pages do not carry counts: the titles these pages
+/// have, and markup only they contain.
+pub const BARRIER_TITLES: [(&str, Barrier); 4] = [
+    ("Just a moment", Barrier::Challenge),
+    ("Checking your browser", Barrier::Challenge),
+    ("DDoS-Guard", Barrier::Challenge),
+    ("Attention Required! | Cloudflare", Barrier::Block),
+];
+pub const BARRIER_MARKUP: [(&str, Barrier); 3] = [
+    ("_cf_chl_opt", Barrier::Challenge),
+    ("cf-error-details", Barrier::Block),
+    ("Sorry, you have been blocked", Barrier::Block),
+];
+
+/// Tells whether a document with this title and markup is a check or block page.
+pub fn document_barrier(title: &str, markup: &str) -> Option<Barrier> {
+    let markup = head_of(markup, BARRIER_SCAN_BYTES);
+    let found: Vec<Barrier> = BARRIER_TITLES
+        .iter()
+        .filter(|(marker, _)| title.contains(marker))
+        .chain(BARRIER_MARKUP.iter().filter(|(marker, _)| markup.contains(marker)))
+        .map(|(_, kind)| *kind)
+        .collect();
+    if found.contains(&Barrier::Block) {
+        Some(Barrier::Block)
+    } else {
+        found.first().copied()
+    }
+}
+
+/// What the document in a site's window is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentState {
+    /// A check or block page of the site's protection.
+    Barrier(Barrier),
+    /// A document of the site that is no such page.
+    Site,
+    /// A document of another origin.
+    Elsewhere,
+    /// It could not be told (the window is between documents, for example).
+    Unreadable,
+}
+
 // ---------------------------------------------------------------- scripts run in the page
 
 /// A JavaScript string literal for `value`. Quotes, backslashes, line breaks, markup characters
@@ -344,18 +460,32 @@ fn new_request_key() -> String {
 
 /// The script that makes the request. It keeps its state in one non-enumerable property of the
 /// page's `window`, named by the unguessable `key`, where `collect_script` finds the answer. If
-/// the page is not on `origin` any more it says so instead of asking.
-pub fn request_script(key: &str, origin: &str, path: &str, headers: &[(String, String)]) -> String {
-    let header_pairs = headers
+/// the page is not on `origin` any more it says so instead of asking. The answer's body is
+/// handed over base64-encoded, so it arrives byte for byte whatever it holds. The script reads
+/// the response and nothing else of the page: no cookies, no storage.
+pub fn request_script(key: &str, origin: &str, request: &WebRequest) -> String {
+    let header_pairs = request
+        .headers
         .iter()
         .map(|(name, value)| format!("[{},{}]", js_string(name), js_string(value)))
         .collect::<Vec<_>>()
         .join(",");
-    let captured = CAPTURED_HEADERS
+    let withheld = WITHHELD_HEADERS
         .iter()
         .map(|name| js_string(name))
         .collect::<Vec<_>>()
         .join(",");
+    let referrer = match &request.referrer {
+        Some(path) => format!("q.referrer=o+{};", js_string(path)),
+        None => String::new(),
+    };
+    let body = match &request.body {
+        Some(bytes) => format!(
+            "var d=atob({}),u=new Uint8Array(d.length);for(var i=0;i<d.length;i++)u[i]=d.charCodeAt(i);q.body=u;",
+            js_string(&base64::engine::general_purpose::STANDARD.encode(bytes))
+        ),
+        None => String::new(),
+    };
     [
         "(function(){var k=",
         &js_string(key),
@@ -369,16 +499,29 @@ pub fn request_script(key: &str, origin: &str, path: &str, headers: &[(String, S
         "var h={};[",
         &header_pairs,
         "].forEach(function(p){h[p[0]]=p[1]});",
+        "var q={method:",
+        &js_string(&request.method),
+        ",headers:h,credentials:\"include\",cache:\"no-store\",redirect:\"follow\",signal:c.signal};",
+        &referrer,
+        &body,
         "fetch(o+",
-        &js_string(path),
-        ",{method:\"GET\",headers:h,credentials:\"include\",cache:\"no-store\",signal:c.signal})",
-        ".then(function(r){return r.text().then(function(b){var g={};[",
-        &captured,
-        "].forEach(function(n){var v=r.headers.get(n);if(v!==null)g[n]=String(v).slice(0,",
+        &js_string(&request.path),
+        ",q).then(function(r){return r.arrayBuffer().then(function(a){",
+        "var w=[",
+        &withheld,
+        "],g=[];try{r.headers.forEach(function(v,n){n=String(n).toLowerCase();",
+        "if(g.length<",
+        &MAX_HEADERS.to_string(),
+        "&&w.indexOf(n)<0)g.push([n.slice(0,",
+        &MAX_HEADER_NAME_CHARS.to_string(),
+        "),String(v).slice(0,",
         &MAX_HEADER_CHARS.to_string(),
-        ")});var big=b.length>",
-        &MAX_BODY_CHARS.to_string(),
-        ";finish({status:r.status,headers:g,body:big?\"\":b,truncated:big})})})",
+        ")])})}catch(e){}",
+        "var b=new Uint8Array(a);if(b.length>",
+        &MAX_BODY_BYTES.to_string(),
+        "){finish({status:r.status,truncated:true});return}",
+        "var t=\"\";for(var i=0;i<b.length;i+=32768)t+=String.fromCharCode.apply(null,b.subarray(i,i+32768));",
+        "finish({status:r.status,url:String(r.url||\"\").slice(0,4096),redirected:!!r.redirected,headers:g,body:btoa(t)})})})",
         ".catch(function(e){finish({error:String(e).slice(0,300)})})",
         "}catch(e){finish({error:String(e).slice(0,300)})}})();",
     ]
@@ -394,10 +537,70 @@ pub fn collect_script(key: &str) -> String {
         ",s=window[k];if(!s)return \"gone\";if(!s.done)return null;",
         "try{delete window[k]}catch(e){}",
         "try{var t=JSON.stringify(s.result);return t.length>",
-        &(MAX_BODY_CHARS * 2).to_string(),
+        &(MAX_BODY_BYTES * 2).to_string(),
         "?JSON.stringify({truncated:true}):t}catch(e){return JSON.stringify({error:\"unreadable answer\"})}})()",
     ]
     .concat()
+}
+
+/// The script that says what document the window is on: its origin, and whether its title or
+/// the start of its markup carries the marks of a check or block page. The comparison is made
+/// in the page; none of the document's content is handed over.
+pub fn document_script() -> String {
+    let list = |markers: &[(&str, Barrier)], kind: Barrier| {
+        markers
+            .iter()
+            .filter(|(_, marked)| *marked == kind)
+            .map(|(marker, _)| js_string(marker))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    [
+        "(function(){try{var t=String(document.title||\"\"),h=\"\";",
+        "try{h=String(document.documentElement.outerHTML).slice(0,",
+        &BARRIER_SCAN_BYTES.to_string(),
+        ")}catch(e){}",
+        "function has(x,l){for(var i=0;i<l.length;i++){if(x.indexOf(l[i])>=0)return true}return false}",
+        "return JSON.stringify({origin:String(location.origin),",
+        "challenge:has(t,[",
+        &list(&BARRIER_TITLES, Barrier::Challenge),
+        "])||has(h,[",
+        &list(&BARRIER_MARKUP, Barrier::Challenge),
+        "]),block:has(t,[",
+        &list(&BARRIER_TITLES, Barrier::Block),
+        "])||has(h,[",
+        &list(&BARRIER_MARKUP, Barrier::Block),
+        "])})}catch(e){return JSON.stringify({unreadable:true})}})()",
+    ]
+    .concat()
+}
+
+/// Reads what `document_script` evaluated to, for a window that should be on `origin`.
+pub fn parse_document_state(raw: &str, origin: &str) -> DocumentState {
+    let Ok(value) = serde_json::from_str::<Value>(raw.trim()) else {
+        return DocumentState::Unreadable;
+    };
+    let value = match value {
+        Value::String(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(value) => value,
+            Err(_) => return DocumentState::Unreadable,
+        },
+        other => other,
+    };
+    let Some(page_origin) = value.get("origin").and_then(Value::as_str) else {
+        return DocumentState::Unreadable;
+    };
+    if page_origin != origin {
+        return DocumentState::Elsewhere;
+    }
+    let flag = |name: &str| value.get(name).and_then(Value::as_bool).unwrap_or(false);
+    if flag("block") {
+        DocumentState::Barrier(Barrier::Block)
+    } else if flag("challenge") {
+        DocumentState::Barrier(Barrier::Challenge)
+    } else {
+        DocumentState::Site
+    }
 }
 
 /// Aborts a request nobody waits for any more and removes its state from the page.
@@ -420,8 +623,11 @@ pub enum Collected {
     Gone,
     Response {
         status: u16,
+        /// As the page reported it; not checked against the site here.
+        url: String,
+        redirected: bool,
         headers: HashMap<String, String>,
-        body: String,
+        body: Vec<u8>,
     },
     TooLarge,
     /// The request failed inside the page, usually because the host could not be reached.
@@ -470,19 +676,161 @@ pub fn parse_collected(raw: &str) -> Collected {
     let (Some(status), Some(body)) = (status, body) else {
         return Collected::Failed("unreadable answer".to_string());
     };
-    if body.len() > MAX_BODY_CHARS * 4 {
+    if body.len() > MAX_BODY_BYTES / 3 * 4 + 4 {
         return Collected::TooLarge;
     }
-    let mut headers = HashMap::new();
-    for name in CAPTURED_HEADERS {
-        if let Some(text) = result.get("headers").and_then(|h| h.get(name)).and_then(Value::as_str) {
-            headers.insert(name.to_string(), clipped(text, MAX_HEADER_CHARS));
+    let Ok(body) = base64::engine::general_purpose::STANDARD.decode(body) else {
+        return Collected::Failed("unreadable answer".to_string());
+    };
+    let mut headers: HashMap<String, String> = HashMap::new();
+    let pairs = result.get("headers").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    for pair in pairs.iter().take(MAX_HEADERS) {
+        let (Some(name), Some(value)) = (
+            pair.get(0).and_then(Value::as_str),
+            pair.get(1).and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        let is_name = !name.is_empty()
+            && name.len() <= MAX_HEADER_NAME_CHARS
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b));
+        if !is_name || WITHHELD_HEADERS.contains(&name.as_str()) {
+            continue;
+        }
+        let value = clipped(value, MAX_HEADER_CHARS);
+        match headers.get_mut(&name) {
+            Some(known) => {
+                known.push_str(", ");
+                known.push_str(&value);
+            }
+            None => {
+                headers.insert(name, value);
+            }
         }
     }
     Collected::Response {
         status: status as u16,
+        url: clipped(result.get("url").and_then(Value::as_str).unwrap_or_default(), 4096),
+        redirected: result.get("redirected").and_then(Value::as_bool).unwrap_or(false),
         headers,
-        body: body.to_string(),
+        body,
+    }
+}
+
+/// The address a page says answered, when it is one on `origin`; the address asked otherwise.
+/// A page cannot make an answer look as if it came from elsewhere.
+pub fn answered_url(origin: &str, asked_path: &str, reported: &str) -> String {
+    Url::parse(reported)
+        .ok()
+        .filter(|url| origin_of(url).as_deref() == Some(origin))
+        .map(|url| url.to_string())
+        .unwrap_or_else(|| format!("{}{}", origin, asked_path))
+}
+
+// ---------------------------------------------------------------- origins that answered before
+
+/// The origins whose session answered after the plain client was refused, kept across restarts
+/// so that such a site is asked through its session again without the user doing anything.
+/// Origins only: what makes the site answer stays in the webview's own storage.
+pub struct KnownOrigins {
+    path: Option<PathBuf>,
+    origins: Mutex<BTreeSet<String>>,
+}
+
+impl KnownOrigins {
+    /// Reads the list kept in `path`; a missing or unreadable file is an empty list.
+    pub fn open(path: Option<PathBuf>) -> Self {
+        let origins = path
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|origin| normalized_origin(&origin))
+            .take(MAX_DYNAMIC_SITES)
+            .collect();
+        Self {
+            path,
+            origins: Mutex::new(origins),
+        }
+    }
+
+    pub fn contains(&self, origin: &str) -> bool {
+        self.origins.lock().unwrap_or_else(|p| p.into_inner()).contains(origin)
+    }
+
+    fn save(&self, origins: &BTreeSet<String>) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        let written = serde_json::to_vec_pretty(origins).map_err(|e| e.to_string()).and_then(|data| {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(path, data).map_err(|e| e.to_string())
+        });
+        if let Err(e) = written {
+            tracing::warn!("could not save {}: {}", path.display(), e);
+        }
+    }
+
+    /// Notes that the session of `origin` answered.
+    pub fn add(&self, origin: &str) {
+        let Some(origin) = normalized_origin(origin) else {
+            return;
+        };
+        let mut origins = self.origins.lock().unwrap_or_else(|p| p.into_inner());
+        if origins.len() < MAX_DYNAMIC_SITES && origins.insert(origin) {
+            self.save(&origins);
+        }
+    }
+
+    /// Notes that the session of `origin` is refused again.
+    pub fn remove(&self, origin: &str) {
+        let mut origins = self.origins.lock().unwrap_or_else(|p| p.into_inner());
+        if origins.remove(origin) {
+            self.save(&origins);
+        }
+    }
+}
+
+static KNOWN_ORIGINS: OnceCell<KnownOrigins> = OnceCell::new();
+
+fn answered_before(site: &SiteSpec) -> bool {
+    KNOWN_ORIGINS.get().map_or(false, |known| {
+        site.origins
+            .iter()
+            .any(|origin| normalized_origin(origin).map_or(false, |origin| known.contains(&origin)))
+    })
+}
+
+// ---------------------------------------------------------------- naming a site
+
+type Labeller = Arc<dyn Fn(&SiteSpec) -> Option<String> + Send + Sync>;
+
+static LABELLER: OnceCell<Labeller> = OnceCell::new();
+
+/// Lets the app name a site better than by its host (by the plugins that use it). Set once.
+pub fn set_labeller(labeller: Labeller) {
+    let _ = LABELLER.set(labeller);
+}
+
+/// The name of a site as the user is shown it.
+pub fn display_label(site: &SiteSpec) -> String {
+    LABELLER
+        .get()
+        .and_then(|labeller| labeller(site))
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| site.label.to_string())
+}
+
+/// A site named by who uses it: `"AnimeKai (anikai.to)"`, or the host alone when nobody does.
+pub fn label_with_owners(host: &str, owners: &[String]) -> String {
+    if owners.is_empty() {
+        host.to_string()
+    } else {
+        format!("{} ({})", owners.join(", "), host)
     }
 }
 
@@ -808,6 +1156,8 @@ struct SiteState {
     /// The window is shown for the user to verify.
     visible: bool,
     blocked: Option<Blocked>,
+    /// Requests in a row that failed inside the page without an answer.
+    request_failures: u32,
     /// Counts the page-load events of the window.
     page_events: u64,
     last_used: Instant,
@@ -822,6 +1172,7 @@ impl SiteState {
             busy: false,
             visible: false,
             blocked: None,
+            request_failures: 0,
             page_events: 0,
             last_used: Instant::now(),
         }
@@ -867,7 +1218,14 @@ pub fn session_state(site: &SiteSpec) -> SessionState {
         None if state.window.is_some() && state.walk.remembered().is_some() => SessionState::Warm,
         None => SessionState::Cold,
     })
-    .unwrap_or(SessionState::Cold)
+    .filter(|state| *state != SessionState::Cold)
+    .unwrap_or_else(|| {
+        if answered_before(site) {
+            SessionState::Resumable
+        } else {
+            SessionState::Cold
+        }
+    })
 }
 
 /// Gives the module the app handle it creates windows with. Called once at startup.
@@ -875,6 +1233,8 @@ pub fn init(app: AppHandle) {
     if APP.set(app.clone()).is_err() {
         return;
     }
+    let known = app.path().app_local_data_dir().ok().map(|dir| dir.join(KNOWN_ORIGINS_FILE));
+    let _ = KNOWN_ORIGINS.set(KnownOrigins::open(known));
     // The hidden windows must not keep the app running once its own window is gone.
     if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
         main.on_window_event(|event| {
@@ -955,7 +1315,7 @@ fn build_window(app: &AppHandle, site: &'static SiteSpec, url: Url) -> tauri::Re
     // (on Linux a download handler belongs to everything sharing a data directory).
     let data_directory = app.path().app_local_data_dir()?.join(DATA_FOLDER);
     let window = WebviewWindowBuilder::new(app, window_label(key), WebviewUrl::External(url))
-        .title(window_title(site.label))
+        .title(window_title(&display_label(site)))
         .inner_size(1000.0, 720.0)
         .center()
         .visible(false)
@@ -1152,7 +1512,9 @@ async fn ready_page(app: &AppHandle, site: &'static SiteSpec, deadline: Instant)
     }
 }
 
-enum Outcome {
+/// How a request made inside a page ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
     Response(WebResponse),
     /// The request failed inside the page.
     Failed(String),
@@ -1162,6 +1524,83 @@ enum Outcome {
     Gone,
     TooLarge,
     TimedOut,
+}
+
+/// A page of a site that can be asked: the window, or a stand-in for it in tests.
+#[async_trait]
+pub trait PageAccess: Send + Sync {
+    /// Makes the request inside the page.
+    async fn request(&self, origin: &str, asked: &WebRequest, deadline: Instant) -> Outcome;
+    /// Says what document the page is.
+    async fn document(&self, origin: &str) -> DocumentState;
+}
+
+/// What asking a page came to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Asked {
+    Answer(WebResponse),
+    /// The site wants the visitor to pass its check first: the answer was its check or block
+    /// page, or no answer came and the page itself is one.
+    Refused,
+    /// The request failed on a page that is the site itself.
+    RequestFailed(String),
+    /// The page moved, vanished, timed out or answered with too much.
+    Other(Outcome),
+}
+
+/// Makes the request in the page and says what the outcome means. A request that fails, hangs
+/// or loses its page says nothing by itself: a check page reloads itself and aborts whatever was
+/// in flight, so the failure looks like a network error. The document the page is on decides.
+/// Only on a page that is the site itself is a failed request the request's own failure.
+pub async fn ask(page: &dyn PageAccess, origin: &str, asked: &WebRequest, deadline: Instant) -> Asked {
+    let outcome = page.request(origin, asked, deadline).await;
+    match outcome {
+        Outcome::Response(response) => {
+            if detect_barrier(response.status, &response.headers, &response.head_text()).is_some() {
+                return Asked::Refused;
+            }
+            // A refusal without the marks of a check (a rate limit, say) from a site whose page
+            // is its check page is the protection answering, not the site.
+            if matches!(response.status, 403 | 429 | 503)
+                && matches!(page.document(origin).await, DocumentState::Barrier(_))
+            {
+                return Asked::Refused;
+            }
+            Asked::Answer(response)
+        }
+        Outcome::TooLarge => Asked::Other(Outcome::TooLarge),
+        other => match (page.document(origin).await, other) {
+            (DocumentState::Barrier(_), _) => Asked::Refused,
+            (DocumentState::Site, Outcome::Failed(reason)) => Asked::RequestFailed(reason),
+            (DocumentState::Elsewhere, Outcome::Failed(_)) => Asked::Other(Outcome::Elsewhere),
+            (DocumentState::Unreadable, Outcome::Failed(_)) => Asked::Other(Outcome::Gone),
+            (_, other) => Asked::Other(other),
+        },
+    }
+}
+
+struct WindowPage(WebviewWindow);
+
+#[async_trait]
+impl PageAccess for WindowPage {
+    async fn request(&self, origin: &str, asked: &WebRequest, deadline: Instant) -> Outcome {
+        request(&self.0, origin, asked, deadline).await
+    }
+
+    async fn document(&self, origin: &str) -> DocumentState {
+        // The window may be between two documents; it is asked a few times.
+        for _ in 0..4 {
+            let state = match evaluate(&self.0, &document_script()).await {
+                Some(raw) => parse_document_state(&raw, origin),
+                None => DocumentState::Unreadable,
+            };
+            if state != DocumentState::Unreadable {
+                return state;
+            }
+            tokio::time::sleep(STEP_INTERVAL * 3).await;
+        }
+        DocumentState::Unreadable
+    }
 }
 
 /// Removes a request's state from the page unless its answer was collected.
@@ -1179,7 +1618,8 @@ impl Drop for RequestGuard {
     }
 }
 
-async fn collect_once(window: &WebviewWindow, script: &str) -> Collected {
+/// What a script evaluates to in the window, as the JSON text the webview hands back.
+async fn evaluate(window: &WebviewWindow, script: &str) -> Option<String> {
     let (tx, rx) = tokio::sync::oneshot::channel::<String>();
     let tx = Mutex::new(Some(tx));
     let sent = window.eval_with_callback(script.to_string(), move |raw| {
@@ -1188,23 +1628,24 @@ async fn collect_once(window: &WebviewWindow, script: &str) -> Collected {
         }
     });
     if sent.is_err() {
-        return Collected::NoAnswer;
+        return None;
     }
     match tokio::time::timeout(POLL_REPLY_TIMEOUT, rx).await {
-        Ok(Ok(raw)) => parse_collected(&raw),
-        _ => Collected::NoAnswer,
+        Ok(Ok(raw)) => Some(raw),
+        _ => None,
     }
 }
 
-async fn request(
-    window: &WebviewWindow,
-    origin: &str,
-    path: &str,
-    headers: &[(String, String)],
-    deadline: Instant,
-) -> Outcome {
+async fn collect_once(window: &WebviewWindow, script: &str) -> Collected {
+    match evaluate(window, script).await {
+        Some(raw) => parse_collected(&raw),
+        None => Collected::NoAnswer,
+    }
+}
+
+async fn request(window: &WebviewWindow, origin: &str, asked: &WebRequest, deadline: Instant) -> Outcome {
     let key = new_request_key();
-    if window.eval(request_script(&key, origin, path, headers)).is_err() {
+    if window.eval(request_script(&key, origin, asked)).is_err() {
         return Outcome::Gone;
     }
     let mut guard = RequestGuard {
@@ -1225,12 +1666,16 @@ async fn request(
             other => {
                 guard.collected = true;
                 return match other {
-                    Collected::Response { status, headers, body } => Outcome::Response(WebResponse {
-                        status,
-                        origin: origin.to_string(),
-                        headers,
-                        body,
-                    }),
+                    Collected::Response { status, url, redirected, headers, body } => {
+                        Outcome::Response(WebResponse {
+                            status,
+                            origin: origin.to_string(),
+                            url: answered_url(origin, &asked.path, &url),
+                            redirected,
+                            headers,
+                            body,
+                        })
+                    }
                     Collected::TooLarge => Outcome::TooLarge,
                     Collected::Failed(reason) => Outcome::Failed(reason),
                     Collected::Elsewhere(_) => Outcome::Elsewhere,
@@ -1248,28 +1693,45 @@ fn verification_required(site: &SiteSpec, origin: &str) -> AppError {
     }
 }
 
-/// A GET of `path_and_query` on the site, made by a same-origin `fetch()` inside the site's own
-/// page in a hidden window of the app. The answer of a check or block page is reported as
-/// `AppError::VerificationRequired`; no window is shown from here.
+/// Records that `origin` wants the visitor to pass its check, so the site is listed for
+/// verification, and gives the error that says so. The refusal is looked for again with a plain
+/// GET of the address that was asked.
+fn note_refused(site: &'static SiteSpec, origin: &str, asked: &WebRequest) -> AppError {
+    with_site(site.key, |state| {
+        state.blocked = Some(Blocked {
+            origin: origin.to_string(),
+            path: asked.path.clone(),
+            headers: asked.headers.clone(),
+            at: Instant::now(),
+        });
+    });
+    if let Some(known) = KNOWN_ORIGINS.get() {
+        known.remove(origin);
+    }
+    tracing::info!("{} refuses the in-app browser until the user verifies", host_of(origin));
+    verification_required(site, origin)
+}
+
+/// The request, made by a same-origin `fetch()` inside the site's own page in a hidden window of
+/// the app. The answer of a check or block page is reported as
+/// `AppError::VerificationRequired`; no window is shown from here. Any other answer, whatever
+/// its status, is returned as the answer.
 pub async fn fetch(
     site: &'static SiteSpec,
-    path_and_query: &str,
-    headers: &[(&str, &str)],
+    asked: &WebRequest,
     timeout: Duration,
 ) -> Result<WebResponse, AppError> {
     let app = app()?;
-    if !valid_request_path(path_and_query) {
+    if let Some(problem) = asked.problem() {
         return Err(AppError::Other(format!(
-            "not a path on {}: {}",
+            "not a request for the in-app browser on {} ({}): {} {}",
             site.label,
-            clipped(path_and_query, 80)
+            problem,
+            clipped(&asked.method, 12),
+            clipped(&asked.path, 80)
         )));
     }
     let deadline = Instant::now() + timeout;
-    let headers: Vec<(String, String)> = headers
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect();
 
     // While the user is at the window it is theirs: nothing is asked or loaded in it from here.
     let refused_just_now = with_site(site.key, |state| {
@@ -1285,19 +1747,32 @@ pub async fn fetch(
     }
 
     let mut moves = 0;
+    // The origin whose check page was met while waiting for it to pass by itself.
+    let mut met_check: Option<String> = None;
     loop {
-        let page = ready_page(&app, site, deadline).await?;
-        match request(&page.window, &page.origin, path_and_query, &headers, deadline).await {
-            Outcome::TooLarge => {
+        let page = match ready_page(&app, site, deadline).await {
+            Ok(page) => page,
+            // A check page that reloads itself can use up the time; it is still a check.
+            Err(AppError::Network(_)) if met_check.is_some() => {
+                let origin = met_check.unwrap_or_default();
+                return Err(note_refused(site, &origin, asked));
+            }
+            Err(e) => return Err(e),
+        };
+        match ask(&WindowPage(page.window.clone()), &page.origin, asked, deadline).await {
+            Asked::Other(Outcome::TooLarge) => {
+                with_site(site.key, |state| state.request_failures = 0);
                 return Err(AppError::Network(format!(
                     "{} answered with more than the in-app browser hands back",
                     host_of(&page.origin)
                 )));
             }
-            Outcome::Response(response) => {
-                if detect_barrier(response.status, &response.headers, &response.body).is_some() {
+            Asked::Refused => {
+                with_site(site.key, |state| state.request_failures = 0);
+                {
                     let loaded_for = page.since.elapsed();
                     if loaded_for < SETTLE && Instant::now() + SETTLE_RETRY < deadline {
+                        met_check = Some(page.origin.clone());
                         tokio::time::sleep(SETTLE_RETRY).await;
                         continue;
                     }
@@ -1306,20 +1781,11 @@ pub async fn fetch(
                         with_site(site.key, |state| state.walk.refresh(&page.origin));
                         continue;
                     }
-                    with_site(site.key, |state| {
-                        state.blocked = Some(Blocked {
-                            origin: page.origin.clone(),
-                            path: path_and_query.to_string(),
-                            headers: headers.clone(),
-                            at: Instant::now(),
-                        });
-                    });
-                    tracing::info!(
-                        "{} refuses the in-app browser until the user verifies",
-                        host_of(&page.origin)
-                    );
-                    return Err(verification_required(site, &page.origin));
+                    return Err(note_refused(site, &page.origin, asked));
                 }
+            }
+            Asked::Answer(response) => {
+                with_site(site.key, |state| state.request_failures = 0);
                 let newly_settled = with_site(site.key, |state| {
                     let before = state.walk.remembered();
                     state.blocked = None;
@@ -1330,37 +1796,56 @@ pub async fn fetch(
                 if newly_settled == Some(true) {
                     tracing::info!(
                         "{} is answered through the in-app browser on {}",
-                        site.label,
+                        display_label(site),
                         host_of(&page.origin)
                     );
                 }
+                if let Some(known) = KNOWN_ORIGINS.get() {
+                    known.add(&page.origin);
+                }
                 return Ok(response);
             }
-            Outcome::Failed(reason) => {
+            Asked::RequestFailed(reason) => {
                 tracing::warn!(
-                    "in-app browser request to {} failed: {}",
+                    "in-app browser request to {} failed on a page of the site: {}",
                     host_of(&page.origin),
                     reason
                 );
-                with_site(site.key, |state| {
-                    state.walk.fail_origin(&page.origin, "could not be reached", Instant::now())
-                });
+                // With mirrors the next one is tried. A site of one origin has nowhere to go:
+                // the failure is the request's (a redirect off the site, an aborted answer)
+                // unless it keeps happening.
+                let give_up_on_page = with_site(site.key, |state| {
+                    state.request_failures += 1;
+                    let condemn = state.walk.origins().len() > 1 || state.request_failures >= MAX_REQUEST_FAILURES;
+                    if condemn {
+                        state.request_failures = 0;
+                        state.walk.fail_origin(&page.origin, "could not be reached", Instant::now());
+                    }
+                    condemn && state.walk.origins().len() > 1
+                }) == Some(true);
+                if !give_up_on_page {
+                    return Err(AppError::Network(format!(
+                        "the request to {} failed in the in-app browser ({})",
+                        host_of(&page.origin),
+                        reason
+                    )));
+                }
             }
-            Outcome::Elsewhere | Outcome::Gone if moves >= MAX_PAGE_MOVES => {
-                return Err(AppError::Network(format!(
-                    "the {} page in the in-app browser kept changing",
-                    site.label
-                )));
+            Asked::Other(Outcome::Elsewhere | Outcome::Gone) if moves >= MAX_PAGE_MOVES => {
+                // The window never settled on a page of the site that could be asked. Whatever
+                // it is doing, the user can look at it; it is not the request that failed.
+                tracing::warn!("the {} page in the in-app browser kept changing", site.label);
+                return Err(note_refused(site, &page.origin, asked));
             }
-            Outcome::Elsewhere => {
+            Asked::Other(Outcome::Elsewhere) => {
                 moves += 1;
                 with_site(site.key, |state| state.walk.mark_drifted(&page.origin));
             }
-            Outcome::Gone => {
+            Asked::Other(Outcome::Gone) => {
                 moves += 1;
                 tokio::time::sleep(STEP_INTERVAL).await;
             }
-            Outcome::TimedOut => {
+            Asked::Other(_) => {
                 with_site(site.key, |state| state.walk.request_reload(&page.origin, Instant::now()));
                 return Err(AppError::Network(format!(
                     "{} did not answer in the in-app browser",
@@ -1387,7 +1872,7 @@ pub fn verification_status() -> Vec<SiteVerification> {
         .filter_map(|state| {
             state.blocked.as_ref().map(|blocked| SiteVerification {
                 site: state.spec.key.to_string(),
-                label: state.spec.label.to_string(),
+                label: display_label(state.spec),
                 origin: blocked.origin.clone(),
             })
         })
@@ -1408,7 +1893,7 @@ fn emit(event: &str, site: &SiteSpec) {
     };
     let payload = SiteEvent {
         site: site.key.to_string(),
-        label: site.label.to_string(),
+        label: display_label(site),
     };
     if let Err(e) = app.emit_to(MAIN_WINDOW, event, payload) {
         tracing::warn!("could not announce {} for {}: {}", event, site.label, e);
@@ -1431,10 +1916,31 @@ async fn still_refused(site_key: &'static str) -> Option<bool> {
     })
     .flatten()?;
     let deadline = Instant::now() + PROBE_TIMEOUT;
-    match request(&window, &blocked.origin, &blocked.path, &blocked.headers, deadline).await {
-        Outcome::Response(response) => {
-            Some(detect_barrier(response.status, &response.headers, &response.body).is_some())
-        }
+    let probe = WebRequest {
+        headers: blocked.headers.clone(),
+        ..WebRequest::get(&blocked.path)
+    };
+    let page = WindowPage(window);
+    verification_probe(&page, &blocked.origin, &probe, deadline).await
+}
+
+/// Whether a site that refused still does. The check counts as passed (`Some(false)`) only when
+/// the page is no longer a check page and the refused request is then answered; `None` means it
+/// could not be told yet.
+pub async fn verification_probe(
+    page: &dyn PageAccess,
+    origin: &str,
+    refused: &WebRequest,
+    deadline: Instant,
+) -> Option<bool> {
+    match page.document(origin).await {
+        DocumentState::Barrier(_) => return Some(true),
+        DocumentState::Site => {}
+        DocumentState::Elsewhere | DocumentState::Unreadable => return None,
+    }
+    match ask(page, origin, refused, deadline).await {
+        Asked::Answer(_) => Some(false),
+        Asked::Refused => Some(true),
         _ => None,
     }
 }
@@ -1459,7 +1965,10 @@ fn finish_verified(site_key: &'static str) {
         hide(&window);
         navigate(site_key, &window, &origin, "/");
     }
-    tracing::info!("{} answers the in-app browser again", spec.label);
+    if let Some(known) = KNOWN_ORIGINS.get() {
+        known.add(&origin);
+    }
+    tracing::info!("{} answers the in-app browser again", display_label(spec));
     emit(EVENT_VERIFIED, spec);
 }
 
@@ -1606,7 +2115,7 @@ pub async fn open_verification(site_key: &str) -> Result<(), AppError> {
         }
     };
 
-    let _ = window.set_title(&window_title(spec.label));
+    let _ = window.set_title(&window_title(&display_label(spec)));
     let _ = window.set_skip_taskbar(false);
     if let Err(e) = window.show() {
         with_site(spec.key, |state| state.visible = false);

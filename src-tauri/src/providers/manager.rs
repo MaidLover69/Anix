@@ -3,9 +3,9 @@ use crate::clients::anilist::{fetch_media_hint, MediaHint};
 use crate::clients::http::{http_client, no_redirect_client};
 use crate::error::AppError;
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
-use crate::providers::common::{fmt_ep, is_hls_url};
+use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
 use crate::providers::AnimeProvider;
-use crate::web_session::SessionUse;
+use crate::web_session::{detect_barrier, SessionUse};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION, ORIGIN, RANGE, REFERER};
 use reqwest::{Client, Url};
 use std::collections::HashMap;
@@ -28,6 +28,7 @@ const VERIFY_STREAM_TIMEOUT: Duration = Duration::from_secs(7);
 const VERIFY_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// How many of a provider's streams are checked (concurrently) before giving up.
 const MAX_VERIFIED_STREAMS: usize = 8;
+const MAX_PLAYLIST_BYTES: usize = 8 * 1024 * 1024;
 
 const HINT_TIMEOUT: Duration = Duration::from_millis(2500);
 
@@ -100,29 +101,120 @@ pub fn resolve_playlist_uri(playlist_url: &str, entry: &str) -> Option<String> {
     base.join(entry.trim()).ok().map(|u| u.to_string())
 }
 
-fn status_reason(response: &reqwest::Response) -> String {
-    format!(
-        "HTTP {} from {}",
-        response.status().as_u16(),
-        response.url().host_str().unwrap_or("unknown host")
-    )
+fn host_of(response: &reqwest::Response) -> String {
+    response.url().host_str().unwrap_or("unknown host").to_string()
 }
 
 fn transport_reason(err: reqwest::Error) -> String {
     AppError::from(err).reason()
 }
 
+/// How much of an answer is read to tell what it is.
+const SNIFF_BYTES: usize = 32 * 1024;
+
+/// The start of an answer's body, as far as it arrives within the request's time limit.
+async fn body_start(response: &mut reqwest::Response, limit: usize) -> Vec<u8> {
+    let mut bytes: Vec<u8> = Vec::new();
+    while bytes.len() < limit {
+        match response.chunk().await {
+            Ok(Some(chunk)) => bytes.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+    bytes.truncate(limit);
+    bytes
+}
+
+fn lowered_headers(response: &reqwest::Response) -> HashMap<String, String> {
+    response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
+}
+
+/// True for an answer whose body is a web page rather than media. The declared type alone does
+/// not decide: some hosts send media under a text type.
+pub fn looks_like_web_page(content_type: &str, body: &[u8]) -> bool {
+    let body = body.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(body);
+    let start = body.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(body.len());
+    let head: Vec<u8> = body[start..].iter().take(15).map(u8::to_ascii_lowercase).collect();
+    if head.starts_with(b"<!doctype html") || head.starts_with(b"<html") {
+        return true;
+    }
+    let declared = content_type.trim().to_ascii_lowercase();
+    (declared.starts_with("text/html") || declared.starts_with("application/xhtml")) && head.starts_with(b"<")
+}
+
+/// Why an answer cannot be the media that was asked for, or `None` when nothing speaks against
+/// it. An anti-bot page is named as such, whatever status it came with.
+async fn media_refusal(response: &mut reqwest::Response) -> Option<String> {
+    let status = response.status();
+    let host = host_of(response);
+    let headers = lowered_headers(response);
+    let content_type = headers.get("content-type").cloned().unwrap_or_default();
+    let mitigated = headers.contains_key("cf-mitigated");
+    let textual = content_type.to_ascii_lowercase().starts_with("text/");
+    if status.is_success() && !mitigated && !textual {
+        // Media: only its first bytes are looked at, for a page sent under a media type.
+        let start = body_start(response, 512).await;
+        return looks_like_web_page(&content_type, &start)
+            .then(|| format!("{} answered with a web page instead of a video", host));
+    }
+    let start = body_start(response, SNIFF_BYTES).await;
+    let text = String::from_utf8_lossy(&start);
+    if detect_barrier(status.as_u16(), &headers, &text).is_some() {
+        return Some(format!("{} answered with its anti-bot check", host));
+    }
+    if !status.is_success() {
+        return Some(format!("HTTP {} from {}", status.as_u16(), host));
+    }
+    looks_like_web_page(&content_type, &start)
+        .then(|| format!("{} answered with a web page instead of a video", host))
+}
+
 async fn fetch_playlist(client: &Client, url: &Url, stream: &StreamItem) -> Result<String, String> {
     let request = apply_stream_headers(client.get(url.clone()), stream).timeout(VERIFY_REQUEST_TIMEOUT);
-    let response = request.send().await.map_err(transport_reason)?;
-    if !response.status().is_success() {
-        return Err(status_reason(&response));
+    let mut response = request.send().await.map_err(transport_reason)?;
+    let host = host_of(&response);
+    let headers = lowered_headers(&response);
+    let status = response.status();
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(transport_reason)? {
+        if bytes.len() + chunk.len() > MAX_PLAYLIST_BYTES {
+            return Err(format!("{} answered with something too large to be a playlist", host));
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    let text = response.text().await.map_err(transport_reason)?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if detect_barrier(status.as_u16(), &headers, head_of_text(&text)).is_some() {
+        return Err(format!("{} answered with its anti-bot check", host));
+    }
+    if !status.is_success() {
+        return Err(format!("HTTP {} from {}", status.as_u16(), host));
+    }
     if !text.contains("#EXTM3U") {
-        return Err("not an HLS playlist".to_string());
+        let content_type = headers.get("content-type").map(String::as_str).unwrap_or_default();
+        return Err(if looks_like_web_page(content_type, &bytes) {
+            format!("{} answered with a web page instead of a playlist", host)
+        } else {
+            "not an HLS playlist".to_string()
+        });
     }
     Ok(text)
+}
+
+fn head_of_text(text: &str) -> &str {
+    let mut end = text.len().min(SNIFF_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 async fn check_hls(stream: &StreamItem, url: Url) -> Result<(), String> {
@@ -141,11 +233,10 @@ async fn check_hls(stream: &StreamItem, url: Url) -> Result<(), String> {
 
     let request = apply_stream_headers(client.get(target).header(RANGE, "bytes=0-2047"), stream)
         .timeout(VERIFY_REQUEST_TIMEOUT);
-    let response = request.send().await.map_err(transport_reason)?;
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(status_reason(&response))
+    let mut response = request.send().await.map_err(transport_reason)?;
+    match media_refusal(&mut response).await {
+        Some(reason) => Err(reason),
+        None => Ok(()),
     }
 }
 
@@ -156,11 +247,8 @@ async fn check_file(stream: &StreamItem, url: Url) -> Result<(), String> {
     for _ in 0..6 {
         let request = apply_stream_headers(client.get(current.clone()).header(RANGE, "bytes=0-2047"), stream)
             .timeout(VERIFY_REQUEST_TIMEOUT);
-        let response = request.send().await.map_err(transport_reason)?;
+        let mut response = request.send().await.map_err(transport_reason)?;
         let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
         if status.is_redirection() {
             let location = response
                 .headers()
@@ -170,7 +258,10 @@ async fn check_file(stream: &StreamItem, url: Url) -> Result<(), String> {
             current = current.join(location).map_err(|_| "redirect to an invalid URL")?;
             continue;
         }
-        return Err(status_reason(&response));
+        return match media_refusal(&mut response).await {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        };
     }
     Err("too many redirects".to_string())
 }
@@ -579,9 +670,15 @@ impl Inner {
             attempts.spawn(async move {
                 let name = provider.name();
                 let attempt = AbortOnDrop(tokio::spawn(
-                    inner.clone().try_provider(provider, base, cell, number, category, access),
+                    inner.clone().try_provider(provider.clone(), base, cell, number, category, access),
                 ));
-                let outcome = match timeout(SOURCES_TIMEOUT, attempt).await {
+                // Time spent starting an in-app browser session does not count against the
+                // provider; the other providers of the race are not held up by it.
+                let limited = with_session_allowance(attempt, SOURCES_TIMEOUT, SESSION_LOOKUP_ALLOWANCE, |since| {
+                    provider.session_time_since(since)
+                })
+                .await;
+                let outcome = match limited.ok_or(()) {
                     Err(_) => Err(("timed out".to_string(), false)),
                     Ok(Err(join_err)) => {
                         tracing::error!("provider {} task failed: {}", name, join_err);
@@ -696,7 +793,9 @@ impl ProviderManager {
 
     /// Episode listings of every provider that answered, in provider order. Each provider has
     /// its own time limit, so one slow site costs at most that; providers that failed or timed
-    /// out are left out and logged. Listing never starts an in-app browser session.
+    /// out are left out and logged. Listing never loads a site in the in-app browser that was not
+    /// reached through it before, and a session that is slow to start is not waited for beyond
+    /// the provider's limit (it keeps starting and answers the next listing).
     pub async fn get_all_episodes(
         &self,
         anilist_id: i64,
@@ -770,7 +869,8 @@ impl ProviderManager {
     ///
     /// A provider whose site refuses the plain client may load that site in a hidden in-app
     /// browser only when it was asked for by name, or as a last resort once every provider has
-    /// failed; a session that already exists and answers is used either way.
+    /// failed; a session that answers, or answered in an earlier run, is used either way. The
+    /// time a provider's requests wait for a session to start is added to its limit.
     pub async fn get_sources_for_episode(
         &self,
         anilist_id: i64,

@@ -7,6 +7,8 @@ pub mod net;
 pub mod transpile;
 pub mod provider;
 pub mod registry;
+pub mod userconfig;
+pub mod scanner_utils;
 
 use once_cell::sync::Lazy;
 use std::collections::HashSet;

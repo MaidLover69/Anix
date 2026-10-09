@@ -395,9 +395,13 @@ impl PluginProvider {
         access: SessionUse,
     ) -> Result<Value, AppError> {
         let started = Instant::now();
-        match self.runtime.call(method, args, timeout, access).await {
+        match self.runtime.call_allowing_session(method, args, timeout, access).await {
             Ok(value) => Ok(value),
             Err(error) => Err(self.network_failure(started).unwrap_or_else(|| match error {
+                PluginError::Timeout if !self.session_time_since(started).is_zero() => self.error(format!(
+                    "{} timed out while the in-app browser was loading the site",
+                    method
+                )),
                 PluginError::Timeout => self.error(format!("{} timed out", method)),
                 other => self.error(other.reason()),
             })),
@@ -494,8 +498,19 @@ async fn resolve_server(
             .and_then(|engine| engine.net().failure_since(started))
             .unwrap_or_else(|| AppError::provider(id, reason))
     };
-    match runtime.call("findEpisodeServer", &args, SERVER_TIMEOUT, access).await {
+    let waited = || {
+        runtime
+            .engine()
+            .map_or(Duration::ZERO, |engine| engine.net().session_time_since(started))
+    };
+    match runtime
+        .call_allowing_session("findEpisodeServer", &args, SERVER_TIMEOUT, access)
+        .await
+    {
         Ok(value) => parse_server(&value, &server, &category).map_err(failed),
+        Err(PluginError::Timeout) if !waited().is_zero() => Err(failed(
+            "timed out while the in-app browser was loading the site".to_string(),
+        )),
         Err(PluginError::Timeout) => Err(failed("timed out".to_string())),
         Err(other) => Err(failed(other.reason())),
     }
@@ -521,6 +536,12 @@ impl AnimeProvider for PluginProvider {
 
     fn verifies_streams(&self) -> bool {
         true
+    }
+
+    fn session_time_since(&self, since: Instant) -> Duration {
+        self.runtime
+            .engine()
+            .map_or(Duration::ZERO, |engine| engine.net().session_time_since(since))
     }
 
     async fn get_episodes(&self, query: &AnimeQuery) -> Result<ProviderData, AppError> {

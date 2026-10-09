@@ -52,27 +52,96 @@ pub fn note_plain_blocked(site: &'static str) {
 }
 
 /// Request headers a page may set on its own same-origin request. The browser supplies the
-/// rest (Referer, Origin, cookies, user agent, client hints) itself.
+/// rest (Referer, Origin, cookies, user agent, client hints) itself and refuses to have them set.
 pub fn session_headers(headers: &HeaderMap) -> Vec<(String, String)> {
-    const BROWSER_OWNED: [&str; 9] = [
-        "referer",
-        "origin",
-        "cookie",
-        "host",
-        "user-agent",
+    const BROWSER_OWNED: [&str; 19] = [
+        "accept-charset",
         "accept-encoding",
         "connection",
         "content-length",
+        "cookie",
+        "cookie2",
+        "date",
         "dnt",
+        "expect",
+        "host",
+        "keep-alive",
+        "origin",
+        "referer",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "user-agent",
+        "via",
     ];
     headers
         .iter()
         .filter(|(name, _)| {
             let name = name.as_str();
-            !BROWSER_OWNED.contains(&name) && !name.starts_with("sec-") && !name.starts_with("proxy-")
+            !BROWSER_OWNED.contains(&name)
+                && !name.starts_with("sec-")
+                && !name.starts_with("proxy-")
+                && !name.starts_with("access-control-")
         })
         .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
         .collect()
+}
+
+/// The path a page can name as its request's referrer for a plugin's `Referer` header: only an
+/// address on the same origin as the request qualifies.
+pub fn session_referrer(headers: &HeaderMap, request_url: &reqwest::Url) -> Option<String> {
+    let referer = headers.get(reqwest::header::REFERER)?.to_str().ok()?;
+    let referer = reqwest::Url::parse(referer).ok()?;
+    (referer.origin() == request_url.origin()).then(|| path_and_query(&referer))
+}
+
+/// The text of a body in the character set its `Content-Type` declares (UTF-8 when it declares
+/// none or one that is unknown). A byte order mark decides over the declaration.
+pub fn decode_text(content_type: Option<&str>, body: &[u8]) -> String {
+    let encoding = declared_charset(content_type).unwrap_or(encoding_rs::UTF_8);
+    let (text, _, _) = encoding.decode(body);
+    text.into_owned()
+}
+
+/// The character set named by a `Content-Type` value, when it names one that is known.
+pub fn declared_charset(content_type: Option<&str>) -> Option<&'static encoding_rs::Encoding> {
+    content_type?
+        .split(';')
+        .skip(1)
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("charset"))
+        .and_then(|(_, label)| encoding_rs::Encoding::for_label(label.trim().trim_matches(['"', '\'']).as_bytes()))
+}
+
+/// How much longer one plugin call may take when its requests wait for an in-app browser
+/// session (a window being created, the site loading in it).
+pub const SESSION_CALL_ALLOWANCE: Duration = Duration::from_secs(30);
+/// The same for a provider's whole attempt at a play request, which may start the sessions of
+/// two origins one after the other (a site's API and its player page).
+pub const SESSION_LOOKUP_ALLOWANCE: Duration = Duration::from_secs(60);
+
+/// Runs `work` under a time limit of `base`, plus the time `waited` says was spent waiting for
+/// an in-app browser session since the start, up to `allowance`. `None` when the limit ran out.
+pub async fn with_session_allowance<F: std::future::Future>(
+    work: F,
+    base: Duration,
+    allowance: Duration,
+    waited: impl Fn(Instant) -> Duration,
+) -> Option<F::Output> {
+    tokio::pin!(work);
+    let started = Instant::now();
+    loop {
+        let limit = base + waited(started).min(allowance);
+        let left = limit.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            return None;
+        }
+        tokio::select! {
+            output = &mut work => return Some(output),
+            _ = tokio::time::sleep(left.min(Duration::from_millis(200))) => {}
+        }
+    }
 }
 
 /// Path and query of a URL, the part a same-origin request names.

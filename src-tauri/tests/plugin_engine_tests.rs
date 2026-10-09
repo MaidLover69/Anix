@@ -4,6 +4,7 @@ mod plugin_support;
 
 use anilili_lib::plugins::engine::{EngineLimits, PluginEngine, PluginError, PluginRuntime};
 use anilili_lib::plugins::transpile::typescript_to_javascript;
+use anilili_lib::plugins::userconfig::{self, UserConfig};
 use anilili_lib::web_session::SessionUse;
 use base64::Engine as _;
 use plugin_support::{reference_repo, runtime, spec, Req, Resp, Site};
@@ -557,15 +558,17 @@ async fn community_payloads_load_and_report_their_settings() {
     let mut typescript = 0;
     for (manifest, payload) in &plugins {
         let id = manifest["id"].as_str().unwrap_or("unknown");
-        let mut plugin = spec(id, payload);
-        plugin.typescript = manifest["language"] == "typescript";
-        if let Some(fields) = manifest["userConfig"]["fields"].as_array() {
-            for field in fields {
-                if let (Some(name), Some(default)) = (field["name"].as_str(), field["default"].as_str()) {
-                    plugin.preferences.insert(name.to_string(), default.to_string());
-                }
+        // As the app runs a plugin nobody configured: its settings at their defaults.
+        let config = UserConfig::from_manifest(manifest);
+        let (code, preferences) = userconfig::apply(payload, config.as_ref(), None).expect("defaults apply");
+        if let Some(config) = &config {
+            for field in &config.fields {
+                assert!(!code.contains(&format!("{{{{{}}}}}", field.name)), "{}: {} left in the code", id, field.name);
             }
         }
+        let mut plugin = spec(id, &code);
+        plugin.preferences = preferences;
+        plugin.typescript = manifest["language"] == "typescript";
         let engine = PluginRuntime::new(plugin);
         let settings = engine
             .call("getSettings", &[], Duration::from_secs(5), SessionUse::Existing)
@@ -633,4 +636,103 @@ async fn plugins_do_not_share_state() {
     };
     assert_eq!(call(a).await, json!({ "mine": "from a", "id": "a" }));
     assert_eq!(call(b).await, json!({ "mine": "undefined", "id": "b" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scanner_utils_are_available_to_plugins() {
+    let engine = runtime(
+        "scanner",
+        r#"
+class Provider {
+  getSettings() { return { episodeServers: [], supportsDub: false }; }
+  search(opts) {
+    const u = $scannerUtils;
+    const thrown = (run) => { try { run(); return null; } catch (e) { return String(e && e.message ? e.message : e); } };
+    return {
+      names: Object.keys(u).sort(),
+      season: u.buildSeasonQuery('Overlord', 2),
+      part: u.buildPartQuery('Re:Zero', 2),
+      sanitized: u.sanitizeQuery('Fate/stay night [UBW] (2014)!'),
+      query: u.buildSearchQuery(opts.query),
+      smart: u.buildSmartSearchTitles([opts.query, 'Attack on Titan Season 2']),
+      normalized: Object.keys(u.normalizeTitle(opts.query)).sort(),
+      seasonNumber: u.extractSeasonNumber('Kono Subarashii Sekai ni Shukufuku wo! 2'),
+      year: u.extractYear('Hunter x Hunter (2011)'),
+      same: u.compareTitles('One Piece', 'ONE PIECE'),
+      best: u.findBestMatch('One Piece', ['Two Piece', 'One Piece', 'One Punch Man']),
+      noArgs: thrown(() => u.normalizeTitle()),
+      wrongType: thrown(() => u.buildSearchQuery(5)),
+      frozen: thrown(() => { 'use strict'; u.normalizeTitle = null; }),
+    };
+  }
+}
+"#,
+    );
+    let out = engine
+        .call("search", &[json!({ "query": "Shingeki no Kyojin Season 2" })], Duration::from_secs(5), SessionUse::Existing)
+        .await
+        .unwrap();
+    assert_eq!(
+        out["names"],
+        json!([
+            "buildAdvancedQuery", "buildPartQuery", "buildSearchQuery", "buildSeasonQuery", "buildSmartSearchTitles",
+            "compareTitles", "extractPartNumber", "extractSeasonNumber", "extractYear", "findBestMatch",
+            "getSignificantTokens", "normalizeTitle", "sanitizeQuery"
+        ])
+    );
+    // The values Seanime's own functions give for these arguments.
+    assert_eq!(out["season"], json!("(overlord S02 | overlord S2 | overlord Season 2 | overlord 2nd Season)"));
+    assert_eq!(out["part"], json!("(re zero Part 2 | re zero Part II | re zero 2nd Cour)"));
+    assert_eq!(out["sanitized"], json!("Fate/stay night UBW 2014"));
+    assert_eq!(out["seasonNumber"], json!(2));
+    assert_eq!(out["year"], json!(2011));
+    assert_eq!(out["same"].as_f64(), Some(1.0));
+    assert_eq!(out["best"], json!("One Piece"));
+    assert_eq!(out["smart"]["season"], json!(2));
+    assert!(out["smart"]["titles"].as_array().map_or(false, |titles| !titles.is_empty()), "{}", out["smart"]);
+    assert!(out["query"].as_str().map_or(false, |query| query.contains("shingeki")), "{}", out["query"]);
+    assert_eq!(
+        out["normalized"],
+        json!(["cleanBaseTitle", "denoisedTitle", "isExtra", "isMain", "normalized", "original", "part", "season", "tokens", "year"])
+    );
+    assert_eq!(out["noArgs"], json!("TypeError: normalizeTitle requires at least 1 argument"));
+    assert_eq!(out["wrongType"], json!("argument is not a string"));
+    assert!(out["frozen"].is_string(), "{}", out["frozen"]);
+}
+
+/// The community plugins that take their site address from `userConfig` placeholders: with the
+/// manifest's defaults in place they load and build real addresses.
+#[tokio::test(flavor = "multi_thread")]
+async fn community_placeholders_are_replaced_by_their_defaults() {
+    let plugins = community_plugins();
+    if plugins.is_empty() {
+        eprintln!("skipped: the Seanime reference repositories are not next to the app");
+        return;
+    }
+    let mut checked = Vec::new();
+    for (manifest, payload) in &plugins {
+        let Some(config) = UserConfig::from_manifest(manifest) else { continue };
+        let used: Vec<_> = config
+            .fields
+            .iter()
+            .filter(|field| payload.contains(&format!("{{{{{}}}}}", field.name)))
+            .collect();
+        if used.is_empty() {
+            continue;
+        }
+        let id = manifest["id"].as_str().unwrap_or("unknown").to_string();
+        let (code, preferences) = userconfig::apply(payload, Some(&config), None).unwrap();
+        for field in &used {
+            assert!(!code.contains(&format!("{{{{{}}}}}", field.name)), "{}: {}", id, field.name);
+            assert!(code.contains(&field.default), "{}: default of {}", id, field.name);
+            assert_eq!(preferences[&field.name], field.default);
+        }
+        let mut plugin = spec(&id, &code);
+        plugin.typescript = manifest["language"] == "typescript";
+        plugin.preferences = preferences;
+        PluginEngine::start(plugin).unwrap_or_else(|e| panic!("{} does not load: {}", id, e));
+        checked.push(id.to_ascii_lowercase());
+    }
+    checked.sort();
+    assert_eq!(checked, ["animekai", "animeunity", "gojowtf"]);
 }

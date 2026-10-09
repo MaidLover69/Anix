@@ -7,6 +7,7 @@
 use crate::clients::http::http_client;
 use crate::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
 use crate::plugins::provider::{read_settings, PluginProvider, ProviderSettings};
+use crate::plugins::userconfig::{self, ConfigOption, SavedConfig, UserConfig};
 use crate::providers::AnimeProvider;
 use crate::web_session::{app_session, SiteSession};
 use reqwest::Url;
@@ -61,6 +62,33 @@ pub struct PluginInfo {
     pub error: Option<String>,
     pub supports_dub: bool,
     pub servers: Vec<String>,
+    /// The plugin has settings of its own; see `get_plugin_config`.
+    pub configurable: bool,
+}
+
+/// One setting of a plugin as the settings form shows it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PluginConfigField {
+    pub name: String,
+    pub label: String,
+    /// `text`, `switch` (value `"true"` or `"false"`) or `select`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub default: String,
+    /// What is in effect: the saved value, or the default.
+    pub value: String,
+    /// The choices of a `select` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<ConfigOption>>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PluginConfig {
+    pub fields: Vec<PluginConfigField>,
+    /// The plugin does not load until its settings were saved once.
+    pub requires_config: bool,
+    /// Settings were saved for the plugin's current configuration version.
+    pub configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -99,9 +127,12 @@ struct StoredPlugin {
     supports_dub: bool,
     #[serde(default)]
     servers: Vec<String>,
-    /// Default values of the manifest's `userConfig` fields.
+    /// The manifest's `userConfig`.
     #[serde(default)]
-    preferences: HashMap<String, String>,
+    user_config: Option<UserConfig>,
+    /// What the user saved for it.
+    #[serde(default)]
+    saved_config: Option<SavedConfig>,
     /// Changes whenever the payload on disk changes.
     #[serde(default)]
     revision: u64,
@@ -411,8 +442,23 @@ impl PluginRegistry {
                 error: plugin.error.clone(),
                 supports_dub: plugin.supports_dub,
                 servers: plugin.servers.clone(),
+                configurable: plugin.user_config.as_ref().map_or(false, |config| !config.fields.is_empty()),
             })
             .collect()
+    }
+
+    /// How a site is named to the user: by the installed plugins whose requests met its
+    /// anti-bot page, with the host, as in `"AnimeKai (anikai.to)"`.
+    pub fn site_label(&self, site_key: &str, host: &str) -> String {
+        let ids = crate::plugins::net::plugins_for_site(site_key);
+        let names: Vec<String> = self
+            .state()
+            .plugins
+            .iter()
+            .filter(|plugin| ids.contains(&plugin.id))
+            .map(|plugin| if plugin.name.is_empty() { plugin.id.clone() } else { plugin.name.clone() })
+            .collect();
+        crate::web_session::label_with_owners(host, &names)
     }
 
     // ------------------------------------------------------------------ loading
@@ -421,11 +467,14 @@ impl PluginRegistry {
         let path = self.payload_path(plugin);
         let source = std::fs::read_to_string(&path)
             .map_err(|e| format!("the downloaded plugin file is missing ({})", e))?;
+        let (source, preferences) =
+            userconfig::apply(&source, plugin.user_config.as_ref(), plugin.saved_config.as_ref())
+                .map_err(|e| e.message().to_string())?;
         Ok(EngineSpec {
             id: plugin.id.clone(),
             source,
             typescript: plugin.typescript,
-            preferences: plugin.preferences.clone(),
+            preferences,
             limits: self.inner.options.limits,
             session: self.inner.options.session.clone(),
             allow_private_network: self.inner.options.allow_private_network,
@@ -774,17 +823,7 @@ impl PluginRegistry {
             .map(str::trim)
             .filter(|icon| icon.starts_with("https://") || icon.starts_with("data:image/"))
             .map(String::from);
-        stored.preferences = HashMap::new();
-        if let Some(fields) = manifest.get("userConfig").and_then(|c| c.get("fields")).and_then(Value::as_array) {
-            for field in fields {
-                if let (Some(name), Some(default)) = (
-                    field.get("name").and_then(Value::as_str),
-                    field.get("default").and_then(Value::as_str),
-                ) {
-                    stored.preferences.insert(name.to_string(), default.to_string());
-                }
-            }
-        }
+        stored.user_config = UserConfig::from_manifest(manifest);
     }
 
     /// Brings the plugins of one repository in line with its index. Returns the notes for the
@@ -831,7 +870,16 @@ impl PluginRegistry {
                 // Same version: only the description may have changed.
                 let at = existing.unwrap_or_default();
                 let mut plugin = state.plugins[at].clone();
+                let config_before = plugin.user_config.clone();
                 self.describe(&mut plugin, &want.manifest);
+                if plugin.user_config != config_before {
+                    // Its settings decide what code runs, so the plugin is started again.
+                    plugin.revision = self.inner.revisions.fetch_add(1, Ordering::SeqCst) + 1;
+                    self.unload(&plugin.id);
+                    if plugin.enabled {
+                        self.refresh_status(&mut plugin).await;
+                    }
+                }
                 state.plugins[at] = plugin;
                 continue;
             }
@@ -984,6 +1032,67 @@ impl PluginRegistry {
         drop(_changing);
         self.notify();
         self.list_repos()
+    }
+
+    /// The plugin's own settings with the values in effect; no fields for a plugin without any.
+    pub fn plugin_config(&self, id: &str) -> Result<PluginConfig, String> {
+        let state = self.state();
+        let plugin = state
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == id)
+            .ok_or_else(|| format!("No plugin named '{}' is installed.", id))?;
+        let Some(config) = &plugin.user_config else {
+            return Ok(PluginConfig {
+                fields: Vec::new(),
+                requires_config: false,
+                configured: false,
+            });
+        };
+        // Values saved for another configuration version are not in effect.
+        let saved = plugin.saved_config.as_ref().filter(|saved| saved.version == config.version);
+        let values: HashMap<String, String> = config.values(saved).into_iter().collect();
+        Ok(PluginConfig {
+            fields: config
+                .fields
+                .iter()
+                .map(|field| PluginConfigField {
+                    name: field.name.clone(),
+                    label: field.label.clone(),
+                    kind: field.kind.clone(),
+                    default: field.default.clone(),
+                    value: values.get(&field.name).cloned().unwrap_or_default(),
+                    options: (!field.options.is_empty()).then(|| field.options.clone()),
+                })
+                .collect(),
+            requires_config: config.requires_config,
+            configured: saved.is_some(),
+        })
+    }
+
+    /// Saves the user's values for the plugin's settings and starts the plugin again with them.
+    /// Fields left out of `values` take their defaults; values of unknown fields are ignored.
+    pub async fn set_plugin_config(&self, id: &str, values: &HashMap<String, Value>) -> Result<(), String> {
+        let _changing = self.inner.changes.lock().await;
+        let mut state = self.state();
+        let Some(at) = state.plugins.iter().position(|p| p.id == id) else {
+            return Err(format!("No plugin named '{}' is installed.", id));
+        };
+        let mut plugin = state.plugins[at].clone();
+        let Some(config) = plugin.user_config.clone() else {
+            return Err("This plugin has no settings.".to_string());
+        };
+        plugin.saved_config = Some(config.saved_from(values));
+        plugin.revision = self.inner.revisions.fetch_add(1, Ordering::SeqCst) + 1;
+        self.unload(id);
+        if plugin.enabled {
+            self.refresh_status(&mut plugin).await;
+        }
+        state.plugins[at] = plugin;
+        self.store(state);
+        drop(_changing);
+        self.notify();
+        Ok(())
     }
 
     pub async fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {

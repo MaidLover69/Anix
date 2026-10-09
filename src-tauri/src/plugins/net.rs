@@ -4,8 +4,14 @@
 
 use crate::clients::http::{http_client, no_redirect_client};
 use crate::error::AppError;
-use crate::providers::common::{note_plain_blocked, path_and_query, plain_blocked_recently, session_headers};
-use crate::web_session::{self, detect_barrier, SessionChoice, SessionUse, SiteSession};
+use crate::providers::common::{
+    declared_charset, note_plain_blocked, path_and_query, plain_blocked_recently, session_headers,
+    session_referrer,
+};
+use crate::web_session::{
+    self, detect_barrier, SessionChoice, SessionState, SessionUse, SiteSession, SiteSpec, WebRequest,
+    MAX_REQUEST_BODY_BYTES, SESSION_METHODS,
+};
 use once_cell::sync::Lazy;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use reqwest::{Method, Url};
@@ -23,8 +29,16 @@ pub const MAX_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// Largest request body a plugin may send.
 pub const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+/// Limit for a request through a session that already answers.
 const SESSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
+/// Limit for a request through a session that has to be started first: its window is created,
+/// the site loaded and, when the site runs a check of its own on a fresh page, that waited for.
+pub const SESSION_START_TIMEOUT: Duration = Duration::from_secs(25);
+/// Bodies up to this size are also decoded for `text()` when they declare a character set
+/// other than UTF-8.
+const MAX_DECODED_TEXT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_NOTES: usize = 64;
+const MAX_WAITS: usize = 64;
 
 /// Request headers the HTTP client sets itself.
 const CLIENT_OWNED_HEADERS: [&str; 6] = [
@@ -60,6 +74,9 @@ pub struct WireResponseMeta {
     pub url: String,
     pub redirected: bool,
     pub headers: Vec<(String, String)>,
+    /// The body as text, when it declares a character set that is not UTF-8.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +92,9 @@ pub enum NetNote {
     Blocked,
     /// The in-app browser was refused as well; the user can verify for this site.
     NeedsVerification { site: String, origin: String },
+    /// A site answered with its anti-bot page and the in-app browser did not get an answer
+    /// either, for this reason.
+    SessionFailed(String),
     Unreachable(String),
     Answered,
 }
@@ -86,6 +106,23 @@ pub struct NetContext {
     /// Loopback and private addresses are refused unless this is set (tests, the dev runner).
     allow_private: bool,
     notes: Mutex<Vec<(Instant, NetNote)>>,
+    /// When requests waited for an in-app browser session: start and, once over, end.
+    waits: Mutex<Vec<(Instant, Option<Instant>)>>,
+}
+
+/// Marks the end of a wait for a session, also when the request is dropped.
+struct WaitGuard<'a> {
+    net: &'a NetContext,
+    started: Instant,
+}
+
+impl Drop for WaitGuard<'_> {
+    fn drop(&mut self) {
+        let mut waits = self.net.waits.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(wait) = waits.iter_mut().find(|(at, end)| *at == self.started && end.is_none()) {
+            wait.1 = Some(Instant::now());
+        }
+    }
 }
 
 static SITE_PLUGINS: Lazy<Mutex<HashMap<String, BTreeSet<String>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -149,7 +186,39 @@ impl NetContext {
             session,
             allow_private,
             notes: Mutex::new(Vec::new()),
+            waits: Mutex::new(Vec::new()),
         }
+    }
+
+    fn start_wait(&self) -> WaitGuard<'_> {
+        let started = Instant::now();
+        let mut waits = self.waits.lock().unwrap_or_else(|p| p.into_inner());
+        if waits.len() >= MAX_WAITS {
+            waits.retain(|(_, end)| end.is_none());
+            let excess = (waits.len() + 1).saturating_sub(MAX_WAITS).min(waits.len());
+            waits.drain(..excess);
+        }
+        waits.push((started, None));
+        WaitGuard { net: self, started }
+    }
+
+    /// How long this plugin's requests have been waiting for an in-app browser session since
+    /// `since`. Callers add it to their time limits, so that starting a session (creating its
+    /// window and loading the site) does not use up the time the plugin itself is given.
+    pub fn session_time_since(&self, since: Instant) -> Duration {
+        let now = Instant::now();
+        let waits = self.waits.lock().unwrap_or_else(|p| p.into_inner());
+        let total: Duration = waits
+            .iter()
+            .map(|(start, end)| end.unwrap_or(now).saturating_duration_since((*start).max(since)))
+            .sum();
+        total.min(now.saturating_duration_since(since))
+    }
+
+    /// True while a request of this plugin waits for an in-app browser session.
+    pub fn waiting_for_session(&self) -> bool {
+        let waits = self.waits.lock().unwrap_or_else(|p| p.into_inner());
+        waits.iter().any(|(_, end)| end.is_none())
     }
 
     fn note(&self, note: NetNote) {
@@ -178,6 +247,14 @@ impl NetContext {
                     origin: origin.clone(),
                 });
             }
+        }
+        if let Some(NetNote::SessionFailed(reason)) =
+            recent.iter().find(|note| matches!(note, NetNote::SessionFailed(_)))
+        {
+            return Some(AppError::Network(format!(
+                "blocked by anti-bot check, and the in-app browser did not get through ({})",
+                reason
+            )));
         }
         if recent.iter().any(|note| matches!(note, NetNote::Blocked)) {
             return Some(AppError::CaptchaRequired);
@@ -304,16 +381,45 @@ impl NetContext {
             bytes.extend_from_slice(&chunk);
         }
 
-        Ok(WireResponse {
+        Ok(with_text(WireResponse {
             meta: WireResponseMeta {
                 status: status.as_u16(),
                 status_text: status_text(status.as_u16()),
                 redirected: final_url != *url,
                 url: final_url.to_string(),
                 headers: header_pairs,
+                text: None,
             },
             body: bytes,
-        })
+        }))
+    }
+
+    /// The request as a page of the site could make it, when it can: a same-origin request
+    /// with a method and body a page may send, following redirects as a page does.
+    fn session_request(
+        &self,
+        url: &Url,
+        method: &Method,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        redirect: &str,
+    ) -> Option<(&'static SiteSpec, WebRequest)> {
+        if redirect != "follow" || !SESSION_METHODS.contains(&method.as_str()) {
+            return None;
+        }
+        if body.map_or(false, |body| body.len() > MAX_REQUEST_BODY_BYTES) {
+            return None;
+        }
+        let body = body.filter(|_| !matches!(method.as_str(), "GET" | "HEAD"));
+        let site = web_session::origin_of(url).and_then(|origin| web_session::site_for_origin(&origin))?;
+        let request = WebRequest {
+            method: method.as_str().to_string(),
+            path: path_and_query(url),
+            headers: session_headers(headers),
+            body: body.map(<[u8]>::to_vec),
+            referrer: session_referrer(headers, url),
+        };
+        request.problem().is_none().then_some((site, request))
     }
 
     /// Makes one request for the plugin. `access` says whether an in-app browser session may be
@@ -349,13 +455,9 @@ impl NetContext {
         let headers = self.request_headers(&request);
         let body = request.has_body.then_some(body.as_slice());
 
-        // Only a plain page or API request can be repeated inside the site's own page.
-        let session_capable = method == Method::GET && body.is_none() && redirect == "follow";
-        let site = if session_capable {
-            web_session::origin_of(&url).and_then(|origin| web_session::site_for_origin(&origin))
-        } else {
-            None
-        };
+        // A refused request is repeated inside the site's own page when a page could make it.
+        let through_session = self.session_request(&url, &method, &headers, body, redirect);
+        let site = through_session.as_ref().map(|(site, _)| *site);
 
         let skip_plain = match site {
             Some(site) if plain_blocked_recently(site.key) => {
@@ -388,7 +490,7 @@ impl NetContext {
             refused = Some(response);
         }
 
-        let Some(site) = site else {
+        let Some((site, asked)) = through_session else {
             return refused.ok_or_else(|| "blocked by anti-bot check".to_string());
         };
         {
@@ -412,34 +514,43 @@ impl NetContext {
             SessionChoice::Ask => {}
         }
 
+        let warm = self.session.state(site) == SessionState::Warm;
+        let session_timeout = if warm {
+            SESSION_REQUEST_TIMEOUT.min(timeout.max(Duration::from_secs(5)))
+        } else {
+            SESSION_START_TIMEOUT
+        };
         tracing::info!(
-            "{} refuses the HTTP client; asking through the in-app browser for plugin {}",
+            "{} refuses the HTTP client; plugin {} asks {} {} through the in-app browser ({})",
             site.label,
-            self.plugin_id
+            self.plugin_id,
+            asked.method,
+            url.path(),
+            if warm { "session in use" } else { "starting the session" }
         );
-        let passed = session_headers(&headers);
-        let passed: Vec<(&str, &str)> = passed.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-        match self
-            .session
-            .fetch(site, &path_and_query(&url), &passed, SESSION_REQUEST_TIMEOUT.min(timeout.max(Duration::from_secs(5))))
-            .await
-        {
+        let answer = {
+            let _waiting = self.start_wait();
+            self.session.fetch(site, &asked, session_timeout).await
+        };
+        match answer {
             Ok(answer) => {
                 self.note(NetNote::Answered);
                 let mut header_pairs: Vec<(String, String)> = answer.headers.into_iter().collect();
                 header_pairs.sort();
-                Ok(WireResponse {
+                Ok(with_text(WireResponse {
                     meta: WireResponseMeta {
                         status: answer.status,
                         status_text: status_text(answer.status),
-                        url: url.to_string(),
-                        redirected: false,
+                        url: answer.url,
+                        redirected: answer.redirected,
                         headers: header_pairs,
+                        text: None,
                     },
-                    body: answer.body.into_bytes(),
-                })
+                    body: answer.body,
+                }))
             }
             Err(AppError::VerificationRequired { site, origin }) => {
+                tracing::info!("plugin {}: {} needs the user to verify", self.plugin_id, origin);
                 give_up(self, NetNote::NeedsVerification { site, origin }, "needs verification")
             }
             Err(other) => {
@@ -448,8 +559,26 @@ impl NetContext {
                     self.plugin_id,
                     other.reason()
                 );
-                give_up(self, NetNote::Blocked, "blocked by anti-bot check")
+                give_up(self, NetNote::SessionFailed(other.reason()), "blocked by anti-bot check")
             }
         }
     }
+}
+
+/// Adds the decoded text to an answer that declares a character set other than UTF-8, so that
+/// `text()` and `json()` read what the site meant; the bytes stay as they were sent.
+fn with_text(mut response: WireResponse) -> WireResponse {
+    let content_type = response
+        .meta
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.as_str());
+    if let Some(encoding) = declared_charset(content_type) {
+        if encoding != encoding_rs::UTF_8 && response.body.len() <= MAX_DECODED_TEXT_BYTES {
+            let (text, _, _) = encoding.decode(&response.body);
+            response.meta.text = Some(text.into_owned());
+        }
+    }
+    response
 }

@@ -42,6 +42,12 @@ pub trait AnimeProvider: Send + Sync {
         self.session_site().is_some()
     }
 
+    /// How long this provider's requests have waited for an in-app browser session since
+    /// `since`; the manager adds it to the provider's time limit.
+    fn session_time_since(&self, _since: std::time::Instant) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
     /// True when `get_sources` only returns streams whose first entry it has already checked
     /// for playability, so the manager does not check them a second time.
     fn verifies_streams(&self) -> bool {

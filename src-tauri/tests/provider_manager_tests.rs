@@ -370,6 +370,81 @@ async fn verification_puts_the_working_stream_first_and_keeps_the_rest() {
     assert_eq!(verify_streams(Vec::new()).await.unwrap_err(), "no streams");
 }
 
+fn file(url: String) -> StreamItem {
+    StreamItem::new(url, "mp4".to_string(), None, None, None, true)
+}
+
+const CHECK_PAGE: &str = "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body></body></html>";
+
+#[tokio::test]
+async fn a_stream_host_that_answers_with_its_anti_bot_page_is_named_as_such() {
+    let check = Route { status: 403, headers: vec![("Content-Type", "text/html".to_string())], body: CHECK_PAGE.to_string() };
+    let mitigated = Route {
+        status: 200,
+        headers: vec![("cf-mitigated", "challenge".to_string()), ("Content-Type", "text/html".to_string())],
+        body: "<html></html>".to_string(),
+    };
+    let host = StreamHost::start(vec![
+        ("/guarded/video.mp4", check.clone()),
+        ("/guarded/master.m3u8", check.clone()),
+        ("/half/index.m3u8", ok(MEDIA_PLAYLIST)),
+        ("/half/seg0.ts", check),
+        ("/soft/video.mp4", mitigated),
+    ])
+    .await;
+
+    for stream in [
+        file(host.url("/guarded/video.mp4")),
+        hls(host.url("/guarded/master.m3u8")),
+        hls(host.url("/half/index.m3u8")),
+        file(host.url("/soft/video.mp4")),
+    ] {
+        let reason = verify_streams(vec![stream.clone()]).await.unwrap_err();
+        assert_eq!(reason, "127.0.0.1 answered with its anti-bot check", "{}", stream.url);
+    }
+    // An ordinary refusal keeps its status.
+    let reason = verify_streams(vec![file(host.url("/nowhere.mp4"))]).await.unwrap_err();
+    assert_eq!(reason, "HTTP 404 from 127.0.0.1");
+}
+
+#[tokio::test]
+async fn a_web_page_is_not_accepted_as_a_video() {
+    let page = |content_type: &str| Route {
+        status: 200,
+        headers: vec![("Content-Type", content_type.to_string())],
+        body: "\n <!DOCTYPE html><html><body>Download will start soon</body></html>".to_string(),
+    };
+    let disguised_segment = Route {
+        status: 200,
+        headers: vec![("Content-Type", "text/html".to_string())],
+        body: "G@\u{11}\u{10} transport stream bytes".to_string(),
+    };
+    let host = StreamHost::start(vec![
+        ("/page/video.mp4", page("text/html; charset=utf-8")),
+        ("/mislabelled/video.mp4", page("video/mp4")),
+        ("/real/video.mp4", Route { status: 206, headers: vec![("Content-Type", "video/mp4".to_string())], body: "\0\0\0 ftypisom".to_string() }),
+        ("/page/index.m3u8", ok(MEDIA_PLAYLIST)),
+        ("/page/seg0.ts", page("text/html")),
+        ("/odd/index.m3u8", ok(MEDIA_PLAYLIST)),
+        ("/odd/seg0.ts", disguised_segment),
+        ("/embed.m3u8", page("text/html")),
+    ])
+    .await;
+
+    for path in ["/page/video.mp4", "/mislabelled/video.mp4"] {
+        let reason = verify_streams(vec![file(host.url(path))]).await.unwrap_err();
+        assert_eq!(reason, "127.0.0.1 answered with a web page instead of a video", "{}", path);
+    }
+    let reason = verify_streams(vec![hls(host.url("/page/index.m3u8"))]).await.unwrap_err();
+    assert_eq!(reason, "127.0.0.1 answered with a web page instead of a video");
+    let reason = verify_streams(vec![hls(host.url("/embed.m3u8"))]).await.unwrap_err();
+    assert_eq!(reason, "127.0.0.1 answered with a web page instead of a playlist");
+
+    assert!(verify_stream_segment(&file(host.url("/real/video.mp4"))).await);
+    // Media sent under a text type is still media.
+    assert!(verify_stream_segment(&hls(host.url("/odd/index.m3u8"))).await);
+}
+
 // ---------------------------------------------------------------- racing and reporting
 
 #[tokio::test]

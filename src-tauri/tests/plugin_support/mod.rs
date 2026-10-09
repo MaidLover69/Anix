@@ -3,10 +3,13 @@
 
 use anilili_lib::error::AppError;
 use anilili_lib::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
-use anilili_lib::web_session::{SessionState, SiteSession, SiteSpec, WebResponse};
+use anilili_lib::web_session::{
+    self, Asked, DocumentState, Outcome, PageAccess, SessionState, SiteSession, SiteSpec, WebRequest, WebResponse,
+};
+use std::time::Instant;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -192,8 +195,7 @@ impl SiteSession for NoSession {
     async fn fetch(
         &self,
         _site: &'static SiteSpec,
-        _path: &str,
-        _headers: &[(&str, &str)],
+        _request: &WebRequest,
         _timeout: Duration,
     ) -> Result<WebResponse, AppError> {
         Err(AppError::Other("no session".to_string()))
@@ -238,11 +240,10 @@ impl SiteSession for FakeSession {
     async fn fetch(
         &self,
         site: &'static SiteSpec,
-        path: &str,
-        _headers: &[(&str, &str)],
+        request: &WebRequest,
         _timeout: Duration,
     ) -> Result<WebResponse, AppError> {
-        self.asked.lock().unwrap().push(path.to_string());
+        self.asked.lock().unwrap().push(request.path.clone());
         if self.refuse {
             return Err(AppError::VerificationRequired {
                 site: site.key.to_string(),
@@ -252,9 +253,268 @@ impl SiteSession for FakeSession {
         Ok(WebResponse {
             status: 200,
             origin: site.origins[0].to_string(),
+            url: format!("{}{}", site.origins[0], request.path),
+            redirected: false,
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
-            body: self.body.clone(),
+            body: self.body.clone().into_bytes(),
         })
+    }
+}
+
+/// The cookie a `guarded` site wants to see; only the browser stand-in has it.
+pub const PASS_COOKIE: &str = "passed=1";
+
+/// The page a guarded site answers a visitor with who has not passed its check.
+pub const CHECK_PAGE: &str =
+    "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt={}</script></body></html>";
+
+/// Wraps a handler so that requests without the cookie get the site's check page (HTTP 403)
+/// for its front page and every path under `/guarded/`.
+pub fn guarded(handler: impl Fn(&Req) -> Resp + Send + Sync + 'static) -> impl Fn(&Req) -> Resp + Send + Sync + 'static {
+    move |request: &Req| {
+        let checked = request.route() == "/" || request.route().starts_with("/guarded/");
+        if checked && !request.header("cookie").contains(PASS_COOKIE) {
+            return Resp::new(403, "text/html; charset=utf-8", CHECK_PAGE);
+        }
+        handler(request)
+    }
+}
+
+/// A stand-in for the in-app browser that behaves like one towards loopback sites: each origin
+/// has a session of its own that is refused until `verify` (the user passing the check) and
+/// then makes real requests carrying the cookie the site wants, with the method, headers and
+/// body it was given, following redirects, and handing back status, headers and bytes. What an
+/// outcome means is decided by the app's own `web_session::ask`, from the request's outcome and
+/// the document the "window" is on (the site's front page as this visitor gets it).
+pub struct BrowserStandIn {
+    client: reqwest::Client,
+    /// Origins whose check the user passed; the cookie is sent only to these.
+    verified: Mutex<HashSet<String>>,
+    warm: Mutex<HashSet<String>>,
+    refused: Mutex<HashSet<String>>,
+    /// Origins that answered in an earlier run of the app.
+    answered_before: Mutex<HashSet<String>>,
+    asked: Mutex<Vec<(String, WebRequest)>>,
+    /// How long the first request to an origin takes (a window being created, the site loading).
+    start_delay: Mutex<Duration>,
+    /// Origins whose check page aborts the requests made in it, as a check page that reloads
+    /// itself does: they fail like a network error instead of being answered.
+    check_aborts: Mutex<HashSet<String>>,
+    /// Paths whose requests fail inside the page whatever page it is.
+    failing_paths: Mutex<HashSet<String>>,
+}
+
+/// One origin's page in the stand-in.
+struct StandInPage<'a> {
+    browser: &'a BrowserStandIn,
+    timeout: Duration,
+}
+
+impl BrowserStandIn {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            client: reqwest::Client::builder().no_proxy().build().expect("client"),
+            verified: Mutex::new(HashSet::new()),
+            warm: Mutex::new(HashSet::new()),
+            refused: Mutex::new(HashSet::new()),
+            answered_before: Mutex::new(HashSet::new()),
+            asked: Mutex::new(Vec::new()),
+            start_delay: Mutex::new(Duration::ZERO),
+            check_aborts: Mutex::new(HashSet::new()),
+            failing_paths: Mutex::new(HashSet::new()),
+        })
+    }
+
+    /// While `origin` shows its check page, requests made in the page fail instead of being
+    /// answered.
+    pub fn set_check_page_aborts(&self, origin: &str) {
+        self.check_aborts.lock().unwrap().insert(origin.to_string());
+    }
+
+    /// Requests for `path` fail inside the page, on any page.
+    pub fn set_failing_path(&self, path: &str) {
+        self.failing_paths.lock().unwrap().insert(path.to_string());
+    }
+
+    fn is_verified(&self, origin: &str) -> bool {
+        self.verified.lock().unwrap().contains(origin)
+    }
+
+    /// What the verification window's probe finds for a request that was refused.
+    pub async fn probe(&self, origin: &str, refused: &WebRequest) -> Option<bool> {
+        let page = StandInPage { browser: self, timeout: Duration::from_secs(5) };
+        web_session::verification_probe(&page, origin, refused, Instant::now() + Duration::from_secs(5)).await
+    }
+
+    /// The user passes the check of `origin` in its window.
+    pub fn verify(&self, origin: &str) {
+        self.verified.lock().unwrap().insert(origin.to_string());
+        self.refused.lock().unwrap().remove(origin);
+    }
+
+    /// The site stops accepting what the session earned.
+    pub fn revoke(&self, origin: &str) {
+        self.verified.lock().unwrap().remove(origin);
+    }
+
+    /// The app is started again: no windows, the webview's cookies still on disk.
+    pub fn restart(&self) {
+        let warm: Vec<String> = self.warm.lock().unwrap().drain().collect();
+        self.answered_before.lock().unwrap().extend(warm);
+        self.refused.lock().unwrap().clear();
+    }
+
+    pub fn set_start_delay(&self, delay: Duration) {
+        *self.start_delay.lock().unwrap() = delay;
+    }
+
+    /// Every request made through the stand-in: the origin and the request.
+    pub fn asked(&self) -> Vec<(String, WebRequest)> {
+        self.asked.lock().unwrap().clone()
+    }
+
+    pub fn asked_paths(&self, origin: &str) -> Vec<String> {
+        self.asked()
+            .into_iter()
+            .filter(|(asked, _)| asked == origin)
+            .map(|(_, request)| format!("{} {}", request.method, request.path))
+            .collect()
+    }
+}
+
+#[async_trait]
+impl SiteSession for BrowserStandIn {
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn state(&self, site: &'static SiteSpec) -> SessionState {
+        let origin = site.origins[0];
+        if self.refused.lock().unwrap().contains(origin) {
+            SessionState::Refused(origin.to_string())
+        } else if self.warm.lock().unwrap().contains(origin) {
+            SessionState::Warm
+        } else if self.answered_before.lock().unwrap().contains(origin) {
+            SessionState::Resumable
+        } else {
+            SessionState::Cold
+        }
+    }
+
+    async fn fetch(
+        &self,
+        site: &'static SiteSpec,
+        request: &WebRequest,
+        timeout: Duration,
+    ) -> Result<WebResponse, AppError> {
+        let origin = site.origins[0].to_string();
+        assert!(request.problem().is_none(), "not a request a page can make: {:?}", request);
+        self.asked.lock().unwrap().push((origin.clone(), request.clone()));
+
+        let starting = !self.warm.lock().unwrap().contains(&origin);
+        let delay = *self.start_delay.lock().unwrap();
+        if starting && !delay.is_zero() {
+            if delay >= timeout {
+                tokio::time::sleep(timeout).await;
+                return Err(AppError::Network(format!("{} is still loading in the in-app browser", site.label)));
+            }
+            tokio::time::sleep(delay).await;
+        }
+
+        let page = StandInPage { browser: self, timeout };
+        match web_session::ask(&page, &origin, request, Instant::now() + timeout).await {
+            Asked::Answer(response) => {
+                self.warm.lock().unwrap().insert(origin);
+                Ok(response)
+            }
+            Asked::Refused => {
+                self.warm.lock().unwrap().remove(&origin);
+                self.answered_before.lock().unwrap().remove(&origin);
+                self.refused.lock().unwrap().insert(origin.clone());
+                Err(AppError::VerificationRequired {
+                    site: site.key.to_string(),
+                    origin,
+                })
+            }
+            Asked::RequestFailed(reason) => Err(AppError::Network(format!(
+                "the request to {} failed in the in-app browser ({})",
+                site.label, reason
+            ))),
+            Asked::Other(outcome) => Err(AppError::Network(format!("{:?} in the in-app browser", outcome))),
+        }
+    }
+}
+
+#[async_trait]
+impl PageAccess for StandInPage<'_> {
+    async fn request(&self, origin: &str, request: &WebRequest, _deadline: Instant) -> Outcome {
+        let browser = self.browser;
+        let verified = browser.is_verified(origin);
+        let aborted = !verified && browser.check_aborts.lock().unwrap().contains(origin);
+        let route = request.path.split('?').next().unwrap_or_default().to_string();
+        if aborted || browser.failing_paths.lock().unwrap().contains(&route) {
+            return Outcome::Failed("TypeError: Load failed".to_string());
+        }
+        let mut outgoing = browser
+            .client
+            .request(reqwest::Method::from_bytes(request.method.as_bytes()).unwrap(), format!("{}{}", origin, request.path))
+            .timeout(self.timeout);
+        for (name, value) in &request.headers {
+            outgoing = outgoing.header(name, value);
+        }
+        // What the browser adds by itself: the session's cookies, the page as referrer.
+        if verified {
+            outgoing = outgoing.header("cookie", PASS_COOKIE);
+        }
+        let referrer = request.referrer.clone().unwrap_or_else(|| "/".to_string());
+        outgoing = outgoing.header("referer", format!("{}{}", origin, referrer));
+        if let Some(body) = &request.body {
+            outgoing = outgoing.body(body.clone());
+        }
+        let Ok(response) = outgoing.send().await else {
+            return Outcome::Failed("TypeError: Load failed".to_string());
+        };
+        let status = response.status().as_u16();
+        let url = response.url().to_string();
+        let mut headers: HashMap<String, String> = HashMap::new();
+        for (name, value) in response.headers() {
+            // A page's script is never shown the cookies a site sets.
+            if name.as_str() != "set-cookie" {
+                headers.insert(name.as_str().to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned());
+            }
+        }
+        let Ok(body) = response.bytes().await else {
+            return Outcome::Failed("TypeError: Load failed".to_string());
+        };
+        Outcome::Response(WebResponse {
+            status,
+            origin: origin.to_string(),
+            redirected: url != format!("{}{}", origin, request.path),
+            url,
+            headers,
+            body: body.to_vec(),
+        })
+    }
+
+    /// The document of the window: the site's front page as this visitor is served it.
+    async fn document(&self, origin: &str) -> DocumentState {
+        let mut outgoing = self.browser.client.get(format!("{}/", origin)).timeout(self.timeout);
+        if self.browser.is_verified(origin) {
+            outgoing = outgoing.header("cookie", PASS_COOKIE);
+        }
+        let Ok(response) = outgoing.send().await else {
+            return DocumentState::Unreadable;
+        };
+        let markup = response.text().await.unwrap_or_default();
+        let title = markup
+            .split_once("<title>")
+            .and_then(|(_, rest)| rest.split_once("</title>"))
+            .map(|(title, _)| title.to_string())
+            .unwrap_or_default();
+        match web_session::document_barrier(&title, &markup) {
+            Some(kind) => DocumentState::Barrier(kind),
+            None => DocumentState::Site,
+        }
     }
 }
 

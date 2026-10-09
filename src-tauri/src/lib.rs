@@ -69,6 +69,10 @@ pub fn run() {
                 Ok(pool) => {
                     let state = AppState::new(pool);
                     plugins::start(app.handle().clone(), state.plugins.clone());
+                    let registry = state.plugins.clone();
+                    web_session::set_labeller(std::sync::Arc::new(move |site| {
+                        Some(registry.site_label(site.key, site.label))
+                    }));
                     app.manage(state);
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
@@ -117,6 +121,8 @@ pub fn run() {
             commands::refresh_plugin_repos,
             commands::list_plugins,
             commands::set_plugin_enabled,
+            commands::get_plugin_config,
+            commands::set_plugin_config,
             // Library & History
             commands::get_watched_episodes,
             commands::get_episode_progress,

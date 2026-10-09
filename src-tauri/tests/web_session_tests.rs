@@ -4,13 +4,19 @@
 
 use anilili_lib::error::AppError;
 use anilili_lib::plugins::net::{NetContext, WireRequest};
-use anilili_lib::providers::common::{path_and_query, session_headers};
+use anilili_lib::providers::common::{decode_text, path_and_query, session_headers, session_referrer};
 use anilili_lib::web_session::{
-    self, collect_script, cancel_script, detect_barrier, js_string, order_origins, parse_collected,
-    request_script, valid_request_path, Barrier, Collected, SessionChoice, SessionState, SessionUse,
-    SiteSession, SiteSpec, Walk, WalkStep, WebResponse, CAPTURED_HEADERS, COMMIT_GRACE, LOAD_TIMEOUT, MAX_BODY_CHARS, MAX_RELOADS,
-    WALK_COOLDOWN,
+    ask, document_barrier, document_script, parse_document_state, verification_probe, Asked, DocumentState,
+    Outcome, PageAccess,
 };
+use anilili_lib::web_session::{
+    self, answered_url, cancel_script, collect_script, detect_barrier, js_string, label_with_owners,
+    order_origins, parse_collected, request_script, valid_request_path, Barrier, Collected, KnownOrigins,
+    SessionChoice, SessionState, SessionUse, SiteSession, SiteSpec, Walk, WalkStep, WebRequest, WebResponse,
+    COMMIT_GRACE, LOAD_TIMEOUT, MAX_BODY_BYTES, MAX_HEADER_CHARS, MAX_RELOADS, MAX_REQUEST_BODY_BYTES,
+    WALK_COOLDOWN, WITHHELD_HEADERS,
+};
+use base64::Engine as _;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -136,11 +142,27 @@ fn literal_at(script: &str, at: usize) -> (String, &str) {
     (value, &script[at + stream.byte_offset()..])
 }
 
+fn b64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn page_request(method: &str, path: &str, headers: &[(&str, &str)], body: Option<&[u8]>) -> WebRequest {
+    WebRequest {
+        method: method.to_string(),
+        path: path.to_string(),
+        headers: headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect(),
+        body: body.map(<[u8]>::to_vec),
+        referrer: None,
+    }
+}
+
 #[test]
 fn request_script_keeps_hostile_input_inside_its_literals() {
     for value in HOSTILE {
-        let sent_headers = vec![(format!("X-{}", value), value.to_string())];
-        let script = request_script(value, "https://site.example", value, &sent_headers);
+        let name = format!("X-{}", value);
+        let mut request = page_request("POST", value, &[(name.as_str(), value)], Some(value.as_bytes()));
+        request.referrer = Some(value.to_string());
+        let script = request_script(value, "https://site.example", &request);
         assert!(!script.contains("</script"), "{}", script);
         assert!(!script.contains('\n') && !script.contains('\u{2028}'), "{}", script);
 
@@ -150,7 +172,18 @@ fn request_script_keeps_hostile_input_inside_its_literals() {
 
         let (path, rest) = literal_at(&script, script.find("fetch(o+").unwrap() + "fetch(o+".len());
         assert_eq!(path, value);
-        assert!(rest.starts_with(",{method:\"GET\",headers:h,credentials:\"include\""), "{}", rest);
+        assert!(rest.starts_with(",q).then("), "{}", rest);
+
+        let (method, rest) = literal_at(&script, script.find("var q={method:").unwrap() + "var q={method:".len());
+        assert_eq!(method, "POST");
+        assert!(rest.starts_with(",headers:h,credentials:\"include\""), "{}", rest);
+
+        let (referrer, _) = literal_at(&script, script.find("q.referrer=o+").unwrap() + "q.referrer=o+".len());
+        assert_eq!(referrer, value);
+
+        // The body travels as base64, which has nothing in it that could end a literal.
+        let (body, _) = literal_at(&script, script.find("var d=atob(").unwrap() + "var d=atob(".len());
+        assert_eq!(body, b64(value.as_bytes()));
 
         let pair_at = script.find("var h={};[[").unwrap() + "var h={};[[".len();
         let (name, rest) = literal_at(&script, pair_at);
@@ -169,15 +202,15 @@ fn request_script_keeps_hostile_input_inside_its_literals() {
 
 #[test]
 fn request_script_asks_only_its_own_origin() {
-    let script = request_script("key", "https://www.miruro.bz", "/api/secure/pipe?e=abc", &[]);
+    let script = request_script("key", "https://www.miruro.bz", &WebRequest::get("/api/secure/pipe?e=abc"));
     // The request address is the page's origin plus a path, and the page must be on it.
     assert!(script.contains("if(location.origin!==o){finish({elsewhere:String(location.origin)});return}"));
     assert!(script.contains("fetch(o+\"/api/secure/pipe?e=abc\","));
-    assert!(script.contains("credentials:\"include\""));
-    for name in CAPTURED_HEADERS {
-        assert!(script.contains(&format!("\"{}\"", name)), "{}", name);
-    }
-    assert!(script.contains(&format!("b.length>{}", MAX_BODY_CHARS)));
+    assert!(script.contains("method:\"GET\",headers:h,credentials:\"include\""));
+    assert!(script.contains("redirect:\"follow\""));
+    assert!(script.contains(&format!("b.length>{}", MAX_BODY_BYTES)));
+    // A request without a body or a referrer of its own sets neither.
+    assert!(!script.contains("q.body") && !script.contains("q.referrer"));
 
     for path in ["/api?m=search&q=one%20piece", "/play/a/b", "/"] {
         assert!(valid_request_path(path), "{}", path);
@@ -192,6 +225,52 @@ fn request_script_asks_only_its_own_origin() {
         "/a#fragment",
     ] {
         assert!(!valid_request_path(path), "{:?}", path);
+        assert!(WebRequest::get(path).problem().is_some(), "{:?}", path);
+    }
+}
+
+#[test]
+fn only_requests_a_page_can_make_are_accepted() {
+    assert_eq!(WebRequest::get("/api").problem(), None);
+    for method in ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] {
+        let body = (!matches!(method, "GET" | "HEAD")).then_some(&b"{}"[..]);
+        assert_eq!(page_request(method, "/api", &[], body).problem(), None, "{}", method);
+    }
+    for method in ["CONNECT", "TRACE", "get", "", "GET\r\nX: y"] {
+        assert!(page_request(method, "/api", &[], None).problem().is_some(), "{:?}", method);
+    }
+    assert!(page_request("GET", "/api", &[], Some(b"x")).problem().is_some());
+    let large = vec![0u8; MAX_REQUEST_BODY_BYTES + 1];
+    assert!(page_request("POST", "/api", &[], Some(&large)).problem().is_some());
+    let mut elsewhere = WebRequest::get("/api");
+    elsewhere.referrer = Some("https://other.example/".to_string());
+    assert!(elsewhere.problem().is_some());
+}
+
+/// Nothing the webview holds for a site is read by the scripts: they make a request and hand
+/// its answer back, and the headers that would carry cookies are left out even if seen.
+#[test]
+fn page_scripts_read_no_cookies_and_no_storage() {
+    let request = page_request("POST", "/api", &[("Accept", "*/*")], Some(b"body"));
+    let scripts = [
+        request_script("k", "https://site.example", &request),
+        collect_script("k"),
+        cancel_script("k"),
+    ];
+    for script in &scripts {
+        let lowered = script.to_ascii_lowercase();
+        for forbidden in ["cookie\"", "document.", "localstorage", "sessionstorage", "indexeddb", "caches", "navigator.", "postmessage", "xmlhttprequest"] {
+            if forbidden == "cookie\"" {
+                // The only mention of cookies is the list of response headers that are withheld.
+                let mentions = lowered.matches("cookie").count();
+                assert_eq!(mentions, lowered.matches("\"set-cookie").count(), "{}", script);
+                continue;
+            }
+            assert!(!lowered.contains(forbidden), "{} in {}", forbidden, script);
+        }
+    }
+    for name in WITHHELD_HEADERS {
+        assert!(scripts[0].contains(&format!("\"{}\"", name)), "{}", name);
     }
 }
 
@@ -199,29 +278,43 @@ fn request_script_asks_only_its_own_origin() {
 /// `node` is installed; the scripts' text is covered by the tests above either way.
 #[test]
 fn page_scripts_behave_in_a_javascript_engine_when_node_is_installed() {
+    // Every byte value, so nothing survives by being text.
+    let binary: Vec<u8> = (0..=255u8).chain([0xff, 0xfe, 0x00, 0x80]).collect();
     let request = request_script(
         "__k1",
         "https://site.example",
-        "/api?q=\"a\"</script>\n",
-        &[("Accept".to_string(), "*/*".to_string())],
+        &page_request("GET", "/api?q=\"a\"</script>\n", &[("Accept", "*/*")], None),
     );
-    let wrong_origin = request_script("__k2", "https://other.example", "/x", &[]);
-    let failing = request_script("__k3", "https://site.example", "/fail", &[]);
-    let huge = request_script("__k4", "https://site.example", "/huge", &[]);
-    let abandoned = request_script("__k5", "https://site.example", "/never", &[]);
+    let mut posting = page_request("POST", "/post", &[("Content-Type", "application/octet-stream")], Some(&binary));
+    posting.referrer = Some("/watch/1".to_string());
+    let post = request_script("__k6", "https://site.example", &posting);
+    let wrong_origin = request_script("__k2", "https://other.example", &WebRequest::get("/x"));
+    let failing = request_script("__k3", "https://site.example", &WebRequest::get("/fail"));
+    let huge = request_script("__k4", "https://site.example", &WebRequest::get("/huge"));
+    let abandoned = request_script("__k5", "https://site.example", &WebRequest::get("/never"));
 
     let harness = format!(
         r#"
 const seen = [];
 globalThis.window = globalThis;
 globalThis.location = {{ origin: "https://site.example" }};
+const binary = Uint8Array.from(atob("{binary}"), (c) => c.charCodeAt(0));
 globalThis.fetch = (url, init) => {{
-  seen.push({{ url, init: {{ method: init.method, headers: init.headers, credentials: init.credentials }} }});
+  seen.push({{ url, init: {{ method: init.method, headers: init.headers, credentials: init.credentials, redirect: init.redirect,
+    referrer: init.referrer === undefined ? null : init.referrer, body: init.body ? Buffer.from(init.body).toString("base64") : null }} }});
   if (url.endsWith("/fail")) return Promise.reject(new TypeError("Load failed"));
   if (url.endsWith("/never")) return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));
-  const body = url.endsWith("/huge") ? "x".repeat({limit} + 1) : "{{\"ok\":true}}";
-  const headers = new Map([["content-type", "application/json"], ["retry-after", "2"], ["set-cookie", "secret=1"]]);
-  return Promise.resolve({{ status: 200, headers: {{ get: (n) => headers.has(n) ? headers.get(n) : null }}, text: () => Promise.resolve(body) }});
+  let bytes = new TextEncoder().encode("{{\"ok\":true}}");
+  if (url.endsWith("/huge")) bytes = new Uint8Array({limit} + 1);
+  if (url.endsWith("/post")) bytes = binary;
+  const headers = [["Content-Type", "application/json"], ["retry-after", "2"], ["set-cookie", "secret=1"], ["X-Many", "a"], ["x-many", "b"]];
+  return Promise.resolve({{
+    status: url.endsWith("/post") ? 404 : 200,
+    url: url.endsWith("/post") ? "https://site.example/moved" : url,
+    redirected: url.endsWith("/post"),
+    headers: {{ forEach: (callback) => headers.forEach(([n, v]) => callback(v, n)) }},
+    arrayBuffer: () => Promise.resolve(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)),
+  }});
 }};
 const run = (code) => (0, eval)(code);
 const out = {{}};
@@ -233,6 +326,7 @@ run({wrong_origin});
 run({failing});
 run({huge});
 run({abandoned});
+run({post});
 setTimeout(() => {{
   out.answer = run({collect1});
   out.again = run({collect1});
@@ -242,12 +336,15 @@ setTimeout(() => {{
   out.unfinished = run({collect5});
   run({cancel5});
   out.cancelled = run({collect5});
+  out.posted = run({collect6});
   out.seen = seen;
   console.log(JSON.stringify(out));
-}}, 50);
+}}, 80);
 "#,
-        limit = MAX_BODY_CHARS,
+        limit = MAX_BODY_BYTES,
+        binary = b64(&binary),
         request = js_string(&request),
+        post = js_string(&post),
         wrong_origin = js_string(&wrong_origin),
         failing = js_string(&failing),
         huge = js_string(&huge),
@@ -257,6 +354,7 @@ setTimeout(() => {{
         collect3 = js_string(&collect_script("__k3")),
         collect4 = js_string(&collect_script("__k4")),
         collect5 = js_string(&collect_script("__k5")),
+        collect6 = js_string(&collect_script("__k6")),
         cancel5 = js_string(&cancel_script("__k5")),
     );
 
@@ -280,12 +378,15 @@ setTimeout(() => {{
     assert_eq!(collected("before"), Collected::Gone);
     assert_eq!(collected("pending"), Collected::Pending);
     assert_eq!(out["enumerable"], json!(false));
+    let answered_headers = headers(&[("content-type", "application/json"), ("retry-after", "2"), ("x-many", "a, b")]);
     assert_eq!(
         collected("answer"),
         Collected::Response {
             status: 200,
-            headers: headers(&[("content-type", "application/json"), ("retry-after", "2")]),
-            body: "{\"ok\":true}".to_string(),
+            url: "https://site.example/api?q=\"a\"</script>\n".to_string(),
+            redirected: false,
+            headers: answered_headers.clone(),
+            body: b"{\"ok\":true}".to_vec(),
         }
     );
     // An answer is handed over once and leaves nothing behind in the page.
@@ -295,13 +396,34 @@ setTimeout(() => {{
     assert_eq!(collected("huge"), Collected::TooLarge);
     assert_eq!(collected("unfinished"), Collected::Pending);
     assert_eq!(collected("cancelled"), Collected::Gone);
+    // A body of arbitrary bytes arrives byte for byte, a status that is not a success is an
+    // answer like any other, and the page says where a redirect led.
+    assert_eq!(
+        collected("posted"),
+        Collected::Response {
+            status: 404,
+            url: "https://site.example/moved".to_string(),
+            redirected: true,
+            headers: answered_headers,
+            body: binary.clone(),
+        }
+    );
 
     let seen = out["seen"].as_array().unwrap();
-    assert_eq!(seen.len(), 4, "the page on another origin must not be asked");
+    assert_eq!(seen.len(), 5, "the page on another origin must not be asked");
     assert_eq!(seen[0]["url"], json!("https://site.example/api?q=\"a\"</script>\n"));
     assert_eq!(seen[0]["init"]["method"], json!("GET"));
     assert_eq!(seen[0]["init"]["credentials"], json!("include"));
+    assert_eq!(seen[0]["init"]["redirect"], json!("follow"));
     assert_eq!(seen[0]["init"]["headers"], json!({ "Accept": "*/*" }));
+    assert_eq!(seen[0]["init"]["body"], Value::Null);
+    assert_eq!(seen[0]["init"]["referrer"], Value::Null);
+    let posted = &seen[4];
+    assert_eq!(posted["url"], json!("https://site.example/post"));
+    assert_eq!(posted["init"]["method"], json!("POST"));
+    assert_eq!(posted["init"]["headers"], json!({ "Content-Type": "application/octet-stream" }));
+    assert_eq!(posted["init"]["referrer"], json!("https://site.example/watch/1"));
+    assert_eq!(posted["init"]["body"], json!(b64(&binary)));
 }
 
 // ---------------------------------------------------------------- reading the page's answer
@@ -316,14 +438,18 @@ fn collected_values_are_read_strictly() {
 
     let answer = json!({
         "status": 200,
-        "headers": { "retry-after": "2", "content-type": "text/plain", "set-cookie": "a=b", "server": 7 },
-        "body": "payload",
-        "truncated": false
+        "url": "https://site.example/api",
+        "redirected": false,
+        "headers": [["Retry-After", "2"], ["content-type", "text/plain"], ["set-cookie", "a=b"], ["Set-Cookie2", "c=d"],
+                    ["server", 7], ["bad name", "x"], ["", "x"], "junk", ["x-twice", "1"], ["x-twice", "2"]],
+        "body": b64(b"payload"),
     });
     let expected = Collected::Response {
         status: 200,
-        headers: headers(&[("retry-after", "2"), ("content-type", "text/plain")]),
-        body: "payload".to_string(),
+        url: "https://site.example/api".to_string(),
+        redirected: false,
+        headers: headers(&[("retry-after", "2"), ("content-type", "text/plain"), ("x-twice", "1, 2")]),
+        body: b"payload".to_vec(),
     };
     // The script hands over JSON text, which the webview serialises as a JSON string.
     assert_eq!(parse_collected(&Value::String(answer.to_string()).to_string()), expected);
@@ -333,15 +459,26 @@ fn collected_values_are_read_strictly() {
     let wrapped = |value: Value| parse_collected(&Value::String(value.to_string()).to_string());
     assert_eq!(wrapped(json!({ "error": "TypeError: Load failed" })), Collected::Failed("TypeError: Load failed".into()));
     assert_eq!(wrapped(json!({ "elsewhere": "null" })), Collected::Elsewhere("null".into()));
-    assert_eq!(wrapped(json!({ "status": 200, "body": "", "truncated": true })), Collected::TooLarge);
+    assert_eq!(wrapped(json!({ "status": 200, "truncated": true })), Collected::TooLarge);
+
+    // Bytes that are no text at all come through as they are.
+    let bytes: Vec<u8> = (0..=255u8).rev().collect();
+    match wrapped(json!({ "status": 206, "body": b64(&bytes) })) {
+        Collected::Response { status, body, headers, url, redirected } => {
+            assert_eq!((status, body), (206, bytes));
+            assert!(headers.is_empty() && url.is_empty() && !redirected);
+        }
+        other => panic!("unexpected: {:?}", other),
+    }
 
     let unreadable = Collected::Failed("unreadable answer".to_string());
     for bad in [
-        json!({ "status": 700, "body": "x" }),
-        json!({ "status": "200", "body": "x" }),
+        json!({ "status": 700, "body": "" }),
+        json!({ "status": "200", "body": "" }),
         json!({ "status": 200 }),
         json!({ "status": 200, "body": 5 }),
-        json!({ "status": -1, "body": "x" }),
+        json!({ "status": -1, "body": "" }),
+        json!({ "status": 200, "body": "not base64!" }),
         json!([200, "x"]),
         json!(42),
     ] {
@@ -350,17 +487,26 @@ fn collected_values_are_read_strictly() {
     assert_eq!(parse_collected("\"{not json\""), unreadable);
 
     // Long values from the page are cut, not trusted.
-    let long = "v".repeat(5000);
-    match wrapped(json!({ "status": 204, "headers": { "server": long }, "body": "" })) {
+    let long = "v".repeat(3 * MAX_HEADER_CHARS);
+    match wrapped(json!({ "status": 204, "headers": [["server", long]], "body": "" })) {
         Collected::Response { status, headers, .. } => {
             assert_eq!(status, 204);
-            assert_eq!(headers["server"].len(), 1024);
+            assert_eq!(headers["server"].len(), MAX_HEADER_CHARS);
         }
         other => panic!("unexpected: {:?}", other),
     }
     match wrapped(json!({ "error": "e".repeat(5000) })) {
         Collected::Failed(reason) => assert_eq!(reason.len(), 200),
         other => panic!("unexpected: {:?}", other),
+    }
+    let oversized = "A".repeat(MAX_BODY_BYTES / 3 * 4 + 8);
+    assert_eq!(wrapped(json!({ "status": 200, "body": oversized })), Collected::TooLarge);
+
+    // A page cannot pass an answer off as another site's.
+    let origin = "https://site.example";
+    assert_eq!(answered_url(origin, "/api", "https://site.example/moved?x=1"), "https://site.example/moved?x=1");
+    for reported in ["https://evil.example/x", "http://site.example/x", "javascript:alert(1)", "", "https://site.example.evil.example/"] {
+        assert_eq!(answered_url(origin, "/api", reported), "https://site.example/api", "{:?}", reported);
     }
 }
 
@@ -564,7 +710,7 @@ async fn without_an_app_handle_every_operation_reports_it() {
     assert!(!web_session::AppSession.available());
     assert!(!web_session::app_session().available());
 
-    let fetched = web_session::fetch(&NO_APP_SITE, "/api", &[], Duration::from_secs(1)).await;
+    let fetched = web_session::fetch(&NO_APP_SITE, &WebRequest::get("/api"), Duration::from_secs(1)).await;
     assert_eq!(fetched.unwrap_err().reason(), "the in-app browser is not available");
     let opened = web_session::open_verification("no-app-site").await;
     assert_eq!(opened.unwrap_err().reason(), "the in-app browser is not available");
@@ -642,7 +788,7 @@ impl Site {
     }
 }
 
-type Call = (String, Vec<(String, String)>);
+type Call = WebRequest;
 
 /// Stands in for the in-app browser: answers from a queue and records what it was asked.
 struct FakeSession {
@@ -687,14 +833,10 @@ impl SiteSession for FakeSession {
     async fn fetch(
         &self,
         _site: &'static SiteSpec,
-        path_and_query: &str,
-        headers: &[(&str, &str)],
+        request: &WebRequest,
         _timeout: Duration,
     ) -> Result<WebResponse, AppError> {
-        self.calls.lock().unwrap().push((
-            path_and_query.to_string(),
-            headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect(),
-        ));
+        self.calls.lock().unwrap().push(request.clone());
         self.answers
             .lock()
             .unwrap()
@@ -707,8 +849,10 @@ fn web_answer(status: u16, origin: &str, extra: &[(&str, &str)], body: &str) -> 
     Ok(WebResponse {
         status,
         origin: origin.to_string(),
+        url: format!("{}/answered", origin),
+        redirected: false,
         headers: headers(extra),
-        body: body.to_string(),
+        body: body.as_bytes().to_vec(),
     })
 }
 
@@ -720,7 +864,7 @@ fn a_session_is_only_started_when_the_lookup_may() {
     let choice = |session: &Arc<FakeSession>, access| web_session::choose(session.as_ref(), &NO_APP_SITE, access);
 
     // Asked for by name, or as the last resort: whatever the session's state.
-    for state in [SessionState::Cold, SessionState::Warm, refused()] {
+    for state in [SessionState::Cold, SessionState::Warm, SessionState::Resumable, refused()] {
         let session = FakeSession::in_state(state, vec![]);
         assert!(matches!(choice(&session, SessionUse::Create), SessionChoice::Ask));
     }
@@ -729,6 +873,10 @@ fn a_session_is_only_started_when_the_lookup_may() {
     assert!(matches!(choice(&warm, SessionUse::Existing), SessionChoice::Ask));
     let cold = FakeSession::in_state(SessionState::Cold, vec![]);
     assert!(matches!(choice(&cold, SessionUse::Existing), SessionChoice::Keep));
+    // A site that answered through its session in an earlier run is asked again without the
+    // user doing anything: the webview still has what made it answer.
+    let resumable = FakeSession::in_state(SessionState::Resumable, vec![]);
+    assert!(matches!(choice(&resumable, SessionUse::Existing), SessionChoice::Ask));
     // A site known to wait for the user says so without anything being asked or opened.
     match choice(&FakeSession::in_state(refused(), vec![]), SessionUse::Existing) {
         SessionChoice::Refused(AppError::VerificationRequired { site, origin }) => {
@@ -776,14 +924,15 @@ async fn plugin_requests_fall_back_to_the_session_only_for_a_refusal() {
     assert!(cold.calls().is_empty());
     assert!(matches!(net.failure_since(started), Some(AppError::CaptchaRequired)));
 
-    // Only a plain GET can be repeated inside the site's page.
+    // A request a page could not make stays with the plain client: one that must not follow
+    // redirects, or a method pages do not use.
     let unused = FakeSession::new(true, vec![]);
     let net = NetContext::new("plugin", unused.clone(), true);
-    let answer = net
-        .perform(plugin_request(&format!("{}/api", blocked.base), "POST", &[]), b"x".to_vec(), SessionUse::Create)
-        .await
-        .unwrap();
-    assert_eq!(answer.meta.status, 403);
+    let mut manual = plugin_request(&format!("{}/api", blocked.base), "GET", &[]);
+    manual.redirect = "manual".to_string();
+    assert_eq!(net.perform(manual, vec![], SessionUse::Create).await.unwrap().meta.status, 403);
+    let traced = plugin_request(&format!("{}/api", blocked.base), "TRACE", &[]);
+    assert_eq!(net.perform(traced, vec![], SessionUse::Create).await.unwrap().meta.status, 403);
     assert!(unused.calls().is_empty());
 
     // Asked for by name: the session answers, with the path and the headers a page may set.
@@ -801,11 +950,25 @@ async fn plugin_requests_fall_back_to_the_session_only_for_a_refusal() {
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&answer.body), r#"{"via":"session"}"#);
     assert_eq!(answer.meta.status, 200);
+    assert_eq!(answer.meta.url, format!("{}/answered", blocked.base));
     assert_eq!(
         asking.calls(),
-        vec![("/api?m=release&id=1".to_string(), vec![("x-requested-with".to_string(), "XMLHttpRequest".to_string())])]
+        vec![page_request("GET", "/api?m=release&id=1", &[("x-requested-with", "XMLHttpRequest")], None)]
     );
     assert_eq!(blocked.hits(), plain_requests);
+
+    // A POST goes the same way, with its body and with a Referer on the site as the referrer.
+    let posting = FakeSession::new(true, vec![web_answer(201, blocked.base, &[], "made")]);
+    let net = NetContext::new("plugin", posting.clone(), true);
+    let referer = format!("{}/watch/7?x=1", blocked.base);
+    let sent = [("Content-Type", "application/json"), ("Referer", referer.as_str()), ("Origin", blocked.base)];
+    let mut request = plugin_request(&format!("{}/api/list", blocked.base), "post", &sent);
+    request.has_body = true;
+    let answer = net.perform(request, br#"{"id":7}"#.to_vec(), SessionUse::Create).await.unwrap();
+    assert_eq!((answer.meta.status, answer.body.as_slice()), (201, &b"made"[..]));
+    let mut expected = page_request("POST", "/api/list", &[("content-type", "application/json")], Some(br#"{"id":7}"#));
+    expected.referrer = Some("/watch/7?x=1".to_string());
+    assert_eq!(posting.calls(), vec![expected]);
 
     // A session that already answers is used by a background lookup too.
     let warm = FakeSession::in_state(SessionState::Warm, vec![web_answer(200, blocked.base, &[], "warm")]);
@@ -860,6 +1023,9 @@ fn only_headers_a_page_may_set_are_passed_to_the_session() {
     ] {
         map.insert(name, value.parse().unwrap());
     }
+    for name in ["accept-encoding", "content-length", "host", "connection", "access-control-request-method", "proxy-authorization", "te", "date"] {
+        map.insert(reqwest::header::HeaderName::from_static(name), "x".parse().unwrap());
+    }
     let mut passed = session_headers(&map);
     passed.sort();
     assert_eq!(
@@ -873,4 +1039,274 @@ fn only_headers_a_page_may_set_are_passed_to_the_session() {
     let url = reqwest::Url::parse("https://site.example/api?m=search&q=a%20b#frag").unwrap();
     assert_eq!(path_and_query(&url), "/api?m=search&q=a%20b");
     assert_eq!(path_and_query(&reqwest::Url::parse("https://site.example").unwrap()), "/");
+}
+
+#[test]
+fn a_referer_on_the_same_site_becomes_the_page_request_referrer() {
+    let url = reqwest::Url::parse("https://site.example/api?q=1").unwrap();
+    let with = |referer: &str| {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert("referer", referer.parse().unwrap());
+        session_referrer(&map, &url)
+    };
+    assert_eq!(with("https://site.example/watch/1?ep=2").as_deref(), Some("/watch/1?ep=2"));
+    assert_eq!(with("https://site.example").as_deref(), Some("/"));
+    // Another site cannot be named by a page; the browser's own referrer stands.
+    assert_eq!(with("https://other.example/watch/1"), None);
+    assert_eq!(with("http://site.example/watch/1"), None);
+    assert_eq!(with("not a url"), None);
+    assert_eq!(session_referrer(&reqwest::header::HeaderMap::new(), &url), None);
+}
+
+#[test]
+fn text_is_decoded_with_the_declared_character_set() {
+    assert_eq!(decode_text(Some("text/html; charset=windows-1252"), b"caf\xe9 \x93x\x94"), "café \u{201c}x\u{201d}");
+    assert_eq!(decode_text(Some("text/plain;charset=\"Shift_JIS\""), b"\x83A\x83j\x83\x81"), "アニメ");
+    assert_eq!(decode_text(Some("application/json; Charset=UTF-8"), "é".as_bytes()), "é");
+    assert_eq!(decode_text(Some("application/json"), "日本".as_bytes()), "日本");
+    assert_eq!(decode_text(None, b"plain"), "plain");
+    // An unknown name falls back to UTF-8, and a byte order mark decides over the declaration.
+    assert_eq!(decode_text(Some("text/plain; charset=klingon"), "ok".as_bytes()), "ok");
+    assert_eq!(decode_text(Some("text/plain; charset=windows-1252"), b"\xef\xbb\xbf\xc3\xa9"), "é");
+}
+
+#[test]
+fn only_origins_are_remembered_across_restarts() {
+    let dir = std::env::temp_dir().join(format!("anilili-known-origins-{}-{:?}", std::process::id(), Instant::now()));
+    let path = dir.join("site-sessions.json");
+    let known = KnownOrigins::open(Some(path.clone()));
+    assert!(!known.contains("https://site.example"));
+    known.add("https://Site.example/some/page?token=secret");
+    known.add("https://api.site.example:8443");
+    known.add("file:///etc/passwd");
+    assert!(known.contains("https://site.example"));
+
+    // What is on disk is a list of origins and nothing else.
+    let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(stored, json!(["https://api.site.example:8443", "https://site.example"]));
+
+    // The next run knows them; a site that refuses again is forgotten.
+    let reopened = KnownOrigins::open(Some(path.clone()));
+    assert!(reopened.contains("https://site.example") && reopened.contains("https://api.site.example:8443"));
+    reopened.remove("https://site.example");
+    assert!(!KnownOrigins::open(Some(path.clone())).contains("https://site.example"));
+
+    // A damaged file is an empty list, and no file is needed at all.
+    std::fs::write(&path, "{not json").unwrap();
+    assert!(!KnownOrigins::open(Some(path)).contains("https://api.site.example:8443"));
+    let unsaved = KnownOrigins::open(None);
+    unsaved.add("https://site.example");
+    assert!(unsaved.contains("https://site.example"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_site_is_named_by_the_plugins_that_use_it() {
+    assert_eq!(label_with_owners("anikai.to", &["AnimeKai".to_string()]), "AnimeKai (anikai.to)");
+    assert_eq!(
+        label_with_owners("cdn.example", &["One".to_string(), "Two".to_string()]),
+        "One, Two (cdn.example)"
+    );
+    assert_eq!(label_with_owners("anikai.to", &[]), "anikai.to");
+}
+
+// ---------------------------------------------------------------- what a failed request means
+
+/// A page that gives prepared outcomes and counts what it was asked.
+struct ScriptedPage {
+    outcome: Outcome,
+    document: DocumentState,
+    requests: AtomicUsize,
+    documents: AtomicUsize,
+}
+
+impl ScriptedPage {
+    fn new(outcome: Outcome, document: DocumentState) -> ScriptedPage {
+        ScriptedPage {
+            outcome,
+            document,
+            requests: AtomicUsize::new(0),
+            documents: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl PageAccess for ScriptedPage {
+    async fn request(&self, _origin: &str, _asked: &WebRequest, _deadline: Instant) -> Outcome {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        self.outcome.clone()
+    }
+    async fn document(&self, _origin: &str) -> DocumentState {
+        self.documents.fetch_add(1, Ordering::SeqCst);
+        self.document.clone()
+    }
+}
+
+fn page_answer(status: u16, extra: &[(&str, &str)], body: &str) -> Outcome {
+    Outcome::Response(web_answer(status, "https://site.example", extra, body).unwrap())
+}
+
+#[tokio::test]
+async fn a_request_that_fails_in_the_page_is_judged_by_the_document_it_failed_on() {
+    let origin = "https://site.example";
+    let asked = WebRequest::get("/api?m=search&q=a");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let failed = || Outcome::Failed("TypeError: Load failed".to_string());
+    let check = DocumentState::Barrier(Barrier::Challenge);
+    let judge = |outcome: Outcome, document: DocumentState| {
+        let asked = asked.clone();
+        async move { ask(&ScriptedPage::new(outcome, document), origin, &asked, deadline).await }
+    };
+
+    // On a check or block page a request that fails, hangs or loses its page is the check.
+    for outcome in [failed(), Outcome::TimedOut, Outcome::Gone, Outcome::Elsewhere] {
+        assert_eq!(judge(outcome.clone(), check.clone()).await, Asked::Refused, "{:?}", outcome);
+        assert_eq!(judge(outcome, DocumentState::Barrier(Barrier::Block)).await, Asked::Refused);
+    }
+    // Only on a page that is the site itself is it the request's own failure.
+    assert_eq!(judge(failed(), DocumentState::Site).await, Asked::RequestFailed("TypeError: Load failed".to_string()));
+    assert_eq!(judge(Outcome::TimedOut, DocumentState::Site).await, Asked::Other(Outcome::TimedOut));
+    assert_eq!(judge(Outcome::Gone, DocumentState::Site).await, Asked::Other(Outcome::Gone));
+    // A page that cannot be told, or is elsewhere, is neither: the page is looked for again.
+    assert_eq!(judge(failed(), DocumentState::Unreadable).await, Asked::Other(Outcome::Gone));
+    assert_eq!(judge(failed(), DocumentState::Elsewhere).await, Asked::Other(Outcome::Elsewhere));
+
+    // An answer speaks for itself and the document is not looked at.
+    let answered = ScriptedPage::new(page_answer(200, &[], "{}"), check.clone());
+    assert!(matches!(ask(&answered, origin, &asked, deadline).await, Asked::Answer(_)));
+    let not_found = ScriptedPage::new(page_answer(404, &[], "nothing"), check.clone());
+    assert!(matches!(ask(&not_found, origin, &asked, deadline).await, Asked::Answer(_)));
+    let challenged = ScriptedPage::new(page_answer(403, &[("cf-mitigated", "challenge")], ""), DocumentState::Site);
+    assert_eq!(ask(&challenged, origin, &asked, deadline).await, Asked::Refused);
+    let large = ScriptedPage::new(Outcome::TooLarge, check.clone());
+    assert_eq!(ask(&large, origin, &asked, deadline).await, Asked::Other(Outcome::TooLarge));
+    for page in [&answered, &not_found, &challenged, &large] {
+        assert_eq!(page.documents.load(Ordering::SeqCst), 0);
+    }
+    // A bare refusal (the protection's rate limit, say) is the site's answer on the site's own
+    // page, and the check's on a check page.
+    for status in [403, 429, 503] {
+        let on_site = ScriptedPage::new(page_answer(status, &[], "slow down"), DocumentState::Site);
+        assert!(matches!(ask(&on_site, origin, &asked, deadline).await, Asked::Answer(_)), "{}", status);
+        let on_check = ScriptedPage::new(page_answer(status, &[], "slow down"), check.clone());
+        assert_eq!(ask(&on_check, origin, &asked, deadline).await, Asked::Refused, "{}", status);
+    }
+}
+
+#[tokio::test]
+async fn the_check_counts_as_passed_only_when_the_page_is_the_site_and_the_request_is_answered() {
+    let origin = "https://site.example";
+    let refused = WebRequest::get("/api?m=search&q=a");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let failed = Outcome::Failed("TypeError: Load failed".to_string());
+
+    // Still on the check page: refused, and nothing is asked in the page the user is at.
+    let waiting = ScriptedPage::new(page_answer(200, &[], "{}"), DocumentState::Barrier(Barrier::Challenge));
+    assert_eq!(verification_probe(&waiting, origin, &refused, deadline).await, Some(true));
+    assert_eq!(waiting.requests.load(Ordering::SeqCst), 0);
+
+    // The page is the site and the request is answered: passed.
+    let passed = ScriptedPage::new(page_answer(200, &[], "{}"), DocumentState::Site);
+    assert_eq!(verification_probe(&passed, origin, &refused, deadline).await, Some(false));
+    // The page is the site but the request is still answered with the check: not passed.
+    let partly = ScriptedPage::new(page_answer(403, &[], CLOUDFLARE_CHALLENGE_PAGE), DocumentState::Site);
+    assert_eq!(verification_probe(&partly, origin, &refused, deadline).await, Some(true));
+    // Anything else cannot be told yet and is asked again later.
+    for (outcome, document) in [
+        (failed.clone(), DocumentState::Site),
+        (Outcome::TimedOut, DocumentState::Site),
+        (page_answer(200, &[], "{}"), DocumentState::Unreadable),
+        (page_answer(200, &[], "{}"), DocumentState::Elsewhere),
+    ] {
+        let page = ScriptedPage::new(outcome.clone(), document.clone());
+        assert_eq!(verification_probe(&page, origin, &refused, deadline).await, None, "{:?} {:?}", outcome, document);
+    }
+}
+
+#[test]
+fn a_document_is_told_from_a_check_page_by_what_only_check_pages_carry() {
+    assert_eq!(document_barrier("Just a moment...", CLOUDFLARE_CHALLENGE_PAGE), Some(Barrier::Challenge));
+    assert_eq!(document_barrier("", CLOUDFLARE_CHALLENGE_PAGE), Some(Barrier::Challenge));
+    assert_eq!(document_barrier("Attention Required! | Cloudflare", CLOUDFLARE_BLOCK_PAGE), Some(Barrier::Block));
+    assert_eq!(document_barrier("", CLOUDFLARE_BLOCK_PAGE), Some(Barrier::Block));
+    assert_eq!(document_barrier("DDoS-Guard", "<html></html>"), Some(Barrier::Challenge));
+    // The site's own page loads the protection's script without being a check page.
+    assert_eq!(document_barrier("Miruro · Watch Anime", ORDINARY_SITE_PAGE), None);
+    assert_eq!(document_barrier("", r#"{"data":[{"title":"One Piece"}]}"#), None);
+    assert_eq!(document_barrier("", ""), None);
+
+    let origin = "https://site.example";
+    let state = |value: Value| parse_document_state(&Value::String(value.to_string()).to_string(), origin);
+    assert_eq!(state(json!({ "origin": origin, "challenge": true, "block": false })), DocumentState::Barrier(Barrier::Challenge));
+    assert_eq!(state(json!({ "origin": origin, "challenge": true, "block": true })), DocumentState::Barrier(Barrier::Block));
+    assert_eq!(state(json!({ "origin": origin, "challenge": false, "block": false })), DocumentState::Site);
+    assert_eq!(state(json!({ "origin": "https://ads.example", "challenge": true })), DocumentState::Elsewhere);
+    assert_eq!(state(json!({ "unreadable": true })), DocumentState::Unreadable);
+    assert_eq!(state(json!({ "challenge": true })), DocumentState::Unreadable);
+    for raw in ["", "null", "not json", "\"{broken\"", "42"] {
+        assert_eq!(parse_document_state(raw, origin), DocumentState::Unreadable, "{:?}", raw);
+    }
+
+    // The script reads the title and the markup to compare them, and hands neither over.
+    let script = document_script();
+    assert!(script.contains("document.title") && script.contains("location.origin"));
+    assert!(!script.contains("cookie") && !script.contains("Storage") && !script.contains("fetch("));
+    assert!(script.contains("JSON.stringify({origin:String(location.origin),challenge:"));
+}
+
+/// The document script against stand-in documents in a real JavaScript engine. Skipped where
+/// no `node` is installed.
+#[test]
+fn the_document_script_recognises_check_pages_when_node_is_installed() {
+    let harness = format!(
+        r#"
+const script = {script};
+const look = (origin, title, markup) => {{
+  globalThis.location = {{ origin }};
+  globalThis.document = {{ title, documentElement: {{ get outerHTML() {{ if (markup === null) throw new Error("gone"); return markup; }} }} }};
+  return (0, eval)(script);
+}};
+const out = {{
+  challenge: look("https://site.example", "Just a moment...", {challenge}),
+  untitled: look("https://site.example", "", {challenge}),
+  block: look("https://site.example", "Attention Required! | Cloudflare", {block}),
+  site: look("https://site.example", "Miruro", {site}),
+  json: look("https://site.example", "", "{{\"data\":[]}}"),
+  elsewhere: look("https://ads.example", "Just a moment...", ""),
+  nomarkup: look("https://site.example", "Just a moment...", null),
+}};
+delete globalThis.document;
+out.nodocument = (0, eval)(script);
+console.log(JSON.stringify(out));
+"#,
+        script = js_string(&document_script()),
+        challenge = js_string(CLOUDFLARE_CHALLENGE_PAGE),
+        block = js_string(CLOUDFLARE_BLOCK_PAGE),
+        site = js_string(ORDINARY_SITE_PAGE),
+    );
+    let child = std::process::Command::new("node")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let Ok(mut child) = child else {
+        eprintln!("node is not installed; the document script was not run");
+        return;
+    };
+    child.stdin.take().unwrap().write_all(harness.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let out: Value = serde_json::from_slice(&output.stdout).expect("harness output");
+    let state = |name: &str| parse_document_state(&out[name].to_string(), "https://site.example");
+    assert_eq!(state("challenge"), DocumentState::Barrier(Barrier::Challenge));
+    assert_eq!(state("untitled"), DocumentState::Barrier(Barrier::Challenge));
+    assert_eq!(state("block"), DocumentState::Barrier(Barrier::Block));
+    assert_eq!(state("site"), DocumentState::Site);
+    assert_eq!(state("json"), DocumentState::Site);
+    assert_eq!(state("elsewhere"), DocumentState::Elsewhere);
+    // The title alone is enough when the markup cannot be read.
+    assert_eq!(state("nomarkup"), DocumentState::Barrier(Barrier::Challenge));
+    assert_eq!(state("nodocument"), DocumentState::Unreadable);
 }

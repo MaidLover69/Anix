@@ -1,4 +1,6 @@
-use crate::plugins::registry::{PluginInfo, PluginRepo};
+use crate::plugins::registry::{PluginConfig, PluginInfo, PluginRepo};
+use serde_json::Value;
+use std::collections::HashMap;
 use crate::state::AppState;
 use tauri::State;
 
@@ -31,4 +33,20 @@ pub async fn list_plugins(state: State<'_, AppState>) -> Result<Vec<PluginInfo>,
 #[tauri::command]
 pub async fn set_plugin_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> Result<(), String> {
     state.plugins.set_enabled(&id, enabled).await
+}
+
+/// The plugin's own settings (its manifest's `userConfig`) with the values in effect.
+#[tauri::command]
+pub async fn get_plugin_config(state: State<'_, AppState>, id: String) -> Result<PluginConfig, String> {
+    state.plugins.plugin_config(&id)
+}
+
+/// Saves values for the plugin's settings and reloads the plugin with them.
+#[tauri::command]
+pub async fn set_plugin_config(
+    state: State<'_, AppState>,
+    id: String,
+    values: HashMap<String, Value>,
+) -> Result<(), String> {
+    state.plugins.set_plugin_config(&id, &values).await
 }

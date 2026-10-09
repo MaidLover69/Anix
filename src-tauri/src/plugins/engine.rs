@@ -657,6 +657,16 @@ fn install_host<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> rquickjs::Result<O
     )?;
 
     host.set(
+        "scannerUtils",
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, name: String, args: String| -> rquickjs::Result<String> {
+            let args: Json = serde_json::from_str(&args).map_err(|e| js_error(&ctx, e.to_string()))?;
+            crate::plugins::scanner_utils::call(&name, &args)
+                .map(|value| value.to_string())
+                .map_err(|e| js_error(&ctx, e))
+        })?,
+    )?;
+
+    host.set(
         "urlParse",
         Function::new(ctx.clone(), |input: String, base: String| -> Option<String> {
             let parsed = if base.is_empty() {
@@ -1063,5 +1073,24 @@ impl PluginRuntime {
     ) -> Result<Json, PluginError> {
         let engine = self.engine().map_err(PluginError::Stopped)?;
         engine.call(method, args, timeout, access).await
+    }
+
+    /// `call`, with the time its requests spend waiting for an in-app browser session added to
+    /// the limit (up to `SESSION_CALL_ALLOWANCE`): starting a session takes longer than a
+    /// plugin call is otherwise given, and is not the plugin being slow.
+    pub async fn call_allowing_session(
+        &self,
+        method: &str,
+        args: &[Json],
+        timeout: Duration,
+        access: SessionUse,
+    ) -> Result<Json, PluginError> {
+        use crate::providers::common::{with_session_allowance, SESSION_CALL_ALLOWANCE};
+        let engine = self.engine().map_err(PluginError::Stopped)?;
+        let net = engine.net().clone();
+        let call = engine.call(method, args, timeout + SESSION_CALL_ALLOWANCE, access);
+        with_session_allowance(call, timeout, SESSION_CALL_ALLOWANCE, |since| net.session_time_since(since))
+            .await
+            .unwrap_or(Err(PluginError::Timeout))
     }
 }

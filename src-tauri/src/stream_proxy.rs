@@ -396,6 +396,13 @@ async fn fetch_upstream(
     }
 }
 
+/// A body of known length is sent with `Content-Length`, whatever its size. The server would
+/// otherwise send anything from 32 KiB up in chunks without a length, and a media element that
+/// is not told the length cannot seek, nor play a file whose index sits at its end.
+fn sized<R: Read>(response: Response<R>) -> Response<R> {
+    response.with_chunked_threshold(usize::MAX)
+}
+
 fn request_header(request: &Request, name: &'static str) -> Option<String> {
     request
         .headers()
@@ -455,21 +462,41 @@ fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_bas
 
     let mut headers = cors_headers();
     headers.extend(header("Content-Type", &content_type));
-    for name in ["Content-Range", "Accept-Ranges", "Last-Modified", "ETag"] {
+    for name in ["Content-Range", "Last-Modified", "ETag"] {
         if let Some(value) = response.headers().get(name).and_then(|v| v.to_str().ok()) {
             headers.extend(header(name, value));
         }
     }
-    let length = response.content_length().map(|l| l as usize);
+    // A partial answer proves ranges work even when the host does not say so.
+    let accept_ranges = response
+        .headers()
+        .get(reqwest::header::ACCEPT_RANGES)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .or_else(|| (status == 206).then(|| "bytes".to_string()));
+    if let Some(value) = accept_ranges {
+        headers.extend(header("Accept-Ranges", &value));
+    }
+    // The body of a HEAD answer is empty, so its length is read from the header.
+    let length = if head {
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .filter(|_| !response.headers().contains_key(reqwest::header::CONTENT_ENCODING))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<usize>().ok())
+    } else {
+        response.content_length().map(|l| l as usize)
+    };
 
     if head {
-        let _ = request.respond(Response::new(
+        let _ = request.respond(sized(Response::new(
             StatusCode(status),
             headers,
             std::io::empty(),
             length,
             None,
-        ));
+        )));
         return;
     }
 
@@ -504,7 +531,7 @@ fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_bas
         position: 0,
     };
     // A dropped connection (seek, episode change) ends the copy; that is not an error.
-    let _ = request.respond(Response::new(StatusCode(status), headers, reader, length, None));
+    let _ = request.respond(sized(Response::new(StatusCode(status), headers, reader, length, None)));
 }
 
 fn handle_subtitle(request: Request, target: Url, params: UpstreamParams) {

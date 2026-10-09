@@ -15,8 +15,9 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
   ...props
 }) => {
   const [inView, setInView] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
+  // Load and error state are remembered per URL, so a new `src` starts clean.
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,34 +43,33 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  if (!src || error) {
-    return (
-      <div
-        ref={ref}
-        className={`flex items-center justify-center bg-bg-elevated text-text-muted border border-border ${className}`}
-      >
-        {fallbackIcon || <span className="text-xs font-medium opacity-40">No Image</span>}
-      </div>
-    );
-  }
+  const loaded = !!src && loadedSrc === src;
+  const failed = !!src && failedSrc === src;
 
   return (
     <div ref={ref} className={`relative overflow-hidden ${className}`}>
-      {!loaded && (
-        <div className="absolute inset-0 shimmer-placeholder z-0" />
-      )}
-      {inView && (
-        <img
-          src={src}
-          alt={alt}
-          loading="lazy"
-          onLoad={() => setLoaded(true)}
-          onError={() => setError(true)}
-          className={`w-full h-full object-cover transition-opacity duration-200 ${
-            loaded ? 'opacity-100' : 'opacity-0'
-          }`}
-          {...props}
-        />
+      {!src || failed ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-bg-elevated text-text-muted">
+          {fallbackIcon || <span className="text-[11px]">No image</span>}
+        </div>
+      ) : (
+        <>
+          {!loaded && <div className="absolute inset-0 shimmer-placeholder" />}
+          {inView && (
+            <img
+              src={src}
+              alt={alt}
+              loading="lazy"
+              draggable={false}
+              onLoad={() => setLoadedSrc(src)}
+              onError={() => setFailedSrc(src)}
+              className={`w-full h-full object-cover transition-opacity duration-200 ${
+                loaded ? 'opacity-100' : 'opacity-0'
+              }`}
+              {...props}
+            />
+          )}
+        </>
       )}
     </div>
   );

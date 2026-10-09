@@ -1,20 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Search,
-  Film,
-  Compass,
-  BookOpen,
-  Calendar,
-  Settings as SettingsIcon,
-  X,
-  Sparkles,
-  ArrowRight,
-  TrendingUp,
-} from 'lucide-react';
+import { Search, Home, Compass, Bookmark, Calendar, Settings as SettingsIcon, X } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import clsx from 'clsx';
 import { useSearchAnime } from '../hooks/useAniList';
-import { Media } from '../types';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { ShimmerImage } from './ShimmerImage';
+import { Modal } from './ui/Modal';
+import { Spinner } from './ui/Spinner';
+import { errorMessage } from './ui/ErrorState';
+import { mediaFormatLabel } from './library/format';
+import type { Media } from '../types';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -26,293 +22,245 @@ interface NavItem {
   title: string;
   subtitle: string;
   path: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
 }
 
-const STATIC_NAV_ITEMS: NavItem[] = [
-  {
-    id: 'nav-home',
-    title: 'Home',
-    subtitle: 'Trending, popular, and continue watching',
-    path: '/',
-    icon: <Film className="w-4 h-4 text-accent-500" />,
-  },
-  {
-    id: 'nav-discover',
-    title: 'Discover Anime',
-    subtitle: 'Browse by genre, seasonal filters, and formats',
-    path: '/discover',
-    icon: <Compass className="w-4 h-4 text-emerald-400" />,
-  },
-  {
-    id: 'nav-library',
-    title: 'My Library',
-    subtitle: 'Watchlist, history, downloads, and AniList sync',
-    path: '/library',
-    icon: <BookOpen className="w-4 h-4 text-amber-400" />,
-  },
-  {
-    id: 'nav-schedule',
-    title: 'Airing Schedule',
-    subtitle: 'Weekly release calendar and countdowns',
-    path: '/schedule',
-    icon: <Calendar className="w-4 h-4 text-sky-400" />,
-  },
-  {
-    id: 'nav-settings',
-    title: 'Settings',
-    subtitle: 'Playback, audio priorities, providers & accounts',
-    path: '/settings',
-    icon: <SettingsIcon className="w-4 h-4 text-purple-400" />,
-  },
+const NAV_ITEMS: NavItem[] = [
+  { id: 'nav-home', title: 'Home', subtitle: 'Trending, popular and continue watching', path: '/', icon: Home },
+  { id: 'nav-discover', title: 'Discover', subtitle: 'Search and browse by genre, format and status', path: '/discover', icon: Compass },
+  { id: 'nav-schedule', title: 'Schedule', subtitle: 'What airs this week', path: '/schedule', icon: Calendar },
+  { id: 'nav-library', title: 'Library', subtitle: 'Watchlist, history, downloads and playlists', path: '/library', icon: Bookmark },
+  { id: 'nav-settings', title: 'Settings', subtitle: 'Playback, plugins, network and account', path: '/settings', icon: SettingsIcon },
 ];
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose }) => {
+const MIN_QUERY_LENGTH = 2;
+
+const KBD_CLASS = 'rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted';
+
+function titleOf(anime: Media): string {
+  return anime.title.english || anime.title.user_preferred || anime.title.romaji || 'Untitled';
+}
+
+// Mounted only while the palette is open, so its state starts fresh every time.
+const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // Debounced search query
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 200);
-    return () => clearTimeout(timer);
-  }, [query]);
+  const trimmed = query.trim();
+  const debouncedQuery = useDebouncedValue(trimmed, 200);
+  const searchEnabled = debouncedQuery.length >= MIN_QUERY_LENGTH;
 
-  const { data: searchResults, isLoading } = useSearchAnime(
-    { query: debouncedQuery.length >= 2 ? debouncedQuery : undefined, perPage: 6 },
-    { enabled: debouncedQuery.length >= 2 }
+  const { data, isFetching, isError, error } = useSearchAnime(
+    { query: searchEnabled ? debouncedQuery : undefined, perPage: 6 },
+    { enabled: searchEnabled }
   );
 
-  useEffect(() => {
-    if (isOpen) {
-      setQuery('');
-      setSelectedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
-  }, [isOpen]);
-
-  const displayedAnime: Media[] = searchResults || [];
-  const filteredNavItems = STATIC_NAV_ITEMS.filter((item) =>
-    item.title.toLowerCase().includes(query.toLowerCase()) ||
-    item.subtitle.toLowerCase().includes(query.toLowerCase())
+  // Results belong to the debounced query; hide them once the box is cleared.
+  const animeResults: Media[] = trimmed.length >= MIN_QUERY_LENGTH && searchEnabled ? data ?? [] : [];
+  const needle = trimmed.toLowerCase();
+  const navResults = NAV_ITEMS.filter(
+    (item) => item.title.toLowerCase().includes(needle) || item.subtitle.toLowerCase().includes(needle)
   );
 
-  const totalItems = (displayedAnime.length > 0 ? displayedAnime.length : 0) + filteredNavItems.length;
+  const totalItems = animeResults.length + navResults.length;
+  const activeIndex = totalItems === 0 ? -1 : Math.min(selectedIndex, totalItems - 1);
+  const isSearching = trimmed.length >= MIN_QUERY_LENGTH && (isFetching || trimmed !== debouncedQuery);
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [query, displayedAnime.length]);
+  }, [trimmed, animeResults.length]);
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
 
   const handleSelect = (idx: number) => {
-    if (displayedAnime.length > 0 && idx < displayedAnime.length) {
-      const anime = displayedAnime[idx];
-      navigate(`/detail/${anime.id}`);
-      onClose();
+    if (idx < 0) return;
+    if (idx < animeResults.length) {
+      navigate(`/detail/${animeResults[idx].id}`);
     } else {
-      const navIdx = idx - (displayedAnime.length > 0 ? displayedAnime.length : 0);
-      const item = filteredNavItems[navIdx];
-      if (item) {
-        navigate(item.path);
-        onClose();
-      }
+      const item = navResults[idx - animeResults.length];
+      if (!item) return;
+      navigate(item.path);
     }
+    onClose();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      onClose();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex((prev) => (totalItems > 0 ? (prev + 1) % totalItems : 0));
+      if (totalItems > 0) setSelectedIndex((activeIndex + 1) % totalItems);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedIndex((prev) => (totalItems > 0 ? (prev - 1 + totalItems) % totalItems : 0));
+      if (totalItems > 0) setSelectedIndex((activeIndex - 1 + totalItems) % totalItems);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (totalItems > 0) {
-        handleSelect(selectedIndex);
-      }
+      handleSelect(activeIndex);
     }
   };
 
-  if (!isOpen) return null;
+  const optionClass = (selected: boolean) =>
+    clsx(
+      'flex cursor-pointer items-center gap-3 rounded-md px-3 py-2',
+      selected ? 'bg-accent-tint text-text-primary' : 'text-text-secondary'
+    );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4 bg-black/70 backdrop-blur-md animate-fadeIn"
-      onClick={onClose}
-    >
+    <div onKeyDown={handleKeyDown}>
+      <div className="flex h-12 items-center gap-3 border-b border-border px-4">
+        <Search aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+        <input
+          type="text"
+          data-autofocus
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="command-palette-results"
+          aria-activedescendant={activeIndex >= 0 ? `command-palette-option-${activeIndex}` : undefined}
+          aria-label="Search anime or jump to a screen"
+          placeholder="Search anime or jump to…"
+          autoComplete="off"
+          spellCheck={false}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted focus-visible:outline-none"
+        />
+        {isSearching && <Spinner size="sm" label="Searching" className="text-text-muted" />}
+        {query && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => setQuery('')}
+            className="flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:text-text-primary"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
       <div
-        className="w-full max-w-2xl bg-[#0e0e12] border border-white/10 rounded-2xl shadow-2xl overflow-hidden glass-modal"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
+        ref={listRef}
+        id="command-palette-results"
+        role="listbox"
+        aria-label="Results"
+        className="max-h-[min(60vh,420px)] overflow-y-auto p-2"
       >
-        {/* Search Input Bar */}
-        <div className="flex items-center px-4 py-3.5 border-b border-white/10 bg-white/[0.02]">
-          <Search className="w-5 h-5 text-white/40 mr-3 shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            className="w-full bg-transparent text-white placeholder-white/40 text-base outline-none border-none p-0 focus:ring-0"
-            placeholder="Search anime, genres, screens (Type to search, ↑↓ to navigate, Enter to select)..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {query ? (
-            <button
-              onClick={() => setQuery('')}
-              className="p-1 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          ) : (
-            <kbd className="px-2 py-0.5 text-[10px] font-semibold tracking-wider text-white/40 bg-white/5 border border-white/10 rounded-md">
-              ESC
-            </kbd>
-          )}
-        </div>
-
-        {/* Results Body */}
-        <div className="max-h-[60vh] overflow-y-auto p-2 divide-y divide-white/5">
-          {/* Loading Indicator */}
-          {isLoading && query.length >= 2 && (
-            <div className="flex items-center justify-center py-8 text-white/40 gap-2">
-              <div className="w-4 h-4 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm">Searching AniList...</span>
+        {animeResults.length > 0 && (
+          <>
+            <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+              Anime
             </div>
-          )}
+            {animeResults.map((anime, idx) => {
+              const title = titleOf(anime);
+              const caption = [
+                mediaFormatLabel(anime.format),
+                anime.season_year,
+                anime.average_score ? `${anime.average_score}%` : null,
+                anime.genres.slice(0, 2).join(', '),
+              ]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <div
+                  key={anime.id}
+                  id={`command-palette-option-${idx}`}
+                  role="option"
+                  aria-selected={activeIndex === idx}
+                  data-index={idx}
+                  onClick={() => handleSelect(idx)}
+                  onMouseMove={() => setSelectedIndex(idx)}
+                  className={optionClass(activeIndex === idx)}
+                >
+                  <ShimmerImage
+                    src={anime.cover_image.large || anime.cover_image.extra_large}
+                    alt=""
+                    className="h-12 w-8 flex-shrink-0 rounded-sm"
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-medium text-text-primary">{title}</span>
+                    {caption && <span className="truncate text-xs text-text-muted">{caption}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
 
-          {/* Anime Search Results Section */}
-          {displayedAnime.length > 0 && (
-            <div className="py-1">
-              <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white/40 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-accent-500" />
-                Anime Results
-              </div>
-              <div className="space-y-1">
-                {displayedAnime.map((anime, idx) => {
-                  const isSelected = selectedIndex === idx;
-                  const title = anime.title.english || anime.title.user_preferred || anime.title.romaji || 'Untitled';
-                  const cover = anime.cover_image.large || anime.cover_image.extra_large || '';
-
-                  return (
-                    <div
-                      key={anime.id}
-                      onClick={() => handleSelect(idx)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 ${
-                        isSelected
-                          ? 'bg-accent-500/20 text-white border border-accent-500/40 shadow-sm'
-                          : 'text-white/80 hover:bg-white/5 border border-transparent'
-                      }`}
-                    >
-                      <div className="w-10 h-14 shrink-0 rounded-lg overflow-hidden bg-white/5">
-                        <ShimmerImage src={cover} alt={title} className="w-full h-full object-cover" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-white truncate">{title}</div>
-                        <div className="flex items-center gap-2 text-xs text-white/50 mt-0.5">
-                          {anime.format && <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px]">{anime.format}</span>}
-                          {anime.season_year && <span>{anime.season_year}</span>}
-                          {anime.average_score && (
-                            <span className="text-amber-400 font-medium">{anime.average_score}%</span>
-                          )}
-                          {anime.genres.slice(0, 2).map((g) => (
-                            <span key={g} className="text-white/40">
-                              • {g}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <ArrowRight
-                        className={`w-4 h-4 transition-transform ${
-                          isSelected ? 'text-accent-500 translate-x-0.5' : 'text-white/20'
-                        }`}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
+        {navResults.length > 0 && (
+          <>
+            <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+              Go to
             </div>
-          )}
+            {navResults.map((item, navIdx) => {
+              const idx = animeResults.length + navIdx;
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.id}
+                  id={`command-palette-option-${idx}`}
+                  role="option"
+                  aria-selected={activeIndex === idx}
+                  data-index={idx}
+                  onClick={() => handleSelect(idx)}
+                  onMouseMove={() => setSelectedIndex(idx)}
+                  className={optionClass(activeIndex === idx)}
+                >
+                  <Icon aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-medium text-text-primary">{item.title}</span>
+                    <span className="truncate text-xs text-text-muted">{item.subtitle}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
 
-          {/* Quick Navigation Section */}
-          {filteredNavItems.length > 0 && (
-            <div className="py-1">
-              <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white/40 flex items-center gap-1.5">
-                <Compass className="w-3.5 h-3.5 text-white/40" />
-                Navigation & Screens
-              </div>
-              <div className="space-y-1">
-                {filteredNavItems.map((item, navIdx) => {
-                  const actualIdx = (displayedAnime.length > 0 ? displayedAnime.length : 0) + navIdx;
-                  const isSelected = selectedIndex === actualIdx;
+        {isError && trimmed.length >= MIN_QUERY_LENGTH && !isSearching && (
+          <p role="alert" className="px-3 py-4 text-center text-xs text-state-error select-text">
+            Search failed: {errorMessage(error)}
+          </p>
+        )}
 
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => handleSelect(actualIdx)}
-                      onMouseEnter={() => setSelectedIndex(actualIdx)}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 ${
-                        isSelected
-                          ? 'bg-accent-500/20 text-white border border-accent-500/40 shadow-sm'
-                          : 'text-white/80 hover:bg-white/5 border border-transparent'
-                      }`}
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                        {item.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-white">{item.title}</div>
-                        <div className="text-xs text-white/50 truncate">{item.subtitle}</div>
-                      </div>
-                      <kbd
-                        className={`px-1.5 py-0.5 text-[10px] font-mono rounded border ${
-                          isSelected
-                            ? 'bg-accent-500/30 text-white border-accent-500/50'
-                            : 'bg-white/5 text-white/30 border-white/10'
-                        }`}
-                      >
-                        Enter ↵
-                      </kbd>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+        {!isError && !isSearching && totalItems === 0 && (
+          <p className="px-3 py-8 text-center text-[13px] text-text-muted">
+            No results for “{trimmed}”
+          </p>
+        )}
+      </div>
 
-          {/* Empty State */}
-          {!isLoading && query.length >= 2 && displayedAnime.length === 0 && filteredNavItems.length === 0 && (
-            <div className="py-12 text-center text-white/40">
-              <Film className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-medium">No results found for "{query}"</p>
-              <p className="text-xs text-white/30 mt-1">Try searching for a different title or keyword</p>
-            </div>
-          )}
-        </div>
-
-        {/* Footer shortcuts */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-black/40 border-t border-white/5 text-[11px] text-white/40">
-          <div className="flex items-center gap-3">
-            <span>
-              <kbd className="px-1 py-0.5 bg-white/10 rounded mr-1">↑↓</kbd> to navigate
-            </span>
-            <span>
-              <kbd className="px-1 py-0.5 bg-white/10 rounded mr-1">↵</kbd> to select
-            </span>
-            <span>
-              <kbd className="px-1 py-0.5 bg-white/10 rounded mr-1">esc</kbd> to close
-            </span>
-          </div>
-          <span className="text-white/30">Anilili Global Search</span>
-        </div>
+      <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-xs text-text-muted">
+        <span className="flex items-center gap-1.5">
+          <kbd className={KBD_CLASS}>↑↓</kbd> Navigate
+        </span>
+        <span className="flex items-center gap-1.5">
+          <kbd className={KBD_CLASS}>↵</kbd> Open
+        </span>
+        <span className="flex items-center gap-1.5">
+          <kbd className={KBD_CLASS}>Esc</kbd> Close
+        </span>
       </div>
     </div>
   );
 };
+
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose }) => (
+  <Modal
+    isOpen={isOpen}
+    onClose={onClose}
+    title="Search"
+    size="xl"
+    position="top"
+    hideHeader
+    padded={false}
+    className="overflow-hidden"
+  >
+    <PaletteBody onClose={onClose} />
+  </Modal>
+);
 
 export default CommandPalette;

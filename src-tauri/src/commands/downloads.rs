@@ -1,17 +1,27 @@
 use crate::db;
-use crate::downloads::{self, StorageCheck};
+use crate::downloads::{self, DownloadSource, StorageCheck};
 use crate::models::DownloadRecord;
 use crate::state::AppState;
+use std::collections::HashMap;
 use tauri::State;
 
+/// Adds a `QUEUED` row. The queue worker resolves its sources and downloads it.
 #[tauri::command]
 pub async fn create_download(
     state: State<'_, AppState>,
-    record: DownloadRecord,
+    mut record: DownloadRecord,
 ) -> Result<String, String> {
-    db::create_download(&state.pool, &record)
+    record.status = db::STATUS_QUEUED.to_string();
+    record.progress = 0.0;
+    record.file_path = None;
+    record.file_size = None;
+    record.error_msg = None;
+
+    let id = db::create_download(&state.pool, &record)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    downloads::notify_queue();
+    Ok(id)
 }
 
 #[tauri::command]
@@ -36,7 +46,12 @@ pub async fn update_download_status(
         error_msg.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    if status.trim().eq_ignore_ascii_case(db::STATUS_QUEUED) {
+        downloads::notify_queue();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -58,14 +73,20 @@ pub async fn get_all_downloads(
         .map_err(|e| e.to_string())
 }
 
+/// Stops the download if it is running (ffmpeg included), removes its partial files and
+/// deletes the row. A finished file is left on disk.
 #[tauri::command]
 pub async fn delete_download(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
+    downloads::cancel_download(&id).await;
     db::delete_download(&state.pool, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // The queue worker may have picked the row up between the two steps above.
+    downloads::cancel_download(&id).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -80,32 +101,55 @@ pub async fn get_download_by_id(
 
 #[tauri::command]
 pub async fn check_storage_for_download(quality: String) -> Result<StorageCheck, String> {
-    downloads::check_storage(&quality).map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || downloads::check_storage(&quality))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_download_directory() -> Result<String, String> {
-    let dir = downloads::get_download_dir().map_err(|e| e.to_string())?;
+    let dir = tokio::task::spawn_blocking(downloads::get_download_dir)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// Downloads a stream the player has already resolved. `headers` and `stream_type` are the
+/// stream's own fields and may be omitted.
 #[tauri::command]
 pub async fn start_episode_download(
     state: State<'_, AppState>,
-    record: DownloadRecord,
+    mut record: DownloadRecord,
     stream_url: String,
     referer: Option<String>,
     origin: Option<String>,
     subtitles: Vec<crate::models::SubtitleItem>,
+    headers: Option<HashMap<String, String>>,
+    stream_type: Option<String>,
 ) -> Result<String, String> {
+    let source = DownloadSource {
+        url: downloads::validate_stream_url(&stream_url)?,
+        stream_type,
+        referer,
+        origin,
+        headers: headers.unwrap_or_default(),
+        subtitles,
+    };
+
+    // Inserted as DOWNLOADING so the queue worker does not start it a second time.
+    record.status = db::STATUS_DOWNLOADING.to_string();
+    record.progress = 0.0;
+    record.file_path = None;
+    record.file_size = None;
+    record.error_msg = None;
+
     let download_id = db::create_download(&state.pool, &record)
         .await
         .map_err(|e| e.to_string())?;
 
-    let pool = state.pool.clone();
-    tokio::spawn(async move {
-        downloads::run_download_task(pool, record, stream_url, referer, origin, subtitles).await;
-    });
+    downloads::start_download(state.pool.clone(), record, source);
 
     Ok(download_id)
 }

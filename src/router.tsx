@@ -1,6 +1,15 @@
-import React, { useEffect } from 'react';
-import { createHashRouter, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  createHashRouter,
+  Navigate,
+  Outlet,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+  useParams,
+} from 'react-router-dom';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
+import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
@@ -10,6 +19,10 @@ import { BulkDownloadDialog } from './components/BulkDownloadDialog';
 import { UpdateDialog } from './components/UpdateDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { HotkeyCheatSheet } from './components/HotkeyCheatSheet';
+import { Button } from './components/ui/Button';
+import { EmptyState } from './components/ui/EmptyState';
+import { hasOpenModal } from './components/ui/Modal';
+import { usePluginEvents } from './hooks/usePlugins';
 import { useUIStore } from './stores/uiStore';
 import { Home } from './screens/Home';
 import { Discover } from './screens/Discover';
@@ -19,102 +32,184 @@ import { Library } from './screens/Library';
 import { Schedule } from './screens/Schedule';
 import { Settings } from './screens/Settings';
 
+/** `anilili://anime/<AniList id>` → the id, or null for anything else. */
+function parseDeepLink(url: string): string | null {
+  const match = url.trim().match(/^anilili:\/\/anime\/(\d+)\/?(?:[?#].*)?$/i);
+  return match ? match[1] : null;
+}
+
+// The URL the app was launched with is delivered once; later mounts must not replay it.
+let launchUrlHandled = false;
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable
+  );
+}
+
 const AppLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const isWatchScreen = location.pathname.startsWith('/watch/');
-  const {
-    commandPaletteOpen,
-    setCommandPaletteOpen,
-    hotkeyCheatSheetOpen,
-    setHotkeyCheatSheetOpen,
-  } = useUIStore();
 
-  // Deep linking listener for anilili://anime/:id
+  // The layout lives as long as the app, so plugin state stays current on every screen.
+  usePluginEvents();
+
+  const commandPaletteOpen = useUIStore((s) => s.commandPaletteOpen);
+  const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const hotkeyCheatSheetOpen = useUIStore((s) => s.hotkeyCheatSheetOpen);
+  const setHotkeyCheatSheetOpen = useUIStore((s) => s.setHotkeyCheatSheetOpen);
+
+  // Deep links: anilili://anime/:id, at launch and while running (the single-instance
+  // plugin forwards a second launch to this listener).
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    const handleUrl = (urlStr: string) => {
-      const match = urlStr.match(/anilili:\/\/anime\/(\d+)/i);
-      if (match && match[1]) {
-        navigate(`/detail/${match[1]}`);
+    const handleUrls = (urls: string[] | null | undefined) => {
+      for (const url of urls ?? []) {
+        const id = parseDeepLink(url);
+        if (id) {
+          navigate(`/detail/${id}`);
+          return;
+        }
+        console.warn('[DeepLink] ignored unsupported URL:', url);
       }
     };
 
-    getCurrent()
-      .then((urls) => {
-        if (urls) {
-          for (const u of urls) {
-            handleUrl(u);
-          }
-        }
-      })
-      .catch((err) => {
-        console.debug('[DeepLink] getCurrent error or not running in Tauri:', err);
-      });
+    if (!launchUrlHandled) {
+      launchUrlHandled = true;
+      getCurrent()
+        .then((urls) => {
+          if (!cancelled) handleUrls(urls);
+        })
+        .catch((err) => {
+          console.debug('[DeepLink] getCurrent failed (not running in Tauri?):', err);
+        });
+    }
 
-    onOpenUrl((urls) => {
-      for (const u of urls) {
-        handleUrl(u);
-      }
-    })
+    onOpenUrl(handleUrls)
       .then((fn) => {
-        unlisten = fn;
+        // The effect may have been cleaned up before the listener was registered.
+        if (cancelled) fn();
+        else unlisten = fn;
       })
       .catch((err) => {
-        console.debug('[DeepLink] onOpenUrl error or not running in Tauri:', err);
+        console.debug('[DeepLink] onOpenUrl failed (not running in Tauri?):', err);
       });
 
     return () => {
-      if (unlisten) unlisten();
+      cancelled = true;
+      unlisten?.();
     };
   }, [navigate]);
 
-  // Global hotkeys listener for Ctrl+K, Cmd+K, and ?
-  React.useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Check if user is typing in an input or textarea
-      const target = e.target as HTMLElement;
-      const isInput =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable;
+  // A clicked release notification: the backend sends the AniList id of the anime to open.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    listen<number>('open-anime', (event) => {
+      const id = Number(event.payload);
+      if (Number.isInteger(id) && id > 0) navigate(`/detail/${id}`);
+    })
+      .then((fn) => {
+        // The effect may have been cleaned up before the listener was registered.
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch((err) => {
+        console.debug('[Notifications] listen failed (not running in Tauri?):', err);
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [navigate]);
+
+  // Global hotkeys: Ctrl/Cmd+K (palette, works while typing) and ? (shortcut list).
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.isComposing) return;
+      const ui = useUIStore.getState();
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setCommandPaletteOpen(!commandPaletteOpen);
-      } else if (e.key === '?' && !isInput) {
-        e.preventDefault();
-        setHotkeyCheatSheetOpen(!hotkeyCheatSheetOpen);
+        // Another dialog is in front: do not stack the palette on top of it.
+        if (!ui.commandPaletteOpen && hasOpenModal()) return;
+        ui.setCommandPaletteOpen(!ui.commandPaletteOpen);
+        return;
+      }
+
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (isEditableTarget(e.target)) return;
+        if (ui.hotkeyCheatSheetOpen) {
+          e.preventDefault();
+          ui.setHotkeyCheatSheetOpen(false);
+        } else if (!hasOpenModal()) {
+          e.preventDefault();
+          ui.setHotkeyCheatSheetOpen(true);
+        }
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [commandPaletteOpen, hotkeyCheatSheetOpen, setCommandPaletteOpen, setHotkeyCheatSheetOpen]);
+  }, []);
+
+  // Scroll: a new screen starts at the top; Back/Forward returns to where it was.
+  const mainRef = useRef<HTMLElement>(null);
+  const scrollPositions = useRef(new Map<string, number>());
+  const locationKeyRef = useRef(location.key);
+
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    locationKeyRef.current = location.key;
+    if (!main) return;
+    if (navigationType === 'REPLACE') {
+      scrollPositions.current.set(location.key, main.scrollTop);
+    } else {
+      main.scrollTop = navigationType === 'POP' ? scrollPositions.current.get(location.key) ?? 0 : 0;
+    }
+  }, [location.key, navigationType]);
 
   return (
-    <div className="flex flex-col w-screen h-screen bg-bg-page text-text-primary overflow-hidden select-none">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg-page text-text-primary select-none">
       <TitleBar />
 
-      <div className={`flex flex-1 w-full h-[calc(100vh-2rem)] mt-8 overflow-hidden ${isWatchScreen ? 'mt-0 h-screen' : ''}`}>
-        {/* Hide sidebar when in full player watch mode */}
+      <div className="flex min-h-0 w-full flex-1 overflow-hidden">
         {!isWatchScreen && <Sidebar />}
 
-        {/* Main Content Area */}
         <main
-          className={`flex-1 h-full overflow-y-auto ${
-            isWatchScreen ? 'p-0' : 'p-6 md:p-8'
+          ref={mainRef}
+          onScroll={(e) => scrollPositions.current.set(locationKeyRef.current, e.currentTarget.scrollTop)}
+          // The 6px scrollbar gutter is always reserved, so content keeps its width whether or
+          // not a screen is long enough to scroll; the right padding is 6px less to balance it.
+          className={`h-full min-w-0 flex-1 ${
+            isWatchScreen
+              ? 'overflow-hidden'
+              : 'overflow-y-scroll py-6 pl-6 pr-[18px] xl:py-8 xl:pl-8 xl:pr-[26px]'
           }`}
         >
-          <ErrorBoundary>
-            <Outlet />
+          <ErrorBoundary resetKey={location.pathname}>
+            {isWatchScreen ? (
+              <Outlet />
+            ) : (
+              <div className="mx-auto w-full max-w-[1600px]">
+                <Outlet />
+              </div>
+            )}
           </ErrorBoundary>
         </main>
       </div>
 
-      {/* Persistent Floating Elements */}
-      <ToastContainer />
+      <ToastContainer placement={isWatchScreen ? 'top-center' : 'bottom-right'} />
       <AuthDialog />
       <BulkDownloadDialog />
       <UpdateDialog />
@@ -130,75 +225,47 @@ const AppLayout: React.FC = () => {
   );
 };
 
+/** Rejects `/watch/abc/x` and the like before the player sees NaN ids. */
+const WatchRoute: React.FC = () => {
+  const { id, episodeNum } = useParams<{ id: string; episodeNum: string }>();
+  const navigate = useNavigate();
+  const idValid = !!id && /^\d+$/.test(id);
+  const episodeValid = !!episodeNum && /^\d+(\.\d+)?$/.test(episodeNum);
+
+  if (!idValid || !episodeValid) {
+    return (
+      <EmptyState
+        className="h-full"
+        title="This episode link is not valid"
+        description={`/watch/${id ?? ''}/${episodeNum ?? ''} does not point to an episode.`}
+        action={
+          <Button
+            variant="secondary"
+            onClick={() => navigate(idValid ? `/detail/${id}` : '/', { replace: true })}
+          >
+            {idValid ? 'Open the anime page' : 'Go to Home'}
+          </Button>
+        }
+      />
+    );
+  }
+
+  return <Watch />;
+};
+
 export const router = createHashRouter([
   {
     path: '/',
     element: <AppLayout />,
     children: [
-      {
-        index: true,
-        element: (
-          <ErrorBoundary>
-            <Home />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'discover',
-        element: (
-          <ErrorBoundary>
-            <Discover />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'detail/:id',
-        element: (
-          <ErrorBoundary>
-            <Detail />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'watch/:id/:episodeNum',
-        element: (
-          <ErrorBoundary>
-            <Watch />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'library',
-        element: (
-          <ErrorBoundary>
-            <Library />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'schedule',
-        element: (
-          <ErrorBoundary>
-            <Schedule />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'settings',
-        element: (
-          <ErrorBoundary>
-            <Settings />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: '*',
-        element: (
-          <ErrorBoundary>
-            <Home />
-          </ErrorBoundary>
-        ),
-      },
+      { index: true, element: <Home /> },
+      { path: 'discover', element: <Discover /> },
+      { path: 'detail/:id', element: <Detail /> },
+      { path: 'watch/:id/:episodeNum', element: <WatchRoute /> },
+      { path: 'library', element: <Library /> },
+      { path: 'schedule', element: <Schedule /> },
+      { path: 'settings', element: <Settings /> },
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
   },
 ]);

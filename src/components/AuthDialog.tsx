@@ -1,161 +1,131 @@
 import React, { useState } from 'react';
-import { Dialog } from './Dialog';
+import { Check, LogOut } from 'lucide-react';
+import { Button, Modal, Spinner } from './ui';
 import { useUIStore } from '../stores/uiStore';
-import { useSettings, useSaveSettings, useAniListViewer } from '../hooks';
-import { invoke } from '@tauri-apps/api/core';
-import { Check, ExternalLink, LogOut, Key, UserCheck, AlertCircle } from 'lucide-react';
+import {
+  ACCOUNT_LABELS,
+  ACCOUNT_SERVICES,
+  useAccountEvents,
+  useAccountStatus,
+  useDisconnectAccount,
+  useLoginPending,
+  useStartAccountLogin,
+} from '../hooks/useAccounts';
+import type { AccountService, AccountStatus } from '../types';
 
-export const AuthDialog: React.FC = () => {
-  const { authDialogOpen, setAuthDialogOpen, showToast } = useUIStore();
-  const { data: settings } = useSettings();
-  const saveSettingsMutation = useSaveSettings();
+/** The line under an account's name: who is connected, or that nobody is. */
+export function accountSummary(status: AccountStatus | undefined, failed = false): string {
+  if (!status) return failed ? 'The account could not be read.' : 'Checking…';
+  if (!status.connected) return 'Not connected.';
+  return status.name ? `Connected as ${status.name}.` : 'Connected.';
+}
 
-  const [anilistTokenInput, setAnilistTokenInput] = useState('');
-  const [malCodeInput, setMalCodeInput] = useState('');
-  const [malVerifier, setMalVerifier] = useState('');
-  const [isExchangingMal, setIsExchangingMal] = useState(false);
+/**
+ * Connect or Disconnect for one service. Connect opens the service's own sign-in page in a
+ * separate window; while that window is open the button brings it back to the front.
+ */
+export const AccountAction: React.FC<{ service: AccountService }> = ({ service }) => {
+  const { data: accounts, isError, refetch } = useAccountStatus();
+  const startLogin = useStartAccountLogin();
+  const disconnect = useDisconnectAccount();
+  const loginPending = useLoginPending(service);
+  const label = ACCOUNT_LABELS[service];
 
-  const anilistToken = settings?.anilist_token || null;
-  const { data: viewer, isLoading: viewerLoading } = useAniListViewer(anilistToken);
+  if (!accounts) {
+    return isError ? (
+      <Button variant="ghost" size="sm" onClick={() => refetch()}>
+        Try again
+      </Button>
+    ) : (
+      <Spinner size="sm" label={`Checking the ${label} account`} />
+    );
+  }
 
-  const handleOpenAniListAuth = async () => {
-    try {
-      const info = await invoke<{ anilist_auth_url: string }>('get_auth_urls');
-      window.open(info.anilist_auth_url, '_blank');
-      showToast({
-        type: 'info',
-        title: 'AniList Login Opened',
-        message: 'Authorize the application, then copy and paste the access_token from the URL bar below.',
-      });
-    } catch (e: any) {
-      showToast({ type: 'error', title: 'Failed to get auth URL', message: e.toString() });
-    }
-  };
-
-  const handleSaveAniListToken = async () => {
-    if (!anilistTokenInput.trim()) return;
-    let token = anilistTokenInput.trim();
-    // Support pasting the full redirect URL (http://localhost/#access_token=...&...)
-    if (token.includes('access_token=')) {
-      const match = token.match(/access_token=([^&]+)/);
-      if (match) token = match[1];
-    }
-
-    try {
-      const viewerData = await invoke<any>('get_anilist_viewer', { token });
-      await saveSettingsMutation.mutateAsync({
-        anilist_token: token,
-        anilist_viewer_id: viewerData.id,
-      });
-      setAnilistTokenInput('');
-      showToast({
-        type: 'success',
-        title: 'AniList Connected',
-        message: `Welcome back, ${viewerData.name}!`,
-      });
-    } catch (e: any) {
-      showToast({
-        type: 'error',
-        title: 'Authentication Failed',
-        message: 'Invalid AniList access token.',
-      });
-    }
-  };
-
-  const handleLogoutAniList = async () => {
-    await saveSettingsMutation.mutateAsync({
-      anilist_token: null,
-      anilist_viewer_id: null,
-    });
-    showToast({ type: 'info', title: 'AniList Disconnected' });
-  };
+  if (accounts[service].connected) {
+    return (
+      <Button
+        variant="danger"
+        size="sm"
+        aria-label={`Disconnect ${label}`}
+        onClick={() => disconnect.mutate(service)}
+        disabled={disconnect.isPending}
+      >
+        <LogOut aria-hidden="true" className="h-4 w-4" />
+        Disconnect
+      </Button>
+    );
+  }
 
   return (
-    <Dialog
-      isOpen={authDialogOpen}
-      onClose={() => setAuthDialogOpen(false)}
-      title="Account Integrations"
-      maxWidth="max-w-md"
+    <Button
+      variant={loginPending ? 'secondary' : 'primary'}
+      size="sm"
+      aria-label={loginPending ? undefined : `Connect ${label}`}
+      title={loginPending ? `Show the ${label} sign-in window` : undefined}
+      onClick={() => startLogin(service)}
     >
-      <div className="flex flex-col gap-6">
-        {/* AniList Integration */}
-        <div className="flex flex-col gap-3 p-4 rounded-xl bg-bg-elevated border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#02A9FF]/20 text-[#02A9FF] flex items-center justify-center font-black text-sm">
-                AL
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-bold text-text-primary">AniList</span>
-                <span className="text-[11px] text-text-muted">
-                  Sync watch history, library & scores
-                </span>
-              </div>
-            </div>
+      {loginPending && <Spinner size="sm" label={`Waiting for the ${label} sign-in`} />}
+      {loginPending ? 'Waiting for sign-in…' : 'Connect'}
+    </Button>
+  );
+};
 
-            {anilistToken && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-state-success/20 text-state-success border border-state-success/30">
-                <Check className="w-3 h-3 stroke-[3]" /> Connected
-              </span>
-            )}
-          </div>
+const AccountRow: React.FC<{
+  service: AccountService;
+  status: AccountStatus | undefined;
+  failed: boolean;
+}> = ({ service, status, failed }) => {
+  const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
+  const avatar = status?.connected ? status.avatar_url : null;
 
-          {anilistToken && viewer ? (
-            <div className="flex items-center justify-between p-3 rounded-lg bg-bg-card border border-border mt-1">
-              <div className="flex items-center gap-3">
-                {viewer.avatar_url && (
-                  <img
-                    src={viewer.avatar_url}
-                    alt={viewer.name}
-                    className="w-10 h-10 rounded-full object-cover border border-border"
-                  />
-                )}
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-text-primary">{viewer.name}</span>
-                  <span className="text-[10px] text-text-muted">
-                    {viewer.episodes_watched} episodes • {viewer.anime_count} anime
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleLogoutAniList}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-elevated text-state-error hover:bg-state-error/20 text-xs font-medium transition-colors"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Disconnect</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 mt-1">
-              <button
-                onClick={handleOpenAniListAuth}
-                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-[#02A9FF] hover:bg-[#0091dc] text-white text-xs font-bold shadow-md transition-all"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Authorize on AniList.co</span>
-              </button>
-
-              <div className="flex items-center gap-2 mt-1">
-                <input
-                  type="password"
-                  placeholder="Paste AniList Access Token or Redirect URL"
-                  value={anilistTokenInput}
-                  onChange={(e) => setAnilistTokenInput(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-lg bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-muted focus:border-border-focus outline-none"
-                />
-                <button
-                  onClick={handleSaveAniListToken}
-                  disabled={!anilistTokenInput.trim()}
-                  className="px-3.5 py-2 rounded-lg bg-accent-500 hover:bg-accent-700 disabled:opacity-40 text-white text-xs font-bold transition-colors"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          )}
+  return (
+    <div className="flex min-h-[56px] items-center justify-between gap-4 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        {avatar && avatar !== failedAvatar && (
+          <img
+            src={avatar}
+            alt=""
+            draggable={false}
+            onError={() => setFailedAvatar(avatar)}
+            className="h-9 w-9 flex-shrink-0 rounded-full object-cover"
+          />
+        )}
+        <div className="flex min-w-0 flex-col">
+          <span className="text-[13px] font-medium text-text-primary">{ACCOUNT_LABELS[service]}</span>
+          <span
+            className={`mt-0.5 flex items-center gap-1 text-xs ${
+              status?.connected ? 'text-state-success' : 'text-text-muted'
+            }`}
+          >
+            {status?.connected && <Check aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0" />}
+            <span className="truncate select-text">{accountSummary(status, failed)}</span>
+          </span>
         </div>
       </div>
-    </Dialog>
+      <AccountAction service={service} />
+    </div>
+  );
+};
+
+/** The accounts dialog, opened from the AniList tab. Settings → Account shows the same rows. */
+export const AuthDialog: React.FC = () => {
+  const authDialogOpen = useUIStore((s) => s.authDialogOpen);
+  const setAuthDialogOpen = useUIStore((s) => s.setAuthDialogOpen);
+  const { data: accounts, isError } = useAccountStatus();
+  // This component is mounted for the whole life of the app, whether the dialog is open or not.
+  useAccountEvents();
+
+  return (
+    <Modal isOpen={authDialogOpen} onClose={() => setAuthDialogOpen(false)} title="Accounts" size="md">
+      <p className="text-[13px] text-text-secondary">
+        Episodes you finish and anime you add to your watchlist are saved to the connected
+        lists. Signing in happens on the service&rsquo;s own page.
+      </p>
+      <div className="mt-2 divide-y divide-border">
+        {ACCOUNT_SERVICES.map((service) => (
+          <AccountRow key={service} service={service} status={accounts?.[service]} failed={isError} />
+        ))}
+      </div>
+    </Modal>
   );
 };

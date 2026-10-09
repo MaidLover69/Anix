@@ -1,44 +1,253 @@
 use crate::error::AppError;
-use crate::models::{AiringEntry, HistoryEntry, NotificationPreference, CustomPlaylist, CustomPlaylistItem};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use crate::models::{
+    AiringEntry, CustomPlaylist, CustomPlaylistItem, DownloadRecord, HistoryEntry,
+    NotificationPreference,
+};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteConnection, SqliteJournalMode, SqlitePool, SqlitePoolOptions,
+    SqliteRow, SqliteSynchronous,
+};
 use sqlx::Row;
 use std::fs;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::info;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::{info, warn};
 
+/// An episode counts as watched once playback reached this share of its duration.
+pub const WATCHED_THRESHOLD_PERCENT: i64 = 85;
+
+/// Schedule cache rows older than this are neither served nor kept.
+pub const SCHEDULE_CACHE_TTL_S: i64 = 1800;
+
+pub const STATUS_QUEUED: &str = "QUEUED";
+pub const STATUS_DOWNLOADING: &str = "DOWNLOADING";
+pub const STATUS_COMPLETED: &str = "COMPLETED";
+pub const STATUS_FAILED: &str = "FAILED";
+
+const DOWNLOAD_COLUMNS: &str = "id, anilist_id, episode_num, episode_title, series_title, \
+     series_cover, provider, category, quality, status, progress, file_path, file_size, \
+     duration_s, error_msg, created_at, updated_at";
+
+/// Picks `preferred` unless the app's data only exists in the pre-XDG `legacy` location.
+fn choose_dir(preferred: Option<PathBuf>, legacy: Option<PathBuf>, marker: &str) -> Option<PathBuf> {
+    match (preferred, legacy) {
+        (Some(p), Some(l)) => {
+            if p != l && !p.join(marker).exists() && l.join(marker).exists() {
+                Some(l)
+            } else {
+                Some(p)
+            }
+        }
+        (p, l) => p.or(l),
+    }
+}
+
+fn ensure_dir(path: Option<PathBuf>, what: &str) -> Result<PathBuf, AppError> {
+    let path = path.ok_or_else(|| {
+        AppError::Other(format!(
+            "Could not determine the {} directory (is HOME set?)",
+            what
+        ))
+    })?;
+    fs::create_dir_all(&path).map_err(|e| {
+        AppError::Other(format!(
+            "Could not create the {} directory {}: {}",
+            what,
+            path.display(),
+            e
+        ))
+    })?;
+    Ok(path)
+}
+
+/// `$XDG_DATA_HOME/anilili`, normally `~/.local/share/anilili`.
 pub fn get_app_dir() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Other("Could not find home directory".to_string()))?;
-    let path = home.join(".local").join("share").join("anilili");
-    fs::create_dir_all(&path).map_err(|e| AppError::Other(e.to_string()))?;
-    Ok(path)
+    let preferred = dirs::data_dir().map(|d| d.join("anilili"));
+    let legacy = dirs::home_dir().map(|h| h.join(".local").join("share").join("anilili"));
+    ensure_dir(choose_dir(preferred, legacy, "anilili.db"), "data")
 }
 
+/// `$XDG_CONFIG_HOME/anilili`, normally `~/.config/anilili`.
 pub fn get_config_dir() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Other("Could not find home directory".to_string()))?;
-    let path = home.join(".config").join("anilili");
-    fs::create_dir_all(&path).map_err(|e| AppError::Other(e.to_string()))?;
-    Ok(path)
+    let preferred = dirs::config_dir().map(|d| d.join("anilili"));
+    let legacy = dirs::home_dir().map(|h| h.join(".config").join("anilili"));
+    ensure_dir(choose_dir(preferred, legacy, "settings.json"), "config")
 }
 
-pub async fn init_db() -> Result<SqlitePool, AppError> {
-    let app_dir = get_app_dir()?;
-    let db_path = app_dir.join("anilili.db");
+fn error_detail(err: AppError) -> String {
+    match err {
+        AppError::Database(msg) => msg,
+        other => other.to_string(),
+    }
+}
 
-    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.display()))?
-        .create_if_missing(true);
+/// Opens (creating and migrating if needed) the app's database in the data directory.
+/// The error text names the file and the cause, and is meant to be shown to the user.
+pub async fn init_db() -> Result<SqlitePool, AppError> {
+    let db_path = get_app_dir()?.join("anilili.db");
+    let pool = init_db_at(&db_path).await?;
+    info!("Database initialized at {}", db_path.display());
+    Ok(pool)
+}
+
+/// Opens (creating and migrating if needed) the database file at `db_path`.
+pub async fn init_db_at(db_path: &Path) -> Result<SqlitePool, AppError> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(10)
         .connect_with(options)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!("could not open {}: {}", db_path.display(), e))
+        })?;
+
+    if let Err(e) = run_migrations(&pool).await {
+        pool.close().await;
+        return Err(AppError::Database(format!(
+            "could not prepare {}: {}",
+            db_path.display(),
+            error_detail(e)
+        )));
+    }
+
+    Ok(pool)
+}
+
+/// A private in-memory database with the real schema, for tests.
+pub async fn init_db_in_memory() -> Result<SqlitePool, AppError> {
+    let options = SqliteConnectOptions::new().in_memory(true).foreign_keys(true);
+
+    // Every connection to `:memory:` is its own database, so the pool keeps exactly one.
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_with(options)
         .await?;
 
-    // Create tables
-    sqlx::query(
+    run_migrations(&pool).await?;
+    Ok(pool)
+}
+
+const SCHEMA: &str = r#"
+    CREATE TABLE IF NOT EXISTS watchlist (
+        anilist_id      INTEGER PRIMARY KEY,
+        title           TEXT NOT NULL,
+        cover           TEXT,
+        format          TEXT,
+        average_score   INTEGER,
+        added_at        INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_library (
+        anilist_id      INTEGER PRIMARY KEY,
+        status          TEXT,
+        progress        INTEGER NOT NULL DEFAULT 0,
+        score           REAL NOT NULL DEFAULT 0.0,
+        title           TEXT,
+        cover           TEXT,
+        format          TEXT,
+        episodes        INTEGER,
+        average_score   INTEGER,
+        synced_at       INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS downloads (
+        id            TEXT PRIMARY KEY,
+        anilist_id    INTEGER NOT NULL,
+        episode_num   REAL NOT NULL,
+        episode_title TEXT,
+        series_title  TEXT NOT NULL,
+        series_cover  TEXT,
+        provider      TEXT NOT NULL,
+        category      TEXT NOT NULL,
+        quality       TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'QUEUED',
+        progress      REAL DEFAULT 0.0,
+        file_path     TEXT,
+        file_size     INTEGER,
+        duration_s    REAL,
+        error_msg     TEXT,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_preferences (
+        media_id      INTEGER PRIMARY KEY,
+        enabled       INTEGER NOT NULL DEFAULT 1,
+        media_title   TEXT NOT NULL,
+        cover_image   TEXT,
+        enabled_at    INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS notified_episodes (
+        media_id      INTEGER NOT NULL,
+        episode       INTEGER NOT NULL,
+        airing_at     INTEGER NOT NULL,
+        notified_at   INTEGER NOT NULL,
+        shown         INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (media_id, episode)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifier_state (
+        key           TEXT PRIMARY KEY,
+        value         INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS schedule_cache (
+        from_ts     INTEGER NOT NULL,
+        to_ts       INTEGER NOT NULL,
+        data        TEXT NOT NULL,
+        cached_at   INTEGER NOT NULL,
+        PRIMARY KEY (from_ts, to_ts)
+    );
+
+    CREATE TABLE IF NOT EXISTS filler_cache (
+        mal_id      INTEGER PRIMARY KEY,
+        filler_json TEXT NOT NULL,
+        cached_at   INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_playlists (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        description TEXT,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_playlist_items (
+        id            TEXT PRIMARY KEY,
+        playlist_id   TEXT NOT NULL,
+        anilist_id    INTEGER NOT NULL,
+        mal_id        INTEGER,
+        episode_num   REAL NOT NULL,
+        episode_title TEXT,
+        series_title  TEXT NOT NULL,
+        series_cover  TEXT,
+        category      TEXT NOT NULL DEFAULT 'sub',
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        added_at      INTEGER NOT NULL,
+        FOREIGN KEY(playlist_id) REFERENCES custom_playlists(id) ON DELETE CASCADE
+    );
+"#;
+
+/// One row per (anime, episode). `completed` is set once the episode has been watched to
+/// the threshold and stays set when the episode is replayed from the start.
+fn watch_history_ddl(table: &str) -> String {
+    format!(
         r#"
-        CREATE TABLE IF NOT EXISTS watch_history (
-            anilist_id      INTEGER PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS {table} (
+            anilist_id      INTEGER NOT NULL,
             episode_number  REAL NOT NULL DEFAULT 1.0,
             episode_title   TEXT,
             provider        TEXT NOT NULL DEFAULT 'auto',
@@ -48,221 +257,298 @@ pub async fn init_db() -> Result<SqlitePool, AppError> {
             updated_at      INTEGER NOT NULL DEFAULT 0,
             from_remote     INTEGER NOT NULL DEFAULT 0,
             title           TEXT NOT NULL DEFAULT '',
-            cover           TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS watchlist (
-            anilist_id      INTEGER PRIMARY KEY,
-            title           TEXT NOT NULL,
             cover           TEXT,
-            format          TEXT,
-            average_score   INTEGER,
-            added_at        INTEGER NOT NULL
+            completed       INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (anilist_id, episode_number)
         );
-
-        CREATE TABLE IF NOT EXISTS remote_library (
-            anilist_id      INTEGER PRIMARY KEY,
-            status          TEXT,
-            progress        INTEGER NOT NULL DEFAULT 0,
-            score           REAL NOT NULL DEFAULT 0.0,
-            title           TEXT,
-            cover           TEXT,
-            format          TEXT,
-            episodes        INTEGER,
-            average_score   INTEGER,
-            synced_at       INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS downloads (
-            id            TEXT PRIMARY KEY,
-            anilist_id    INTEGER NOT NULL,
-            episode_num   REAL NOT NULL,
-            episode_title TEXT,
-            series_title  TEXT NOT NULL,
-            series_cover  TEXT,
-            provider      TEXT NOT NULL,
-            category      TEXT NOT NULL,
-            quality       TEXT NOT NULL,
-            status        TEXT NOT NULL DEFAULT 'QUEUED',
-            progress      REAL DEFAULT 0.0,
-            file_path     TEXT,
-            file_size     INTEGER,
-            duration_s    REAL,
-            error_msg     TEXT,
-            created_at    INTEGER NOT NULL,
-            updated_at    INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS notification_preferences (
-            media_id      INTEGER PRIMARY KEY,
-            enabled       INTEGER NOT NULL DEFAULT 1,
-            media_title   TEXT NOT NULL,
-            cover_image   TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS schedule_cache (
-            from_ts     INTEGER NOT NULL,
-            to_ts       INTEGER NOT NULL,
-            data        TEXT NOT NULL,
-            cached_at   INTEGER NOT NULL,
-            PRIMARY KEY (from_ts, to_ts)
-        );
-
-        CREATE TABLE IF NOT EXISTS filler_cache (
-            mal_id      INTEGER PRIMARY KEY,
-            filler_json TEXT NOT NULL,
-            cached_at   INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS custom_playlists (
-            id          TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            description TEXT,
-            created_at  INTEGER NOT NULL,
-            updated_at  INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS custom_playlist_items (
-            id            TEXT PRIMARY KEY,
-            playlist_id   TEXT NOT NULL,
-            anilist_id    INTEGER NOT NULL,
-            mal_id        INTEGER,
-            episode_num   REAL NOT NULL,
-            episode_title TEXT,
-            series_title  TEXT NOT NULL,
-            series_cover  TEXT,
-            category      TEXT NOT NULL DEFAULT 'sub',
-            sort_order    INTEGER NOT NULL DEFAULT 0,
-            added_at      INTEGER NOT NULL,
-            FOREIGN KEY(playlist_id) REFERENCES custom_playlists(id) ON DELETE CASCADE
-        );
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-
-    let columns: Vec<String> = sqlx::query("PRAGMA table_info(watch_history);")
-        .fetch_all(&pool)
-        .await?
-        .into_iter()
-        .map(|r| r.get::<String, _>("name"))
-        .collect();
-
-    if columns.contains(&"episode".to_string()) && !columns.contains(&"episode_number".to_string()) {
-        let _ = sqlx::query("DROP TABLE watch_history;").execute(&pool).await;
-        let _ = sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS watch_history (
-                anilist_id      INTEGER PRIMARY KEY,
-                episode_number  REAL NOT NULL DEFAULT 1.0,
-                episode_title   TEXT,
-                provider        TEXT NOT NULL DEFAULT 'auto',
-                category        TEXT NOT NULL DEFAULT 'sub',
-                position_ms     INTEGER NOT NULL DEFAULT 0,
-                duration_ms     INTEGER NOT NULL DEFAULT 0,
-                updated_at      INTEGER NOT NULL DEFAULT 0,
-                from_remote     INTEGER NOT NULL DEFAULT 0,
-                title           TEXT NOT NULL DEFAULT '',
-                cover           TEXT
-            );
-            "#,
-        )
-        .execute(&pool)
-        .await;
-    }
-
-    let required_cols = [
-        ("episode_number", "REAL NOT NULL DEFAULT 1.0"),
-        ("episode_title", "TEXT"),
-        ("provider", "TEXT NOT NULL DEFAULT 'auto'"),
-        ("category", "TEXT NOT NULL DEFAULT 'sub'"),
-        ("position_ms", "INTEGER NOT NULL DEFAULT 0"),
-        ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
-        ("updated_at", "INTEGER NOT NULL DEFAULT 0"),
-        ("from_remote", "INTEGER NOT NULL DEFAULT 0"),
-        ("title", "TEXT NOT NULL DEFAULT ''"),
-        ("cover", "TEXT"),
-    ];
-
-    for (col_name, col_def) in required_cols {
-        if !columns.contains(&col_name.to_string()) {
-            let alter_sql = format!("ALTER TABLE watch_history ADD COLUMN {} {};", col_name, col_def);
-            let _ = sqlx::query(&alter_sql).execute(&pool).await;
-        }
-    }
-
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(updated_at DESC);")
-        .execute(&pool)
-        .await;
-
-    info!("Database initialized at {}", db_path.display());
-    Ok(pool)
-}
-
-pub async fn get_continue_watching(pool: &SqlitePool) -> Result<Vec<HistoryEntry>, AppError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT anilist_id, episode_number, episode_title, provider, category, position_ms, duration_ms, updated_at, from_remote, title, cover
-        FROM watch_history
-        WHERE position_ms > 0
-        GROUP BY anilist_id
-        ORDER BY updated_at DESC
-        LIMIT 20
         "#
     )
-    .fetch_all(pool)
-    .await?;
-
-    let entries = rows
-        .into_iter()
-        .map(|r| {
-            let anilist_id: i64 = r.get("anilist_id");
-            let episode_number: f64 = r.get("episode_number");
-            let episode_title: Option<String> = r.get("episode_title");
-            let provider: String = r.get("provider");
-            let category: String = r.get("category");
-            let position_ms: i64 = r.get("position_ms");
-            let duration_ms: i64 = r.get("duration_ms");
-            let updated_at: i64 = r.get("updated_at");
-            let from_remote: i64 = r.get("from_remote");
-            let title: String = r.get("title");
-            let cover: Option<String> = r.get("cover");
-
-            HistoryEntry {
-                anilist_id: anilist_id as i32,
-                title,
-                cover,
-                episode_number,
-                episode_title,
-                provider,
-                category,
-                position_ms,
-                duration_ms,
-                updated_at,
-                from_remote: from_remote != 0,
-            }
-        })
-        .collect();
-
-    Ok(entries)
 }
 
+const WATCH_HISTORY_COLUMNS: [&str; 12] = [
+    "anilist_id",
+    "episode_number",
+    "episode_title",
+    "provider",
+    "category",
+    "position_ms",
+    "duration_ms",
+    "updated_at",
+    "from_remote",
+    "title",
+    "cover",
+    "completed",
+];
+
+/// Creates missing tables and brings older layouts up to date. Runs in one transaction, so a
+/// failure leaves the database exactly as it was.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(SCHEMA).execute(&mut *tx).await?;
+    migrate_watch_history(&mut tx).await?;
+    migrate_notification_preferences(&mut tx).await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(updated_at DESC)")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status, created_at)")
+        .execute(&mut *tx)
+        .await?;
+
+    // Older builds stored whatever the caller sent: second or millisecond timestamps and
+    // lower-case statuses. Second values are far below any millisecond timestamp.
+    sqlx::query("UPDATE downloads SET created_at = created_at * 1000 WHERE created_at > 0 AND created_at < 100000000000")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE downloads SET updated_at = updated_at * 1000 WHERE updated_at > 0 AND updated_at < 100000000000")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE downloads SET status = UPPER(status) WHERE status <> UPPER(status)")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let info_rows = sqlx::query("PRAGMA table_info(watch_history)")
+        .fetch_all(&mut *conn)
+        .await?;
+
+    if info_rows.is_empty() {
+        sqlx::query(&watch_history_ddl("watch_history"))
+            .execute(&mut *conn)
+            .await?;
+        return Ok(());
+    }
+
+    let columns: Vec<String> = info_rows.iter().map(|r| r.get::<String, _>("name")).collect();
+    let mut key: Vec<String> = info_rows
+        .iter()
+        .filter(|r| r.get::<i64, _>("pk") > 0)
+        .map(|r| r.get::<String, _>("name"))
+        .collect();
+    key.sort();
+    let has = |name: &str| columns.iter().any(|c| c == name);
+
+    let up_to_date = key == ["anilist_id", "episode_number"]
+        && WATCH_HISTORY_COLUMNS.iter().all(|c| has(*c));
+    if up_to_date {
+        return Ok(());
+    }
+
+    if !has("anilist_id") {
+        // Not a layout any build of this app wrote. Keep the rows under another name rather
+        // than guess at their meaning.
+        let parked = format!("watch_history_unrecognized_{}", current_unix_millis());
+        warn!("watch_history has an unknown layout; keeping it as {}", parked);
+        sqlx::query(&format!("ALTER TABLE watch_history RENAME TO {}", parked))
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(&watch_history_ddl("watch_history"))
+            .execute(&mut *conn)
+            .await?;
+        return Ok(());
+    }
+
+    // Every name below is a compile-time constant; only its presence is read from the table.
+    let episode = if has("episode_number") {
+        "COALESCE(CAST(episode_number AS REAL), 1.0)"
+    } else if has("episode") {
+        "COALESCE(CAST(episode AS REAL), 1.0)"
+    } else {
+        "1.0"
+    };
+    let or_default = |name: &str, default: &str| {
+        if has(name) {
+            format!("COALESCE({}, {})", name, default)
+        } else {
+            default.to_string()
+        }
+    };
+    let or_null = |name: &str| if has(name) { name.to_string() } else { "NULL".to_string() };
+
+    let position = or_default("position_ms", "0");
+    let duration = or_default("duration_ms", "0");
+    let updated_at = or_default("updated_at", "0");
+    let reached_threshold = format!(
+        "CASE WHEN {d} > 0 AND {p} * 100 >= {d} * {t} THEN 1 ELSE 0 END",
+        p = position,
+        d = duration,
+        t = WATCHED_THRESHOLD_PERCENT
+    );
+    let completed = if has("completed") {
+        format!("MAX(COALESCE(completed, 0), {})", reached_threshold)
+    } else {
+        reached_threshold
+    };
+
+    let old_count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM watch_history WHERE anilist_id IS NOT NULL")
+        .fetch_one(&mut *conn)
+        .await?
+        .get("n");
+
+    sqlx::query("DROP TABLE IF EXISTS watch_history_migrating")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(&watch_history_ddl("watch_history_migrating"))
+        .execute(&mut *conn)
+        .await?;
+
+    // Oldest first, so if an old layout held the same (anime, episode) twice the newest wins.
+    let copy = format!(
+        r#"
+        INSERT OR REPLACE INTO watch_history_migrating
+            (anilist_id, episode_number, episode_title, provider, category, position_ms,
+             duration_ms, updated_at, from_remote, title, cover, completed)
+        SELECT anilist_id, {episode}, {episode_title}, {provider}, {category}, {position},
+               {duration}, {updated_at}, {from_remote}, {title}, {cover}, {completed}
+        FROM watch_history
+        WHERE anilist_id IS NOT NULL
+        ORDER BY {updated_at} ASC
+        "#,
+        episode = episode,
+        episode_title = or_null("episode_title"),
+        provider = or_default("provider", "'auto'"),
+        category = or_default("category", "'sub'"),
+        position = position,
+        duration = duration,
+        updated_at = updated_at,
+        from_remote = or_default("from_remote", "0"),
+        title = or_default("title", "''"),
+        cover = or_null("cover"),
+        completed = completed,
+    );
+    sqlx::query(&copy).execute(&mut *conn).await?;
+
+    let new_count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM watch_history_migrating")
+        .fetch_one(&mut *conn)
+        .await?
+        .get("n");
+
+    sqlx::query("DROP TABLE watch_history").execute(&mut *conn).await?;
+    sqlx::query("ALTER TABLE watch_history_migrating RENAME TO watch_history")
+        .execute(&mut *conn)
+        .await?;
+
+    info!(
+        "Migrated watch history to one row per episode ({} rows read, {} kept)",
+        old_count, new_count
+    );
+    Ok(())
+}
+
+pub fn current_unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+pub fn current_unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// True once `position_ms` is at least 85% of a known duration.
+pub fn is_episode_watched(position_ms: i64, duration_ms: i64) -> bool {
+    duration_ms > 0
+        && (position_ms as i128) * 100 >= (duration_ms as i128) * (WATCHED_THRESHOLD_PERCENT as i128)
+}
+
+fn map_history_row(r: SqliteRow) -> HistoryEntry {
+    let anilist_id: i64 = r.get("anilist_id");
+    let from_remote: i64 = r.get("from_remote");
+
+    HistoryEntry {
+        anilist_id: anilist_id as i32,
+        title: r.get("title"),
+        cover: r.get("cover"),
+        episode_number: r.get("episode_number"),
+        episode_title: r.get("episode_title"),
+        provider: r.get("provider"),
+        category: r.get("category"),
+        position_ms: r.get("position_ms"),
+        duration_ms: r.get("duration_ms"),
+        updated_at: r.get("updated_at"),
+        from_remote: from_remote != 0,
+    }
+}
+
+/// One entry per anime, most recently watched anime first.
+///
+/// The entry is the anime's most recently played episode. If that episode is already
+/// finished and a later episode of the same anime has been started but not finished, the
+/// later one is returned instead; a finished episode is only listed when nothing later is
+/// in progress.
+pub async fn get_continue_watching(pool: &SqlitePool) -> Result<Vec<HistoryEntry>, AppError> {
+    let sql = format!(
+        r#"
+        WITH ranked AS (
+            SELECT anilist_id, episode_number, position_ms, duration_ms, updated_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY anilist_id
+                       ORDER BY updated_at DESC, episode_number DESC
+                   ) AS rn
+            FROM watch_history
+            WHERE position_ms > 0
+        ),
+        pick AS (
+            SELECT l.anilist_id,
+                   l.updated_at AS last_played,
+                   COALESCE(
+                       CASE WHEN l.duration_ms > 0 AND l.position_ms * 100 >= l.duration_ms * {t} THEN (
+                           SELECT n.episode_number
+                           FROM watch_history n
+                           WHERE n.anilist_id = l.anilist_id
+                             AND n.episode_number > l.episode_number
+                             AND n.position_ms > 0
+                             AND NOT (n.duration_ms > 0 AND n.position_ms * 100 >= n.duration_ms * {t})
+                           ORDER BY n.updated_at DESC, n.episode_number ASC
+                           LIMIT 1
+                       ) END,
+                       l.episode_number
+                   ) AS episode_number
+            FROM ranked l
+            WHERE l.rn = 1
+        )
+        SELECT h.anilist_id, h.episode_number, h.episode_title, h.provider, h.category,
+               h.position_ms, h.duration_ms, h.updated_at, h.from_remote, h.title, h.cover
+        FROM pick p
+        JOIN watch_history h
+          ON h.anilist_id = p.anilist_id AND h.episode_number = p.episode_number
+        ORDER BY p.last_played DESC
+        LIMIT 20
+        "#,
+        t = WATCHED_THRESHOLD_PERCENT
+    );
+
+    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(map_history_row).collect())
+}
+
+/// Episode numbers of `anilist_id` that have been watched to the threshold, ascending.
 pub async fn get_watched_episodes(pool: &SqlitePool, anilist_id: i32) -> Result<Vec<f64>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT DISTINCT episode_number
+        SELECT episode_number
         FROM watch_history
-        WHERE anilist_id = ?1 AND (position_ms >= (duration_ms * 0.85) OR position_ms > 0)
-        "#
+        WHERE anilist_id = ?1 AND completed = 1
+        ORDER BY episode_number ASC
+        "#,
     )
     .bind(anilist_id)
     .fetch_all(pool)
     .await?;
 
-    let list = rows.into_iter().map(|r| r.get::<f64, _>("episode_number")).collect();
-    Ok(list)
+    Ok(rows.into_iter().map(|r| r.get::<f64, _>("episode_number")).collect())
 }
 
+/// Saved `(position_ms, duration_ms)` of one episode.
 pub async fn get_episode_progress(
     pool: &SqlitePool,
     anilist_id: i32,
@@ -275,56 +561,55 @@ pub async fn get_episode_progress(
         WHERE anilist_id = ?1 AND ABS(episode_number - ?2) < 0.01
         ORDER BY updated_at DESC
         LIMIT 1
-        "#
+        "#,
     )
     .bind(anilist_id)
     .bind(episode_number)
     .fetch_optional(pool)
     .await?;
 
-    if let Some(r) = row {
-        let pos: i64 = r.get("position_ms");
-        let dur: i64 = r.get("duration_ms");
-        Ok(Some((pos, dur)))
-    } else {
-        Ok(None)
-    }
+    Ok(row.map(|r| (r.get("position_ms"), r.get("duration_ms"))))
 }
 
+/// Inserts or updates the row of `(entry.anilist_id, entry.episode_number)`.
 pub async fn update_watch_progress(
     pool: &SqlitePool,
     entry: &HistoryEntry,
 ) -> Result<(), AppError> {
     let from_remote_val = if entry.from_remote { 1 } else { 0 };
+    let position_ms = entry.position_ms.max(0);
+    let duration_ms = entry.duration_ms.max(0);
+    let completed = if is_episode_watched(position_ms, duration_ms) { 1 } else { 0 };
 
     sqlx::query(
         r#"
-        INSERT INTO watch_history (anilist_id, episode_number, episode_title, provider, category, position_ms, duration_ms, updated_at, from_remote, title, cover)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-        ON CONFLICT(anilist_id) DO UPDATE SET
-            episode_number = excluded.episode_number,
-            episode_title = excluded.episode_title,
+        INSERT INTO watch_history (anilist_id, episode_number, episode_title, provider, category, position_ms, duration_ms, updated_at, from_remote, title, cover, completed)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        ON CONFLICT(anilist_id, episode_number) DO UPDATE SET
+            episode_title = COALESCE(excluded.episode_title, watch_history.episode_title),
             provider = excluded.provider,
             category = excluded.category,
             position_ms = excluded.position_ms,
-            duration_ms = excluded.duration_ms,
+            duration_ms = CASE WHEN excluded.duration_ms > 0 THEN excluded.duration_ms ELSE watch_history.duration_ms END,
             updated_at = excluded.updated_at,
             from_remote = excluded.from_remote,
             title = excluded.title,
-            cover = excluded.cover;
-        "#
+            cover = COALESCE(excluded.cover, watch_history.cover),
+            completed = MAX(watch_history.completed, excluded.completed);
+        "#,
     )
     .bind(entry.anilist_id)
     .bind(entry.episode_number)
     .bind(&entry.episode_title)
     .bind(&entry.provider)
     .bind(&entry.category)
-    .bind(entry.position_ms)
-    .bind(entry.duration_ms)
+    .bind(position_ms)
+    .bind(duration_ms)
     .bind(entry.updated_at)
     .bind(from_remote_val)
     .bind(&entry.title)
     .bind(&entry.cover)
+    .bind(completed)
     .execute(pool)
     .await?;
 
@@ -339,7 +624,7 @@ pub async fn add_to_watchlist(
     format: Option<&str>,
     average_score: Option<i32>,
 ) -> Result<(), AppError> {
-    let now = current_unix_timestamp() * 1000;
+    let now = current_unix_millis();
 
     sqlx::query(
         r#"
@@ -407,7 +692,7 @@ pub async fn upsert_library_entry(
     pool: &SqlitePool,
     entry: &crate::models::MediaListEntry,
 ) -> Result<(), AppError> {
-    let now = current_unix_timestamp() * 1000;
+    let now = current_unix_millis();
 
     sqlx::query(
         r#"
@@ -477,11 +762,33 @@ pub async fn get_library_entries(
     Ok(entries)
 }
 
+fn parse_download_status(status: &str) -> Option<&'static str> {
+    match status.trim().to_ascii_uppercase().as_str() {
+        STATUS_QUEUED => Some(STATUS_QUEUED),
+        STATUS_DOWNLOADING => Some(STATUS_DOWNLOADING),
+        STATUS_COMPLETED => Some(STATUS_COMPLETED),
+        STATUS_FAILED => Some(STATUS_FAILED),
+        _ => None,
+    }
+}
+
+fn clamp_progress(progress: f64) -> f64 {
+    if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Inserts a download row. `created_at` and `updated_at` are always written here, in
+/// milliseconds; the values in `record` are ignored. The status is stored upper-case and a
+/// missing or unknown status becomes `QUEUED`. Progress is a fraction from 0.0 to 1.0.
 pub async fn create_download(
     pool: &SqlitePool,
-    record: &crate::models::DownloadRecord,
+    record: &DownloadRecord,
 ) -> Result<String, AppError> {
-    let now = current_unix_timestamp() * 1000;
+    let now = current_unix_millis();
+    let status = parse_download_status(&record.status).unwrap_or(STATUS_QUEUED);
 
     sqlx::query(
         r#"
@@ -498,13 +805,13 @@ pub async fn create_download(
     .bind(&record.provider)
     .bind(&record.category)
     .bind(&record.quality)
-    .bind(&record.status)
-    .bind(record.progress)
+    .bind(status)
+    .bind(clamp_progress(record.progress))
     .bind(&record.file_path)
     .bind(record.file_size)
     .bind(record.duration_s)
     .bind(&record.error_msg)
-    .bind(if record.created_at > 0 { record.created_at } else { now })
+    .bind(now)
     .bind(now)
     .execute(pool)
     .await?;
@@ -522,7 +829,9 @@ pub async fn update_download_status(
     duration_s: Option<f64>,
     error_msg: Option<&str>,
 ) -> Result<(), AppError> {
-    let now = current_unix_timestamp() * 1000;
+    let status = parse_download_status(status)
+        .ok_or_else(|| AppError::Other(format!("Unknown download status: {}", status)))?;
+    let now = current_unix_millis();
 
     sqlx::query(
         r#"
@@ -538,7 +847,7 @@ pub async fn update_download_status(
         "#
     )
     .bind(status)
-    .bind(progress)
+    .bind(progress.map(clamp_progress))
     .bind(file_path)
     .bind(file_size)
     .bind(duration_s)
@@ -551,8 +860,80 @@ pub async fn update_download_status(
     Ok(())
 }
 
-fn map_download_row(r: sqlx::sqlite::SqliteRow) -> crate::models::DownloadRecord {
-    crate::models::DownloadRecord {
+/// Records progress of a running download. Does nothing unless the row is `DOWNLOADING`,
+/// so a late write cannot disturb a row that has already finished or failed.
+pub async fn update_download_progress(
+    pool: &SqlitePool,
+    id: &str,
+    progress: Option<f64>,
+    file_size: Option<i64>,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        UPDATE downloads
+        SET progress = COALESCE(?1, progress),
+            file_size = COALESCE(?2, file_size),
+            updated_at = ?3
+        WHERE id = ?4 AND status = 'DOWNLOADING'
+        "#,
+    )
+    .bind(progress.map(clamp_progress))
+    .bind(file_size)
+    .bind(current_unix_millis())
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Atomically turns the oldest `QUEUED` row into `DOWNLOADING` and returns it.
+pub async fn claim_next_queued_download(
+    pool: &SqlitePool,
+) -> Result<Option<DownloadRecord>, AppError> {
+    let sql = format!(
+        r#"
+        UPDATE downloads
+        SET status = 'DOWNLOADING', progress = 0.0, error_msg = NULL, updated_at = ?1
+        WHERE id = (
+            SELECT id FROM downloads
+            WHERE status = 'QUEUED'
+            ORDER BY created_at ASC, rowid ASC
+            LIMIT 1
+        )
+        RETURNING {}
+        "#,
+        DOWNLOAD_COLUMNS
+    );
+
+    let row = sqlx::query(&sql)
+        .bind(current_unix_millis())
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.map(map_download_row))
+}
+
+/// For startup, before any download runs: rows still `DOWNLOADING` belong to a previous run
+/// of the app that was interrupted, so they go back to `QUEUED` for the queue worker.
+/// Returns how many rows were reset.
+pub async fn reconcile_stale_downloads(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE downloads
+        SET status = 'QUEUED', progress = 0.0, file_size = NULL, error_msg = NULL, updated_at = ?1
+        WHERE status = 'DOWNLOADING'
+        "#,
+    )
+    .bind(current_unix_millis())
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+fn map_download_row(r: SqliteRow) -> DownloadRecord {
+    DownloadRecord {
         id: r.get("id"),
         anilist_id: r.get("anilist_id"),
         episode_num: r.get("episode_num"),
@@ -563,7 +944,7 @@ fn map_download_row(r: sqlx::sqlite::SqliteRow) -> crate::models::DownloadRecord
         category: r.get("category"),
         quality: r.get("quality"),
         status: r.get("status"),
-        progress: r.get("progress"),
+        progress: r.get::<Option<f64>, _>("progress").unwrap_or(0.0),
         file_path: r.get("file_path"),
         file_size: r.get("file_size"),
         duration_s: r.get("duration_s"),
@@ -576,34 +957,22 @@ fn map_download_row(r: sqlx::sqlite::SqliteRow) -> crate::models::DownloadRecord
 pub async fn get_downloads(
     pool: &SqlitePool,
     anilist_id: i64,
-) -> Result<Vec<crate::models::DownloadRecord>, AppError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, anilist_id, episode_num, episode_title, series_title, series_cover, provider, category, quality, status, progress, file_path, file_size, duration_s, error_msg, created_at, updated_at
-        FROM downloads
-        WHERE anilist_id = ?1
-        ORDER BY episode_num ASC
-        "#
-    )
-    .bind(anilist_id)
-    .fetch_all(pool)
-    .await?;
+) -> Result<Vec<DownloadRecord>, AppError> {
+    let sql = format!(
+        "SELECT {} FROM downloads WHERE anilist_id = ?1 ORDER BY episode_num ASC",
+        DOWNLOAD_COLUMNS
+    );
+    let rows = sqlx::query(&sql).bind(anilist_id).fetch_all(pool).await?;
 
     Ok(rows.into_iter().map(map_download_row).collect())
 }
 
-pub async fn get_all_downloads(
-    pool: &SqlitePool,
-) -> Result<Vec<crate::models::DownloadRecord>, AppError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, anilist_id, episode_num, episode_title, series_title, series_cover, provider, category, quality, status, progress, file_path, file_size, duration_s, error_msg, created_at, updated_at
-        FROM downloads
-        ORDER BY updated_at DESC
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
+pub async fn get_all_downloads(pool: &SqlitePool) -> Result<Vec<DownloadRecord>, AppError> {
+    let sql = format!(
+        "SELECT {} FROM downloads ORDER BY updated_at DESC",
+        DOWNLOAD_COLUMNS
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await?;
 
     Ok(rows.into_iter().map(map_download_row).collect())
 }
@@ -620,37 +989,56 @@ pub async fn delete_download(pool: &SqlitePool, id: &str) -> Result<(), AppError
 pub async fn get_download_by_id(
     pool: &SqlitePool,
     id: &str,
-) -> Result<Option<crate::models::DownloadRecord>, AppError> {
-    let row = sqlx::query(
-        r#"
-        SELECT id, anilist_id, episode_num, episode_title, series_title, series_cover, provider, category, quality, status, progress, file_path, file_size, duration_s, error_msg, created_at, updated_at
-        FROM downloads
-        WHERE id = ?1
-        "#
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+) -> Result<Option<DownloadRecord>, AppError> {
+    let sql = format!("SELECT {} FROM downloads WHERE id = ?1", DOWNLOAD_COLUMNS);
+    let row = sqlx::query(&sql).bind(id).fetch_optional(pool).await?;
 
     Ok(row.map(map_download_row))
 }
 
-pub fn current_unix_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+/// Bells saved before release notifications existed have no switch-on time. They get the
+/// time of the upgrade, so nothing that aired before it is announced.
+async fn migrate_notification_preferences(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let info_rows = sqlx::query("PRAGMA table_info(notification_preferences)")
+        .fetch_all(&mut *conn)
+        .await?;
+    if info_rows.iter().any(|r| r.get::<String, _>("name") == "enabled_at") {
+        return Ok(());
+    }
+
+    sqlx::query("ALTER TABLE notification_preferences ADD COLUMN enabled_at INTEGER NOT NULL DEFAULT 0")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("UPDATE notification_preferences SET enabled_at = ?1")
+        .bind(current_unix_timestamp())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 pub async fn save_notification_preference(
     pool: &SqlitePool,
     pref: &NotificationPreference,
 ) -> Result<(), AppError> {
+    save_notification_preference_at(pool, pref, current_unix_timestamp()).await
+}
+
+/// Saves a bell. `now` (Unix seconds) becomes its switch-on time when the bell goes from off
+/// to on; saving a bell that is already on keeps the earlier time.
+pub async fn save_notification_preference_at(
+    pool: &SqlitePool,
+    pref: &NotificationPreference,
+    now: i64,
+) -> Result<(), AppError> {
     sqlx::query(
         r#"
-        INSERT INTO notification_preferences (media_id, enabled, media_title, cover_image)
-        VALUES (?1, ?2, ?3, ?4)
+        INSERT INTO notification_preferences (media_id, enabled, media_title, cover_image, enabled_at)
+        VALUES (?1, ?2, ?3, ?4, ?5)
         ON CONFLICT(media_id) DO UPDATE SET
+            enabled_at = CASE
+                WHEN excluded.enabled = 1 AND notification_preferences.enabled = 0 THEN excluded.enabled_at
+                ELSE notification_preferences.enabled_at
+            END,
             enabled = excluded.enabled,
             media_title = excluded.media_title,
             cover_image = excluded.cover_image
@@ -660,6 +1048,101 @@ pub async fn save_notification_preference(
     .bind(if pref.enabled { 1i32 } else { 0i32 })
     .bind(&pref.media_title)
     .bind(&pref.cover_image)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// An anime the user wants release notifications for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationBell {
+    pub media_id: i64,
+    pub media_title: String,
+    pub cover_image: Option<String>,
+    /// Unix seconds at which the bell was last switched on.
+    pub enabled_at: i64,
+}
+
+/// Every bell that is switched on.
+pub async fn list_notification_bells(pool: &SqlitePool) -> Result<Vec<NotificationBell>, AppError> {
+    let rows = sqlx::query(
+        "SELECT media_id, media_title, cover_image, enabled_at FROM notification_preferences \
+         WHERE enabled = 1 ORDER BY media_id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| NotificationBell {
+            media_id: r.get("media_id"),
+            media_title: r.get("media_title"),
+            cover_image: r.get("cover_image"),
+            enabled_at: r.get("enabled_at"),
+        })
+        .collect())
+}
+
+/// Records that an episode has been dealt with: `shown` when a notification went out, not
+/// `shown` when it was skipped on purpose. Returns false if the episode was already recorded,
+/// in which case nothing changes.
+pub async fn record_notified_episode(
+    pool: &SqlitePool,
+    media_id: i64,
+    episode: i32,
+    airing_at: i64,
+    notified_at: i64,
+    shown: bool,
+) -> Result<bool, AppError> {
+    let result = sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO notified_episodes (media_id, episode, airing_at, notified_at, shown)
+        VALUES (?1, ?2, ?3, ?4, ?5)
+        "#,
+    )
+    .bind(media_id)
+    .bind(episode)
+    .bind(airing_at)
+    .bind(notified_at)
+    .bind(if shown { 1i32 } else { 0i32 })
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// `(media_id, episode)` of every episode recorded by `record_notified_episode`.
+pub async fn list_notified_episodes(pool: &SqlitePool) -> Result<Vec<(i64, i32)>, AppError> {
+    let rows = sqlx::query("SELECT media_id, episode FROM notified_episodes")
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get("media_id"), r.get("episode")))
+        .collect())
+}
+
+pub async fn get_notifier_state(pool: &SqlitePool, key: &str) -> Result<Option<i64>, AppError> {
+    let row = sqlx::query("SELECT value FROM notifier_state WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.map(|r| r.get("value")))
+}
+
+pub async fn set_notifier_state(pool: &SqlitePool, key: &str, value: i64) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO notifier_state (key, value) VALUES (?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        "#,
+    )
+    .bind(key)
+    .bind(value)
     .execute(pool)
     .await?;
 
@@ -721,7 +1204,7 @@ pub async fn get_cached_schedule(
 
     if let Some(r) = row {
         let cached_at: i64 = r.get("cached_at");
-        if now - cached_at < 1800 {
+        if now - cached_at < SCHEDULE_CACHE_TTL_S {
             let data_str: String = r.get("data");
             if let Ok(entries) = serde_json::from_str::<Vec<AiringEntry>>(&data_str) {
                 return Ok(Some(entries));
@@ -732,6 +1215,8 @@ pub async fn get_cached_schedule(
     Ok(None)
 }
 
+/// Stores one schedule window and drops every window that has expired. The key changes
+/// daily, so without the cleanup the table would gain a row per day forever.
 pub async fn cache_schedule(
     pool: &SqlitePool,
     from_ts: i64,
@@ -741,6 +1226,13 @@ pub async fn cache_schedule(
     let now = current_unix_timestamp();
     let json_data = serde_json::to_string(entries)
         .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DELETE FROM schedule_cache WHERE cached_at <= ?1")
+        .bind(now - SCHEDULE_CACHE_TTL_S)
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query(
         r#"
@@ -755,9 +1247,10 @@ pub async fn cache_schedule(
     .bind(to_ts)
     .bind(json_data)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -811,13 +1304,32 @@ pub async fn cache_filler_episodes(
     Ok(())
 }
 
+static PLAYLIST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// `pl-<ms since epoch>-<per-process counter>-<random>`, all in hex.
+fn new_playlist_id() -> String {
+    use std::hash::{BuildHasher, Hasher};
+
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let counter = PLAYLIST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    // `RandomState` is seeded from the operating system's random source.
+    let random = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+
+    format!("pl-{:x}-{:x}-{:016x}", millis, counter, random)
+}
+
 pub async fn create_custom_playlist(
     pool: &SqlitePool,
     name: &str,
     description: Option<&str>,
 ) -> Result<CustomPlaylist, AppError> {
     let now = current_unix_timestamp();
-    let id = format!("pl-{}", now);
+    let id = new_playlist_id();
     sqlx::query(
         r#"
         INSERT INTO custom_playlists (id, name, description, created_at, updated_at)
@@ -925,39 +1437,70 @@ pub async fn get_custom_playlist_items(
     Ok(items)
 }
 
+/// Adds every item or none: the inserts share one transaction, and the first failure rolls
+/// all of them back and is returned. Returns the number of items added.
+pub async fn add_items_to_custom_playlist(
+    pool: &SqlitePool,
+    items: &[CustomPlaylistItem],
+) -> Result<usize, AppError> {
+    if items.is_empty() {
+        return Ok(0);
+    }
+
+    let now = current_unix_timestamp();
+    let mut tx = pool.begin().await?;
+
+    for item in items {
+        sqlx::query(
+            r#"
+            INSERT INTO custom_playlist_items
+            (id, playlist_id, anilist_id, mal_id, episode_num, episode_title, series_title, series_cover, category, sort_order, added_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.playlist_id)
+        .bind(item.anilist_id)
+        .bind(item.mal_id)
+        .bind(item.episode_num)
+        .bind(&item.episode_title)
+        .bind(&item.series_title)
+        .bind(&item.series_cover)
+        .bind(&item.category)
+        .bind(item.sort_order)
+        .bind(item.added_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!(
+                "could not add \"{}\" episode {} to the playlist: {}",
+                item.series_title, item.episode_num, e
+            ))
+        })?;
+    }
+
+    let mut playlist_ids: Vec<&str> = items.iter().map(|i| i.playlist_id.as_str()).collect();
+    playlist_ids.sort_unstable();
+    playlist_ids.dedup();
+    for playlist_id in playlist_ids {
+        sqlx::query("UPDATE custom_playlists SET updated_at = ?1 WHERE id = ?2")
+            .bind(now)
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(items.len())
+}
+
 pub async fn add_item_to_custom_playlist(
     pool: &SqlitePool,
     item: CustomPlaylistItem,
 ) -> Result<(), AppError> {
-    let now = current_unix_timestamp();
-    sqlx::query(
-        r#"
-        INSERT INTO custom_playlist_items 
-        (id, playlist_id, anilist_id, mal_id, episode_num, episode_title, series_title, series_cover, category, sort_order, added_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-        "#,
-    )
-    .bind(&item.id)
-    .bind(&item.playlist_id)
-    .bind(item.anilist_id)
-    .bind(item.mal_id)
-    .bind(item.episode_num)
-    .bind(&item.episode_title)
-    .bind(&item.series_title)
-    .bind(&item.series_cover)
-    .bind(&item.category)
-    .bind(item.sort_order)
-    .bind(item.added_at)
-    .execute(pool)
-    .await?;
-
-    let _ = sqlx::query("UPDATE custom_playlists SET updated_at = ?1 WHERE id = ?2")
-        .bind(now)
-        .bind(&item.playlist_id)
-        .execute(pool)
-        .await;
-
-    Ok(())
+    add_items_to_custom_playlist(pool, std::slice::from_ref(&item))
+        .await
+        .map(|_| ())
 }
 
 pub async fn remove_item_from_custom_playlist(
@@ -975,14 +1518,15 @@ pub async fn delete_custom_playlist(
     pool: &SqlitePool,
     playlist_id: &str,
 ) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM custom_playlist_items WHERE playlist_id = ?1")
         .bind(playlist_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM custom_playlists WHERE id = ?1")
         .bind(playlist_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
-

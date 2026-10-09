@@ -127,6 +127,57 @@ export interface Media {
   } | null;
 }
 
+/** `fetch_anime_details` result: the raw AniList media object (camelCase). */
+export interface AnimeDetails {
+  id: number;
+  idMal: number | null;
+  title: {
+    romaji: string | null;
+    english: string | null;
+    native: string | null;
+    userPreferred: string | null;
+  };
+  coverImage: {
+    large?: string | null;
+    extraLarge?: string | null;
+    color?: string | null;
+  } | null;
+  bannerImage: string | null;
+  description: string | null;
+  format: string | null;
+  status: string | null;
+  episodes: number | null;
+  duration: number | null;
+  season: string | null;
+  seasonYear: number | null;
+  averageScore: number | null;
+  meanScore: number | null;
+  popularity: number | null;
+  favourites: number | null;
+  isAdult: boolean | null;
+  genres: string[] | null;
+  nextAiringEpisode: {
+    id: number;
+    airingAt: number;
+    timeUntilAiring: number;
+    episode: number;
+  } | null;
+  trailer: Trailer | null;
+  characters: { edges: CharacterEdge[] } | null;
+  relations: { edges: RelationEdge[] } | null;
+}
+
+/** `fetch_mal_anime_synopsis` result (Jikan). */
+export interface MalAnimeDetails {
+  mal_id: number;
+  title: string;
+  title_english: string | null;
+  title_japanese: string | null;
+  synopsis: string | null;
+  score: number | null;
+  episodes: number | null;
+}
+
 export interface StreamItem {
   url: string;
   stream_type: string; // 'hls' | 'mp4' | 'dash'
@@ -135,7 +186,7 @@ export interface StreamItem {
   subtitle_variant?: 'h-sub' | 's-sub' | null;
   referer?: string | null;
   origin?: string | null;
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | null;
   is_active?: boolean;
 }
 
@@ -143,7 +194,7 @@ export interface SubtitleItem {
   url: string;
   language: string;
   format: string;
-  is_default?: boolean;
+  is_default?: boolean | null;
 }
 
 export interface SkipTimes {
@@ -157,6 +208,8 @@ export interface SourcesResult {
   streams: StreamItem[];
   subtitles: SubtitleItem[];
   skip: SkipTimes | null;
+  /** Key of the provider that served `streams` (a key of the `get_all_episodes` result). */
+  provider: string | null;
 }
 
 export interface EpisodeItem {
@@ -240,6 +293,8 @@ export interface NotificationPreference {
   cover_image: string | null;
 }
 
+export type DownloadStatus = 'QUEUED' | 'DOWNLOADING' | 'COMPLETED' | 'FAILED';
+
 export interface DownloadRecord {
   id: string;
   anilist_id: number;
@@ -250,13 +305,16 @@ export interface DownloadRecord {
   provider: string;
   category: string;
   quality: string;
-  status: 'QUEUED' | 'DOWNLOADING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | string;
+  status: DownloadStatus | (string & {});
+  /** 0.0–1.0 */
   progress: number;
   file_path: string | null;
   file_size: number | null;
   duration_s: number | null;
   error_msg: string | null;
+  /** Unix time in milliseconds */
   created_at: number;
+  /** Unix time in milliseconds */
   updated_at: number;
 }
 
@@ -279,47 +337,77 @@ export interface HomeData {
   top_rated: Media[];
   newest: Media[];
   continue_watching: HistoryEntry[];
+  /** Set when AniList could not be reached and only local data is present. */
+  error?: string | null;
 }
 
+export type ExternalPlayer = 'builtin' | 'mpv' | 'vlc';
+export type DohProvider = 'cloudflare' | 'google' | 'adguard';
+
+// Every key here has a reader. `settings.json` also holds the account keys (`anilist_*`,
+// `mal_*`), which only the backend reads and writes; see `AccountsStatus` for what the
+// frontend is told about accounts.
 export interface AppSettings {
   autoplay: boolean;
   auto_skip_intro_outro: boolean;
   prefer_dub: boolean;
-  subtitles_with_dub: boolean;
-  default_quality: string;
-  player_gestures: boolean;
-  caption_text_scale: number;
-  caption_text_color: string;
-  caption_background_color: string;
-  caption_background_opacity: number;
-  caption_bold_text: boolean;
-  caption_bottom_margin: number;
-  caption_edge_style: string;
-  persistent_caption_delays: string;
-  download_quality: string;
-  download_destination: string;
-  download_dir: string;
-  hide_adult_content: boolean;
-  blur_episode_thumbnails: boolean;
-  auto_sync_anilist: boolean;
-  sync_watchlist_to_anilist: boolean;
-  release_notifications: boolean;
-  episode_layout: string;
-  sidebar_expanded: boolean;
-  menu_language: string;
+  /** 'auto' or a provider key (a key of the `get_all_episodes` result). */
   preferred_provider: string;
-  server_priority: string;
-  last_pipe_origin: string;
-  enable_adult_providers: boolean;
-  update_check_on_launch: boolean;
-  enable_doh?: boolean;
-  doh_provider?: 'cloudflare' | 'google' | 'adguard' | string;
-  anilist_token?: string | null;
-  anilist_viewer_id?: number | null;
-  mal_access_token?: string | null;
-  mal_refresh_token?: string | null;
-  mal_token_expires_at?: number | null;
-  external_player?: 'builtin' | 'mpv' | 'vlc';
+  external_player: ExternalPlayer;
+  hide_adult_content: boolean;
+  release_notifications: boolean;
+  enable_doh: boolean;
+  doh_provider: DohProvider;
+  download_quality: string;
+  download_dir: string;
+}
+
+export type AccountService = 'anilist' | 'mal';
+
+/** What the frontend knows about one account. Tokens stay in the backend. */
+export interface AccountStatus {
+  connected: boolean;
+  name: string | null;
+  avatar_url: string | null;
+}
+
+/** `get_account_status` result. */
+export interface AccountsStatus {
+  anilist: AccountStatus;
+  mal: AccountStatus;
+}
+
+/** `account-login` event: how a sign-in window ended. */
+export interface AccountLoginEvent {
+  service: AccountService;
+  outcome: 'connected' | 'cancelled' | 'failed';
+  name: string | null;
+  message: string | null;
+}
+
+/** `account-changed` event: an account was connected, disconnected or signed out. */
+export interface AccountChangedEvent {
+  service: AccountService;
+  connected: boolean;
+  /** Set when the service ended the session rather than the user. */
+  message: string | null;
+}
+
+/** `account-synced` event: a sync changed the remote list entry of one anime. */
+export interface AccountSyncedEvent {
+  service: AccountService;
+  anilist_id: number;
+}
+
+/** What happened to the MyAnimeList copy of an entry saved from the AniList tab. */
+export type MalMirror =
+  | { state: 'not_connected' | 'no_mal_id' | 'saved' }
+  | { state: 'failed'; message: string };
+
+/** `save_anilist_entry` result. */
+export interface SavedListEntry {
+  entry: MediaListEntry;
+  mal: MalMirror;
 }
 
 export interface AnimeThemeEntry {
@@ -346,6 +434,7 @@ export interface CustomPlaylist {
   id: string;
   name: string;
   description: string | null;
+  /** Unix time; older rows are in seconds, newer ones in milliseconds */
   created_at: number;
   updated_at: number;
   item_count: number;
@@ -370,4 +459,34 @@ export interface ExternalPlaylistItem {
   url: string;
   title: string;
   referer?: string | null;
+}
+
+/** A plugin repository the user added in Settings (`list_plugin_repos`). */
+export interface PluginRepo {
+  /** The link as it was added; also the argument of `remove_plugin_repo`. */
+  url: string;
+  name: string;
+  plugin_count: number;
+  /** Unix milliseconds of the last successful download. */
+  updated_at_ms: number;
+  error: string | null;
+}
+
+export type PluginStatus = 'ready' | 'disabled' | 'error';
+
+/** A streaming plugin (`list_plugins`). Its `id` is the provider key used everywhere else. */
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  icon: string | null;
+  lang: string;
+  repo_url: string;
+  enabled: boolean;
+  status: PluginStatus;
+  error: string | null;
+  supports_dub: boolean;
+  servers: string[];
 }

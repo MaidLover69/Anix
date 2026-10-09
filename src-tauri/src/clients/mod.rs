@@ -1,4 +1,5 @@
 pub mod anilist;
+pub mod app_settings;
 pub mod animethemes;
 pub mod aniskip;
 pub mod github;
@@ -7,7 +8,6 @@ pub mod imdb;
 pub mod jikan;
 pub mod konoha;
 pub mod mal;
-pub mod miruro;
 
 pub use anilist::*;
 pub use animethemes::*;
@@ -18,4 +18,3 @@ pub use imdb::*;
 pub use jikan::*;
 pub use konoha::*;
 pub use mal::*;
-pub use miruro::*;

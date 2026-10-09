@@ -1,15 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  X,
-  Play,
-  CheckSquare,
-  Square,
-  Search,
-  ListOrdered,
-  Sparkles,
-  Layers,
-  Trash2,
-} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Layers, Play, Search, Square, SquareCheck, Trash2, X } from 'lucide-react';
+import { Button } from './ui/Button';
+import { sameEpisode } from './player/format';
 import type { EpisodeItem } from '../types';
 
 interface PlayerPlaylistDrawerProps {
@@ -22,10 +15,17 @@ interface PlayerPlaylistDrawerProps {
   onToggleQueueEpisode: (epNum: number) => void;
   onPlayQueue: () => void;
   onClearQueue: () => void;
+  /** Portal target; the player passes the element it shows fullscreen. */
+  container?: HTMLElement | null;
 }
 
-export const PlayerPlaylistDrawer: React.FC<PlayerPlaylistDrawerProps> = ({
-  isOpen,
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+type DrawerPanelProps = Omit<PlayerPlaylistDrawerProps, 'isOpen' | 'container'>;
+
+// Mounted only while the drawer is open, so the search text and the multi-select mode
+// start fresh every time.
+const DrawerPanel: React.FC<DrawerPanelProps> = ({
   onClose,
   episodes,
   currentEpisodeNumber,
@@ -36,195 +36,214 @@ export const PlayerPlaylistDrawer: React.FC<PlayerPlaylistDrawerProps> = ({
   onClearQueue,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [multiSelectMode, setMultiSelectMode] = useState(false);
-  const activeEpRef = useRef<HTMLDivElement | null>(null);
+  const [multiSelect, setMultiSelect] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const currentRowRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
+  // Focus moves into the drawer, stays inside it, and returns to where it was on close.
   useEffect(() => {
-    if (isOpen && activeEpRef.current) {
-      activeEpRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-  }, [isOpen]);
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = panelRef.current;
+    (currentRowRef.current ?? panel)?.focus({ preventScroll: true });
+    currentRowRef.current?.scrollIntoView({ block: 'center' });
 
-  if (!isOpen) return null;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active) || active === panel) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (trigger && document.contains(trigger)) trigger.focus();
+    };
+  }, []);
 
-  const filteredEpisodes = episodes.filter((ep) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      ep.number.toString().includes(q) ||
-      (ep.title && ep.title.toLowerCase().includes(q))
+  const filteredEpisodes = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return episodes;
+    return episodes.filter(
+      (ep) => ep.number.toString().includes(query) || ep.title?.toLowerCase().includes(query)
     );
-  });
+  }, [episodes, searchQuery]);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-fade-in"
-      onClick={onClose}
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Episodes"
+      tabIndex={-1}
+      onClick={(e) => e.stopPropagation()}
+      className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.5)] outline-none animate-slide-left"
     >
-      <div
-        className="w-full max-w-sm h-full bg-bg-card/95 border-l border-border flex flex-col shadow-2xl overflow-hidden animate-slide-left"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Drawer Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-surface/60">
-          <div className="flex items-center gap-2">
-            <ListOrdered className="w-5 h-5 text-accent-400" />
-            <div>
-              <h3 className="text-sm font-bold text-text-primary">Episode Playlist</h3>
-              <p className="text-[11px] text-text-muted">
-                {episodes.length} Episodes available
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setMultiSelectMode(!multiSelectMode)}
-              className={`p-1.5 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
-                multiSelectMode
-                  ? 'bg-accent-500 text-white border-accent-400'
-                  : 'bg-bg-surface text-text-secondary border-border hover:text-white'
-              }`}
-              title="Toggle Multi-Select Playback Queue"
-            >
-              <Layers className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-text-secondary hover:text-white hover:bg-white/10 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-text-primary">Episodes</h2>
+          <p className="text-xs text-text-muted">
+            {episodes.length} {episodes.length === 1 ? 'episode' : 'episodes'}
+          </p>
         </div>
-
-        {/* Multi-Select Action Bar (if active) */}
-        {multiSelectMode && (
-          <div className="flex items-center justify-between p-2.5 bg-accent-500/10 border-b border-accent-500/20 px-4">
-            <span className="text-xs font-bold text-accent-300">
-              {queuedEpisodes.length} selected for Queue
-            </span>
-            <div className="flex items-center gap-1.5">
-              {queuedEpisodes.length > 0 && (
-                <>
-                  <button
-                    onClick={onClearQueue}
-                    className="p-1 rounded bg-bg-surface hover:bg-red-500/20 text-red-300 border border-border text-[11px] font-bold transition-colors"
-                    title="Clear selected queue"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      onPlayQueue();
-                      onClose();
-                    }}
-                    className="px-3 py-1 rounded bg-accent-500 hover:bg-accent-600 text-white text-xs font-bold shadow transition-all cursor-pointer flex items-center gap-1"
-                  >
-                    <Play className="w-3 h-3 fill-current" />
-                    <span>Play Queue</span>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Search Bar */}
-        <div className="p-3 border-b border-border bg-bg-surface/30">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-text-muted" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search episode number or title..."
-              className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-bg-surface border border-border text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-500"
-            />
-          </div>
-        </div>
-
-        {/* Episode Items List */}
-        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-          {filteredEpisodes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center text-text-muted text-xs">
-              No episodes match your search.
-            </div>
-          ) : (
-            filteredEpisodes.map((ep) => {
-              const isCurrent = ep.number === currentEpisodeNumber;
-              const isQueued = queuedEpisodes.includes(ep.number);
-
-              return (
-                <div
-                  key={ep.number}
-                  ref={isCurrent ? activeEpRef : null}
-                  className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer group ${
-                    isCurrent
-                      ? 'border-accent-500 bg-accent-500/20 text-white shadow-md shadow-accent-950/30'
-                      : isQueued
-                      ? 'border-accent-400/50 bg-accent-500/10 text-accent-200'
-                      : 'border-border bg-bg-surface/80 hover:bg-bg-elevated hover:border-border-focus text-text-secondary hover:text-white'
-                  }`}
-                  onClick={() => {
-                    if (multiSelectMode) {
-                      onToggleQueueEpisode(ep.number);
-                    } else {
-                      onSelectEpisode(ep.number);
-                      onClose();
-                    }
-                  }}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                    {multiSelectMode && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleQueueEpisode(ep.number);
-                        }}
-                        className="text-accent-300 hover:text-accent-200 cursor-pointer"
-                      >
-                        {isQueued ? (
-                          <CheckSquare className="w-4 h-4 text-accent-400" />
-                        ) : (
-                          <Square className="w-4 h-4 text-text-muted" />
-                        )}
-                      </button>
-                    )}
-
-                    <span
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black flex-shrink-0 ${
-                        isCurrent
-                          ? 'bg-accent-500 text-white'
-                          : 'bg-bg-card border border-border text-text-muted group-hover:text-text-primary'
-                      }`}
-                    >
-                      {ep.number}
-                    </span>
-
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-bold truncate">
-                        {ep.title || `Episode ${ep.number}`}
-                      </span>
-                      {ep.filler && (
-                        <span className="text-[10px] text-amber-400 font-semibold">
-                          Filler Episode
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {isCurrent && (
-                    <span className="px-2 py-0.5 rounded bg-accent-500 text-white text-[10px] font-extrabold flex-shrink-0">
-                      Playing
-                    </span>
-                  )}
-                </div>
-              );
-            })
-          )}
+        <div className="flex items-center gap-1">
+          <Button
+            icon
+            size="sm"
+            variant={multiSelect ? 'secondary' : 'ghost'}
+            aria-label="Select episodes to queue"
+            aria-pressed={multiSelect}
+            title="Select episodes to queue"
+            onClick={() => setMultiSelect((prev) => !prev)}
+          >
+            <Layers aria-hidden="true" className="h-4 w-4" />
+          </Button>
+          <Button icon size="sm" variant="ghost" aria-label="Close" title="Close" onClick={onClose}>
+            <X aria-hidden="true" className="h-4 w-4" />
+          </Button>
         </div>
       </div>
+
+      {multiSelect && (
+        <div className="flex items-center justify-between gap-2 bg-accent-tint px-4 py-2">
+          <span className="text-xs font-medium text-accent-300">{queuedEpisodes.length} queued</span>
+          <div className="flex items-center gap-1">
+            <Button
+              icon
+              size="sm"
+              variant="ghost"
+              aria-label="Clear the queue"
+              title="Clear the queue"
+              disabled={queuedEpisodes.length === 0}
+              onClick={onClearQueue}
+            >
+              <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={queuedEpisodes.length === 0}
+              onClick={() => {
+                onPlayQueue();
+                onClose();
+              }}
+            >
+              <Play aria-hidden="true" className="h-3 w-3 fill-current" />
+              Play queue
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="px-4 pb-2 pt-1">
+        <div className="relative">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by number or title"
+            aria-label="Search episodes"
+            className="h-9 w-full rounded-md border border-border bg-bg-input pl-9 pr-3 text-[13px] text-text-primary placeholder:text-text-muted"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4 pt-1">
+        {filteredEpisodes.length === 0 ? (
+          <p className="py-10 text-center text-[13px] text-text-muted">
+            {episodes.length === 0 ? 'The episode list is not available.' : 'No episode matches the search.'}
+          </p>
+        ) : (
+          filteredEpisodes.map((ep) => {
+            const isCurrent = sameEpisode(ep.number, currentEpisodeNumber);
+            const isQueued = queuedEpisodes.some((n) => sameEpisode(n, ep.number));
+            const title = ep.title && !/^episode\s+[\d.]+$/i.test(ep.title.trim()) ? ep.title : null;
+
+            return (
+              <button
+                key={ep.number}
+                ref={isCurrent ? currentRowRef : undefined}
+                type="button"
+                aria-current={isCurrent ? 'true' : undefined}
+                aria-pressed={multiSelect ? isQueued : undefined}
+                onClick={() => {
+                  if (multiSelect) {
+                    onToggleQueueEpisode(ep.number);
+                  } else {
+                    onSelectEpisode(ep.number);
+                    onClose();
+                  }
+                }}
+                className={`flex min-h-[2.75rem] flex-shrink-0 items-center gap-3 rounded-md px-3 py-1.5 text-left cursor-pointer transition-colors ${
+                  isCurrent
+                    ? 'bg-accent-tint text-accent-300'
+                    : 'bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
+                }`}
+              >
+                {multiSelect &&
+                  (isQueued ? (
+                    <SquareCheck aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-accent-300" />
+                  ) : (
+                    <Square aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+                  ))}
+                <span className="w-8 flex-shrink-0 text-[13px] font-semibold tabular-nums">{ep.number}</span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-[13px]">{title ?? `Episode ${ep.number}`}</span>
+                  {ep.filler && <span className="text-[11px] text-state-warning">Filler</span>}
+                </span>
+                {isCurrent ? (
+                  <span className="flex-shrink-0 text-[11px] font-semibold">Playing</span>
+                ) : (
+                  isQueued && !multiSelect && (
+                    <span className="flex-shrink-0 text-[11px] text-text-muted">Queued</span>
+                  )
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
+  );
+};
+
+export const PlayerPlaylistDrawer: React.FC<PlayerPlaylistDrawerProps> = ({
+  isOpen,
+  container,
+  ...panelProps
+}) => {
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div
+      className="absolute inset-0 z-[60] flex justify-end bg-black/60 animate-fade-in"
+      onClick={panelProps.onClose}
+    >
+      <DrawerPanel {...panelProps} />
+    </div>,
+    container ?? document.body
   );
 };

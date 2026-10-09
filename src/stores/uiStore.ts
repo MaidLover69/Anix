@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { Media } from '../types';
 
 export interface ToastMessage {
   id: string;
@@ -8,13 +9,17 @@ export interface ToastMessage {
   duration?: number;
 }
 
+const DEFAULT_TOAST_MS = 3000;
+// Errors carry text worth reading, so they stay a little longer.
+const ERROR_TOAST_MS = 6000;
+
 interface UIState {
   sidebarExpanded: boolean;
   toasts: ToastMessage[];
   authDialogOpen: boolean;
   updateDialogOpen: boolean;
   bulkDownloadDialogOpen: boolean;
-  activeMediaForDownload: any | null;
+  activeMediaForDownload: Media | null;
   commandPaletteOpen: boolean;
   hotkeyCheatSheetOpen: boolean;
 
@@ -24,7 +29,7 @@ interface UIState {
   removeToast: (id: string) => void;
   setAuthDialogOpen: (open: boolean) => void;
   setUpdateDialogOpen: (open: boolean) => void;
-  openBulkDownloadDialog: (media: any) => void;
+  openBulkDownloadDialog: (media: Media) => void;
   closeBulkDownloadDialog: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setHotkeyCheatSheetOpen: (open: boolean) => void;
@@ -50,7 +55,7 @@ export const useUIStore = create<UIState>((set) => ({
 
     setTimeout(() => {
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
-    }, toast.duration || 4000);
+    }, toast.duration ?? (toast.type === 'error' ? ERROR_TOAST_MS : DEFAULT_TOAST_MS));
   },
 
   removeToast: (id) =>

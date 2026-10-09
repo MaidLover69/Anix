@@ -70,6 +70,63 @@ pub struct ProviderData {
     pub dub: Vec<EpisodeItem>,
 }
 
+impl ProviderData {
+    pub fn empty(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            sub: Vec::new(),
+            dub: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sub.is_empty() && self.dub.is_empty()
+    }
+}
+
+/// What a provider is asked to find: the AniList/MAL ids plus the facts used to recognise the
+/// right search hit on sites that are searched by title.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AnimeQuery {
+    pub anilist_id: i64,
+    pub mal_id: Option<i64>,
+    /// Known titles, most preferred first (romaji, then English, then synonyms).
+    pub titles: Vec<String>,
+    /// The English title, when AniList has one; it is also among `titles`.
+    pub english: Option<String>,
+    pub year: Option<i32>,
+    pub episodes: Option<i32>,
+    pub format: Option<String>,
+}
+
+impl AnimeQuery {
+    pub fn new(anilist_id: i64, mal_id: Option<i64>, title: Option<&str>) -> Self {
+        let mut query = Self {
+            anilist_id,
+            mal_id,
+            ..Default::default()
+        };
+        if let Some(t) = title {
+            query.add_title(t);
+        }
+        query
+    }
+
+    pub fn add_title(&mut self, title: &str) {
+        let title = title.trim();
+        if title.is_empty() {
+            return;
+        }
+        if !self.titles.iter().any(|t| t.eq_ignore_ascii_case(title)) {
+            self.titles.push(title.to_string());
+        }
+    }
+
+    pub fn primary_title(&self) -> Option<&str> {
+        self.titles.first().map(|t| t.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct StreamItem {
     pub url: String,
@@ -130,6 +187,9 @@ pub struct SourcesResult {
     pub subtitles: Vec<SubtitleItem>,
     #[serde(default)]
     pub skip: Option<SkipTimes>,
+    /// Name of the provider that served the streams; filled in by the provider manager.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 impl SourcesResult {
@@ -138,6 +198,7 @@ impl SourcesResult {
             streams,
             subtitles: Vec::new(),
             skip: None,
+            provider: None,
         }
     }
 }

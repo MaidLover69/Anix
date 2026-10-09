@@ -1,284 +1,205 @@
 import React from 'react';
-import { Play, Check, Download, AlertCircle, ListPlus } from 'lucide-react';
+import { Check, ListPlus } from 'lucide-react';
+import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
+import { Button } from './ui/Button';
+import { distinctEpisodeTitle } from '../hooks/watchProgress';
 import type { EpisodeItem as EpisodeItemType } from '../types';
 
 interface EpisodeItemProps {
   episode: EpisodeItemType;
-  animeId: number;
-  animeTitle: string;
-  animeCover: string | null;
-  isActive?: boolean;
   isWatched?: boolean;
   progressPercent?: number; // 0..100
   isFiller?: boolean;
   viewMode?: 'compact' | 'list' | 'grid';
   onSelect: (ep: EpisodeItemType) => void;
-  onDownload?: (ep: EpisodeItemType) => void;
   onAddToPlaylist?: (ep: EpisodeItemType) => void;
 }
 
+// Row actions appear on hover and whenever focus is inside the row.
+const REVEAL_CLASS =
+  'opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100';
+
+const FillerBadge: React.FC = () => (
+  <span className="flex-shrink-0 rounded-sm bg-state-warning/15 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-state-warning">
+    Filler
+  </span>
+);
+
+const WatchedMark: React.FC<{ className?: string }> = ({ className }) => (
+  <span
+    className={clsx('flex flex-shrink-0 items-center gap-1 text-xs text-state-success', className)}
+  >
+    <Check aria-hidden="true" className="h-3.5 w-3.5" />
+    Watched
+  </span>
+);
+
+const ProgressBar: React.FC<{ percent: number }> = ({ percent }) => (
+  <div
+    role="progressbar"
+    aria-label="Watch progress"
+    aria-valuemin={0}
+    aria-valuemax={100}
+    aria-valuenow={Math.round(percent)}
+    className="absolute bottom-0 left-0 right-0 h-1 bg-white/20"
+  >
+    <div className="h-full bg-accent-500" style={{ width: `${percent}%` }} />
+  </div>
+);
+
+const Thumbnail: React.FC<{ episode: EpisodeItemType; percent: number; className?: string }> = ({
+  episode,
+  percent,
+  className,
+}) => (
+  <div className={clsx('relative aspect-video flex-shrink-0 overflow-hidden rounded-md bg-bg-elevated', className)}>
+    {episode.image ? (
+      <ShimmerImage src={episode.image} alt="" className="h-full w-full" />
+    ) : (
+      // No still for this episode: a number plate, so the tile reads as designed rather than
+      // as an image that failed to load.
+      <div
+        aria-hidden="true"
+        className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-white/[0.07] to-transparent ring-1 ring-inset ring-white/[0.06]"
+      >
+        <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
+          {episode.number}
+        </span>
+      </div>
+    )}
+    {percent > 0 && <ProgressBar percent={percent} />}
+  </div>
+);
+
 export const EpisodeItem: React.FC<EpisodeItemProps> = ({
   episode,
-  isActive = false,
   isWatched = false,
   progressPercent = 0,
   isFiller = false,
   viewMode = 'list',
   onSelect,
-  onDownload,
   onAddToPlaylist,
 }) => {
-  // Compact Mode: Single-line high-density row
+  const title = distinctEpisodeTitle(episode.number, episode.title);
+  const filler = isFiller || episode.filler;
+  const percent = isWatched ? 0 : Math.min(100, Math.max(0, progressPercent));
+  const playLabel = `Play episode ${episode.number}${title ? `: ${title}` : ''}`;
+
+  // The row is a container with two sibling controls (play, add to playlist) so both are
+  // real buttons that the keyboard can reach.
+  const rowClass =
+    'group relative flex rounded-md transition-colors hover:bg-white/5 focus-within:bg-white/5';
+
+  const renderPlaylistButton = (className?: string) =>
+    onAddToPlaylist && (
+      <Button
+        icon
+        variant="ghost"
+        size="sm"
+        aria-label={`Add episode ${episode.number} to a playlist`}
+        title="Add to playlist"
+        onClick={() => onAddToPlaylist(episode)}
+        className={clsx(REVEAL_CLASS, className)}
+      >
+        <ListPlus aria-hidden="true" className="h-4 w-4" />
+      </Button>
+    );
+
   if (viewMode === 'compact') {
     return (
-      <div
-        onClick={() => onSelect(episode)}
-        className={`group relative flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer select-none transition-all duration-200 border text-xs ${
-          isActive
-            ? 'bg-accent-tint border-accent-500 shadow-sm text-accent-300'
-            : 'bg-bg-card border-border hover:bg-bg-elevated hover:border-border-focus text-text-primary'
-        }`}
-      >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <span className="w-12 font-bold flex-shrink-0 text-text-secondary">
-            EP {episode.number}
+      <div className={clsx(rowClass, 'items-center gap-2 pr-1')}>
+        <button
+          type="button"
+          onClick={() => onSelect(episode)}
+          aria-label={playLabel}
+          className="flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-3 text-left"
+        >
+          <span className="w-10 flex-shrink-0 text-[13px] font-medium tabular-nums text-text-muted">
+            {episode.number}
           </span>
-          <span className="truncate font-medium">
-            {episode.title || `Episode ${episode.number}`}
+          <span
+            className={clsx(
+              'min-w-0 flex-1 truncate text-[13px]',
+              isWatched ? 'text-text-muted' : 'text-text-primary'
+            )}
+          >
+            {title || `Episode ${episode.number}`}
           </span>
-          {(isFiller || episode.filler) && (
-            <span className="px-1.5 py-0.2 rounded bg-state-warning/20 text-yellow-400 text-[9px] font-bold border border-yellow-500/30 flex-shrink-0">
-              Filler
+          {percent > 0 && (
+            <span className="flex-shrink-0 text-xs tabular-nums text-accent-300">
+              {Math.round(percent)}%
             </span>
           )}
-        </div>
-
-        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-          {isWatched && (
-            <span className="flex items-center gap-1 text-[10px] text-state-success font-semibold">
-              <Check className="w-3 h-3 stroke-[3]" />
-              <span className="hidden sm:inline">Watched</span>
-            </span>
-          )}
-          {onAddToPlaylist && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddToPlaylist(episode);
-              }}
-              title="Add to Custom Playlist"
-              className="p-1 rounded text-text-muted hover:text-accent-300 hover:bg-bg-input transition-colors"
-            >
-              <ListPlus className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {onDownload && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDownload(episode);
-              }}
-              title="Download Episode"
-              className="p-1 rounded text-text-muted hover:text-white hover:bg-bg-input transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <div className="p-1 rounded-full bg-accent-500 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-            <Play className="w-3 h-3 fill-white ml-0.5" />
-          </div>
-        </div>
+          {filler && <FillerBadge />}
+          {isWatched && <WatchedMark />}
+        </button>
+        {renderPlaylistButton()}
       </div>
     );
   }
 
-  // Grid Mode: Card with thumbnail on top
   if (viewMode === 'grid') {
     return (
-      <div
-        onClick={() => onSelect(episode)}
-        className={`group relative flex flex-col p-2 rounded-xl cursor-pointer select-none transition-all duration-200 border ${
-          isActive
-            ? 'bg-accent-tint border-accent-500 shadow-md shadow-accent-900/20'
-            : 'bg-bg-card border-border hover:bg-bg-elevated hover:border-border-focus'
-        }`}
-      >
-        <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-bg-elevated flex-shrink-0 border border-border mb-2">
-          {episode.image ? (
-            <ShimmerImage
-              src={episode.image}
-              alt={`Episode ${episode.number}`}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-xs font-bold text-text-muted bg-bg-elevated">
-              EP {episode.number}
-            </div>
-          )}
-
-          <div
-            className={`absolute inset-0 flex items-center justify-center bg-bg-deepest/60 transition-opacity duration-200 ${
-              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}
-          >
-            <div className="w-10 h-10 rounded-full bg-accent-500 text-white flex items-center justify-center shadow-lg">
-              <Play className="w-5 h-5 fill-white ml-0.5" />
-            </div>
-          </div>
-
-          {isWatched && !isActive && (
-            <div className="absolute top-1.5 right-1.5 p-0.5 rounded-full bg-state-success text-white shadow">
-              <Check className="w-2.5 h-2.5 stroke-[3]" />
-            </div>
-          )}
-
-          {progressPercent > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
-              <div
-                className="h-full bg-accent-500"
-                style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-1">
-          <span
-            className={`text-xs font-bold truncate ${
-              isActive ? 'text-accent-300' : 'text-text-primary'
-            }`}
-          >
-            Episode {episode.number}
-          </span>
-          {(isFiller || episode.filler) && (
-            <span className="px-1.5 py-0.5 text-[8px] font-bold rounded bg-state-warning/20 text-yellow-400 border border-yellow-500/30">
-              Filler
+      <div className={clsx(rowClass, 'flex-col p-2')}>
+        <button
+          type="button"
+          onClick={() => onSelect(episode)}
+          aria-label={playLabel}
+          className="flex cursor-pointer flex-col rounded-md text-left"
+        >
+          <Thumbnail episode={episode} percent={percent} className="w-full" />
+          <span className="mt-2 flex items-center gap-2">
+            <span
+              className={clsx(
+                'min-w-0 flex-1 truncate text-[13px] font-medium',
+                isWatched ? 'text-text-muted' : 'text-text-primary'
+              )}
+            >
+              Episode {episode.number}
             </span>
-          )}
-        </div>
-
-        <p className="text-[11px] text-text-muted truncate mt-0.5">
-          {episode.title || `Episode ${episode.number}`}
-        </p>
+            {filler && <FillerBadge />}
+          </span>
+          {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
+          {isWatched && <WatchedMark className="mt-1" />}
+        </button>
+        {renderPlaylistButton('absolute right-3 top-3 bg-black/70')}
       </div>
     );
   }
 
-  // Default: List Mode (16:9 thumbnail with horizontal layout)
   return (
-    <div
-      onClick={() => onSelect(episode)}
-      className={`group relative flex items-center gap-3 p-2.5 rounded-xl cursor-pointer select-none transition-all duration-200 border ${
-        isActive
-          ? 'bg-accent-tint border-accent-500 shadow-md shadow-accent-900/20'
-          : 'bg-bg-card border-border hover:bg-bg-elevated/70 hover:border-border-focus'
-      }`}
-    >
-      {/* Thumbnail or Number Box */}
-      <div className="relative w-24 sm:w-28 aspect-video rounded-lg overflow-hidden bg-bg-elevated flex-shrink-0 border border-border">
-        {episode.image ? (
-          <ShimmerImage
-            src={episode.image}
-            alt={`Episode ${episode.number}`}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-xs font-bold text-text-muted bg-bg-elevated">
-            EP {episode.number}
-          </div>
-        )}
-
-        {/* Play Icon on hover or active */}
-        <div
-          className={`absolute inset-0 flex items-center justify-center bg-bg-deepest/60 transition-opacity duration-200 ${
-            isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-          }`}
-        >
-          <Play
-            className={`w-6 h-6 fill-current ${
-              isActive ? 'text-accent-300' : 'text-white'
-            }`}
-          />
-        </div>
-
-        {/* Watched Checkmark */}
-        {isWatched && !isActive && (
-          <div className="absolute top-1 right-1 p-0.5 rounded-full bg-state-success text-white shadow">
-            <Check className="w-2.5 h-2.5 stroke-[3]" />
-          </div>
-        )}
-
-        {/* Progress bar */}
-        {progressPercent > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
-            <div
-              className="h-full bg-accent-500"
-              style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Episode Details */}
-      <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span
-            className={`text-sm font-bold truncate ${
-              isActive ? 'text-accent-300' : 'text-text-primary'
-            }`}
-          >
-            Episode {episode.number}
-          </span>
-          {(isFiller || episode.filler) && (
-            <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-state-warning/20 text-yellow-400 border border-yellow-500/30">
-              Filler
+    <div className={clsx(rowClass, 'items-center gap-1 p-2')}>
+      <button
+        type="button"
+        onClick={() => onSelect(episode)}
+        aria-label={playLabel}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md text-left"
+      >
+        <Thumbnail episode={episode} percent={percent} className="w-28" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-center gap-2">
+            <span
+              className={clsx(
+                'truncate text-[13px] font-medium',
+                isWatched ? 'text-text-muted' : 'text-text-primary'
+              )}
+            >
+              Episode {episode.number}
             </span>
+            {filler && <FillerBadge />}
+          </span>
+          {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
+          {isWatched ? (
+            <WatchedMark className="mt-1" />
+          ) : (
+            episode.synopsis && (
+              <span className="mt-1 text-xs text-text-muted line-clamp-1">{episode.synopsis}</span>
+            )
           )}
-        </div>
-
-        <p className="text-xs text-text-muted truncate mt-0.5">
-          {episode.title || `Episode ${episode.number}`}
-        </p>
-
-        {episode.synopsis && (
-          <p className="text-[11px] text-text-secondary line-clamp-1 mt-1">
-            {episode.synopsis}
-          </p>
-        )}
-      </div>
-
-      {/* Actions buttons on hover */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-        {onAddToPlaylist && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddToPlaylist(episode);
-            }}
-            title="Add to Custom Playlist"
-            className="p-2 rounded-lg text-text-muted hover:text-accent-300 hover:bg-bg-input transition-all duration-200"
-          >
-            <ListPlus className="w-4 h-4" />
-          </button>
-        )}
-        {onDownload && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDownload(episode);
-            }}
-            title="Download Episode"
-            className="p-2 rounded-lg text-text-muted hover:text-white hover:bg-bg-input transition-all duration-200"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+        </span>
+      </button>
+      {renderPlaylistButton()}
     </div>
   );
 };

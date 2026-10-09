@@ -1,62 +1,53 @@
 import React from 'react';
+import { Download } from 'lucide-react';
 import { Dialog } from './Dialog';
+import { Button } from './ui/Button';
 import { useUIStore } from '../stores/uiStore';
-import { useCheckUpdate } from '../hooks';
-import { Sparkles, Download, ExternalLink } from 'lucide-react';
+import { useCheckUpdate } from '../hooks/useSettings';
+import { useOpenExternal } from '../hooks/useOpenExternal';
 
 export const UpdateDialog: React.FC = () => {
-  const { updateDialogOpen, setUpdateDialogOpen } = useUIStore();
+  const updateDialogOpen = useUIStore((s) => s.updateDialogOpen);
+  const setUpdateDialogOpen = useUIStore((s) => s.setUpdateDialogOpen);
   const { data: updateInfo } = useCheckUpdate();
+  const openExternal = useOpenExternal();
 
   if (!updateInfo) return null;
+
+  const published = updateInfo.published_at ? new Date(updateInfo.published_at) : null;
+  const publishedLabel =
+    published && !Number.isNaN(published.getTime()) ? published.toLocaleDateString() : null;
 
   return (
     <Dialog
       isOpen={updateDialogOpen}
       onClose={() => setUpdateDialogOpen(false)}
-      title="Update Available"
+      title={`Anilili ${updateInfo.version} is available`}
       maxWidth="max-w-md"
-    >
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-accent-tint border border-border-focus">
-          <div className="p-2 rounded-lg bg-accent-500 text-white">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-bold text-accent-300">
-              Anilili v{updateInfo.version}
-            </span>
-            <span className="text-[11px] text-text-muted">
-              Released: {new Date(updateInfo.published_at).toLocaleDateString()}
-            </span>
-          </div>
-        </div>
-
-        {/* Changelog */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-text-secondary">Release Notes</label>
-          <div className="p-3 rounded-xl bg-bg-elevated border border-border text-xs text-text-muted max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-            {updateInfo.changelog || 'Performance improvements and bug fixes.'}
-          </div>
-        </div>
-
-        {/* Buttons */}
-        <div className="flex items-center gap-3 mt-2">
-          <button
-            onClick={() => setUpdateDialogOpen(false)}
-            className="flex-1 py-2.5 rounded-xl bg-bg-elevated hover:bg-bg-input text-text-secondary text-xs font-semibold border border-border transition-colors"
-          >
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setUpdateDialogOpen(false)}>
             Later
-          </button>
-          <a
-            href={updateInfo.release_url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-accent-500 hover:bg-accent-700 text-white text-xs font-bold shadow-lg shadow-accent-900/40 transition-all"
+          </Button>
+          <Button
+            variant="primary"
+            data-autofocus
+            onClick={() => {
+              openExternal(updateInfo.release_url);
+              setUpdateDialogOpen(false);
+            }}
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Download Release</span>
-          </a>
+            <Download aria-hidden="true" className="h-4 w-4" />
+            Open download page
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2">
+        {publishedLabel && <p className="text-xs text-text-muted">Released {publishedLabel}</p>}
+        <h3 className="text-[13px] font-medium text-text-primary">Release notes</h3>
+        <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md bg-bg-card p-3 text-[13px] leading-relaxed text-text-secondary select-text">
+          {updateInfo.changelog || 'No release notes were published.'}
         </div>
       </div>
     </Dialog>

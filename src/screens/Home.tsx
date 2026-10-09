@@ -1,55 +1,77 @@
 import React from 'react';
 import { HeroBanner } from '../components/HeroBanner';
 import { HorizontalRail } from '../components/HorizontalRail';
+import { ErrorState } from '../components/ui/ErrorState';
 import { useHomeData } from '../hooks/useAniList';
-import { Sparkles } from 'lucide-react';
+import { useContinueWatching } from '../hooks/useLibrary';
+import { useSettings } from '../hooks/useSettings';
 
 export const Home: React.FC = () => {
-  const { data, isLoading } = useHomeData();
+  const { data, isLoading, isError, error, refetch, isFetching } = useHomeData();
+  // History is local, so it is read on its own and still shows when AniList is unreachable.
+  const { data: localHistory } = useContinueWatching();
+  const { data: settings } = useSettings();
 
-  const heroItems = data?.trending?.slice(0, 5) || [];
+  const continueWatching = localHistory ?? data?.continue_watching ?? [];
+  const heroItems = data?.trending?.slice(0, 5) ?? [];
+
+  const catalogIsEmpty =
+    !!data && !data.trending?.length && !data.popular?.length && !data.top_rated?.length;
 
   return (
-    <div className="flex flex-col gap-2 pb-16 animate-fade-in">
-      {/* Hero Highlight Banner */}
-      {heroItems.length > 0 && <HeroBanner items={heroItems} />}
-
-      {/* Continue Watching Rail */}
-      {data?.continue_watching && data.continue_watching.length > 0 && (
-        <HorizontalRail
-          title="Continue Watching"
-          subtitle="Pick up right where you left off"
-          historyItems={data.continue_watching}
-          isLoading={isLoading}
+    <div className="flex flex-col gap-8 pb-16 animate-fade-in">
+      {isLoading ? (
+        <div
+          aria-hidden="true"
+          className="h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 rounded-2xl shimmer-placeholder"
         />
+      ) : (
+        heroItems.length > 0 && (
+          <HeroBanner
+            items={heroItems}
+            history={continueWatching}
+            defaultCategory={settings?.prefer_dub ? 'dub' : 'sub'}
+            defaultProvider={settings?.preferred_provider}
+          />
+        )
       )}
 
-      {/* Trending Rail */}
-      <HorizontalRail
-        title="Trending This Season"
-        subtitle="Most watched anime right now"
-        items={data?.trending}
-        isLoading={isLoading}
-        viewAllLink="/discover?sort=TRENDING_DESC"
-      />
+      <HorizontalRail title="Continue watching" historyItems={continueWatching} />
 
-      {/* Popular Rail */}
-      <HorizontalRail
-        title="All-Time Popular"
-        subtitle="Fan favorites and legendary series"
-        items={data?.popular}
-        isLoading={isLoading}
-        viewAllLink="/discover?sort=POPULARITY_DESC"
-      />
-
-      {/* Top Rated Rail */}
-      <HorizontalRail
-        title="Highest Rated"
-        subtitle="Critically acclaimed masterpieces"
-        items={data?.top_rated}
-        isLoading={isLoading}
-        viewAllLink="/discover?sort=SCORE_DESC"
-      />
+      {isError || catalogIsEmpty ? (
+        <ErrorState
+          title="Could not load anime from AniList"
+          message={
+            isError
+              ? undefined
+              : data?.error || 'AniList returned nothing. Check your connection and try again.'
+          }
+          error={isError ? error : undefined}
+          onRetry={() => refetch()}
+          retryLabel={isFetching ? 'Retrying…' : 'Retry'}
+        />
+      ) : (
+        <>
+          <HorizontalRail
+            title="Trending now"
+            items={data?.trending}
+            isLoading={isLoading}
+            viewAllLink="/discover?sort=TRENDING_DESC"
+          />
+          <HorizontalRail
+            title="All-time popular"
+            items={data?.popular}
+            isLoading={isLoading}
+            viewAllLink="/discover?sort=POPULARITY_DESC"
+          />
+          <HorizontalRail
+            title="Highest rated"
+            items={data?.top_rated}
+            isLoading={isLoading}
+            viewAllLink="/discover?sort=SCORE_DESC"
+          />
+        </>
+      )}
     </div>
   );
 };

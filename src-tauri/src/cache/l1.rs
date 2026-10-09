@@ -1,6 +1,9 @@
 use moka::future::Cache;
+use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
+/// In-memory cache with a fixed time-to-live per entry.
 pub struct L1Cache<K, V>
 where
     K: Send + Sync + 'static + std::hash::Hash + Eq + Clone,
@@ -32,5 +35,15 @@ where
 
     pub async fn invalidate(&self, key: &K) {
         self.cache.invalidate(key).await;
+    }
+
+    /// Returns the cached value or computes it with `init`. Concurrent callers for the same key
+    /// share one computation, and an `Err` is handed to all of them without being cached.
+    pub async fn try_get_with<F, E>(&self, key: K, init: F) -> Result<V, Arc<E>>
+    where
+        F: Future<Output = Result<V, E>>,
+        E: Send + Sync + 'static,
+    {
+        self.cache.try_get_with(key, init).await
     }
 }

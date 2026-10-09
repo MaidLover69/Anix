@@ -1,50 +1,30 @@
-use crate::clients::mal::{MalTokenResponse, MAL_TOKEN_URL};
-use crate::commands::mal::MAL_CLIENT_ID;
-use crate::state::AppState;
-use tauri::State;
+use crate::accounts;
+use accounts::oauth::Service;
+use accounts::store::{AccountStore, AccountsStatus};
+use tauri::AppHandle;
 
 pub const ANILIST_CLIENT_ID: &str = "45552";
 
+/// Opens the sign-in window of `service` (`anilist` or `mal`), or focuses it when it is
+/// already open. How the sign-in ends is reported by the `account-login` event.
 #[tauri::command]
-pub async fn get_auth_urls() -> Result<serde_json::Value, String> {
-    let anilist_url = format!(
-        "https://anilist.co/api/v2/oauth/authorize?client_id={}&response_type=token",
-        ANILIST_CLIENT_ID
-    );
-    Ok(serde_json::json!({
-        "anilist_client_id": ANILIST_CLIENT_ID,
-        "anilist_auth_url": anilist_url,
-        "mal_client_id": MAL_CLIENT_ID,
-    }))
+pub async fn start_account_login(app: AppHandle, service: Service) -> Result<(), String> {
+    accounts::login::open(&app, service)
 }
 
+/// Which accounts are connected, with the name and avatar to show. Never contains a token.
 #[tauri::command]
-pub async fn exchange_mal_code(
-    state: State<'_, AppState>,
-    code: String,
-    code_verifier: String,
-) -> Result<MalTokenResponse, String> {
-    let params = [
-        ("client_id", MAL_CLIENT_ID),
-        ("grant_type", "authorization_code"),
-        ("code", &code),
-        ("code_verifier", &code_verifier),
-    ];
-
-    let res = state
-        .client
-        .post(MAL_TOKEN_URL)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_default();
-        return Err(format!("MAL code exchange failed ({}): {}", status, body));
+pub async fn get_account_status(app: AppHandle) -> Result<AccountsStatus, String> {
+    let status = AccountStore::open_default()?.status();
+    // A login saved by an older version has no name yet; `account-changed` follows once it has.
+    if status.anilist.connected && status.anilist.name.is_none() {
+        accounts::spawn_profile_refresh(app);
     }
+    Ok(status)
+}
 
-    let tokens: MalTokenResponse = res.json().await.map_err(|e| e.to_string())?;
-    Ok(tokens)
+/// Forgets the stored login of `service`. The remote lists are not touched.
+#[tauri::command]
+pub async fn disconnect_account(app: AppHandle, service: Service) -> Result<AccountsStatus, String> {
+    accounts::disconnect(&app, service)
 }

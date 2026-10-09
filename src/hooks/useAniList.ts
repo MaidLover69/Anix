@@ -1,6 +1,25 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { Media, HomeData, Viewer, MediaListEntry } from '../types';
+import type {
+  Media,
+  HomeData,
+  Viewer,
+  MediaListEntry,
+  AnimeThemeEntry,
+  MalAnimeDetails,
+  SavedListEntry,
+} from '../types';
+
+/** Query keys whose results depend on the "hide adult content" setting. */
+const ADULT_FILTERED_QUERY_KEYS = ['homeData', 'searchAnime', 'airingSchedule'] as const;
+
+/** Refetches every AniList list that the backend filters by the adult-content setting. */
+export function invalidateAdultFilteredQueries(queryClient: QueryClient) {
+  for (const key of ADULT_FILTERED_QUERY_KEYS) {
+    queryClient.invalidateQueries({ queryKey: [key] });
+  }
+}
 
 export function useHomeData() {
   return useQuery<HomeData>({
@@ -9,36 +28,6 @@ export function useHomeData() {
       return await invoke<HomeData>('fetch_home_data');
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
-  });
-}
-
-export function useTrending() {
-  return useQuery<Media[]>({
-    queryKey: ['trending'],
-    queryFn: async () => {
-      return await invoke<Media[]>('fetch_trending');
-    },
-    staleTime: 10 * 60 * 1000,
-  });
-}
-
-export function usePopular() {
-  return useQuery<Media[]>({
-    queryKey: ['popular'],
-    queryFn: async () => {
-      return await invoke<Media[]>('fetch_popular');
-    },
-    staleTime: 10 * 60 * 1000,
-  });
-}
-
-export function useTopRated() {
-  return useQuery<Media[]>({
-    queryKey: ['topRated'],
-    queryFn: async () => {
-      return await invoke<Media[]>('fetch_top_rated');
-    },
-    staleTime: 10 * 60 * 1000,
   });
 }
 
@@ -52,7 +41,14 @@ export interface SearchParams {
   perPage?: number;
 }
 
-export function useSearchAnime(params: SearchParams, options?: { enabled?: boolean }) {
+export function useSearchAnime(
+  params: SearchParams,
+  options?: {
+    enabled?: boolean;
+    /** Keep showing the previous result while a new search or page loads. */
+    keepPrevious?: boolean;
+  }
+) {
   return useQuery<Media[]>({
     queryKey: ['searchAnime', params],
     queryFn: async () => {
@@ -67,6 +63,7 @@ export function useSearchAnime(params: SearchParams, options?: { enabled?: boole
       });
     },
     enabled: options?.enabled,
+    placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
     staleTime: 2 * 60 * 1000,
   });
 }
@@ -84,11 +81,11 @@ export function useAnimeDetails(id: number | null) {
 }
 
 export function useMalAnimeDetails(malId: number | null | undefined) {
-  return useQuery<any>({
+  return useQuery<MalAnimeDetails | null>({
     queryKey: ['malAnimeDetails', malId],
     queryFn: async () => {
       if (!malId) return null;
-      return await invoke<any>('fetch_mal_anime_synopsis', { malId });
+      return await invoke<MalAnimeDetails>('fetch_mal_anime_synopsis', { malId });
     },
     enabled: !!malId,
     staleTime: 60 * 60 * 1000,
@@ -96,70 +93,46 @@ export function useMalAnimeDetails(malId: number | null | undefined) {
 }
 
 export function useAnimeThemes(malId: number | null | undefined) {
-  return useQuery<import('../types').AnimeThemeEntry[]>({
+  return useQuery<AnimeThemeEntry[]>({
     queryKey: ['animeThemes', malId],
     queryFn: async () => {
       if (!malId) return [];
-      return await invoke<import('../types').AnimeThemeEntry[]>('fetch_anime_themes', { malId });
+      return await invoke<AnimeThemeEntry[]>('fetch_anime_themes', { malId });
     },
     enabled: !!malId,
     staleTime: 24 * 60 * 60 * 1000,
   });
 }
 
-export function useAniListViewer(token: string | null) {
-  return useQuery<Viewer | null>({
-    queryKey: ['aniListViewer', token],
-    queryFn: async () => {
-      if (!token) return null;
-      return await invoke<Viewer>('get_anilist_viewer', { token });
-    },
-    enabled: !!token,
+/** The connected AniList account; the backend reads its own token. */
+export function useAniListViewer(connected: boolean) {
+  return useQuery<Viewer>({
+    queryKey: ['aniListViewer'],
+    queryFn: () => invoke<Viewer>('get_anilist_viewer'),
+    enabled: connected,
     staleTime: 30 * 60 * 1000,
+    retry: 1,
   });
 }
 
-export function useAniListLibrary(token: string | null, userId: number | null, status?: string) {
+/** One status list of the connected AniList account. */
+export function useAniListLibrary(connected: boolean, status?: string) {
   return useQuery<MediaListEntry[]>({
-    queryKey: ['aniListLibrary', token, userId, status],
-    queryFn: async () => {
-      if (!token || !userId) return [];
-      return await invoke<MediaListEntry[]>('fetch_anilist_library', {
-        token,
-        userId,
-        status: status || null,
-      });
-    },
-    enabled: !!token && !!userId,
+    queryKey: ['aniListLibrary', status ?? null],
+    queryFn: () => invoke<MediaListEntry[]>('fetch_anilist_library', { status: status || null }),
+    enabled: connected,
   });
 }
 
+/** Saves the status and progress of one list entry to AniList and, when connected, MyAnimeList. */
 export function useSaveAniListEntry() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      token,
-      mediaId,
-      status,
-      progress,
-      score,
-    }: {
-      token: string;
-      mediaId: number;
-      status?: string;
-      progress?: number;
-      score?: number;
-    }) => {
-      return await invoke<MediaListEntry>('save_anilist_entry', {
-        token,
-        mediaId,
-        status: status || null,
-        progress: progress !== undefined ? progress : null,
-        score: score !== undefined ? score : null,
-      });
-    },
+    mutationFn: ({ mediaId, status, progress }: { mediaId: number; status: string; progress: number }) =>
+      invoke<SavedListEntry>('save_anilist_entry', { mediaId, status, progress }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['aniListLibrary'] });
+      queryClient.invalidateQueries({ queryKey: ['aniListViewer'] });
     },
   });
 }

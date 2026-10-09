@@ -17,13 +17,21 @@ pub struct DownloadRecord {
     pub provider: String,
     pub category: String,
     pub quality: String,
+    /// `QUEUED`, `DOWNLOADING`, `COMPLETED` or `FAILED`.
+    #[serde(default)]
     pub status: String,
+    /// Fraction done, 0.0 to 1.0.
+    #[serde(default)]
     pub progress: f64,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
     pub duration_s: Option<f64>,
     pub error_msg: Option<String>,
+    /// Milliseconds since the epoch. Written by the backend; a value sent by a caller is ignored.
+    #[serde(default)]
     pub created_at: i64,
+    /// Milliseconds since the epoch. Written by the backend; a value sent by a caller is ignored.
+    #[serde(default)]
     pub updated_at: i64,
 }
 

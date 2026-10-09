@@ -11,7 +11,14 @@ const queryClient = new QueryClient({
       retry: 2,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
       refetchOnWindowFocus: false, // don't refetch on tab focus
-      refetchOnReconnect: true,
+      // refetchOnReconnect is left at its default; queries that must not restart on a
+      // network blip (episode sources) opt out in their own hook.
+      // Every query is an IPC call to the backend, which also serves local data, so none
+      // of them should pause when the webview thinks it is offline.
+      networkMode: 'always',
+    },
+    mutations: {
+      networkMode: 'always',
     },
   },
 });

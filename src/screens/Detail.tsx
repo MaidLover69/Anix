@@ -1,411 +1,496 @@
-import React, { useState } from 'react';
+import { NotifyBell } from '../components/NotifyBell';
+import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Play,
-  Bookmark,
-  DownloadCloud,
-  Star,
-  Calendar,
-  Clock,
-  Tv,
-  Users,
-  Film,
-  Sparkles,
-  Video,
-} from 'lucide-react';
+import { ArrowLeft, Play, Bookmark, DownloadCloud, Video, SearchX } from 'lucide-react';
 import { ShimmerImage } from '../components/ShimmerImage';
 import { EpisodeBrowser } from '../components/EpisodeBrowser';
-import { ServerSelectDialog } from '../components/ServerSelectDialog';
-import { TrailerModal } from '../components/TrailerModal';
+import { TrailerModal, isPlayableTrailer } from '../components/TrailerModal';
 import { CharacterRail } from '../components/CharacterRail';
 import { RelationsRail } from '../components/RelationsRail';
 import { AnimeThemesPlayer } from '../components/AnimeThemesPlayer';
+import { Button } from '../components/ui/Button';
+import { Chip } from '../components/ui/Chip';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorState, errorMessage } from '../components/ui/ErrorState';
+import { useAnimeDetails, useMalAnimeDetails } from '../hooks/useAniList';
+import { useAnimeCatalogEpisodes, useEpisodes } from '../hooks/useProviders';
 import {
-  useAnimeDetails,
-  useMalAnimeDetails,
-  useAnimeCatalogEpisodes,
   useIsInWatchlist,
   useToggleWatchlist,
   useWatchedEpisodes,
-} from '../hooks';
+  useContinueWatching,
+} from '../hooks/useLibrary';
+import { useSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { useStreamingProviders } from '../hooks/usePlugins';
+import {
+  getContinueTarget,
+  historyProgressPercent,
+  isHistoryEntryFinished,
+  releasedEpisodeCount,
+  watchPath,
+} from '../hooks/watchProgress';
 import { useUIStore } from '../stores/uiStore';
-import type { EpisodeItem as EpisodeItemType, Media } from '../types';
+import { mediaFormatLabel } from '../components/library/format';
+import type { AnimeDetails, EpisodeItem as EpisodeItemType, Media } from '../types';
+
+function sentenceCase(value: string): string {
+  const lower = value.replace(/_/g, ' ').toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function toMedia(details: AnimeDetails): Media {
+  return {
+    id: details.id,
+    id_mal: details.idMal ?? null,
+    title: {
+      romaji: details.title?.romaji ?? null,
+      english: details.title?.english ?? null,
+      native: details.title?.native ?? null,
+      user_preferred: details.title?.userPreferred ?? null,
+    },
+    cover_image: {
+      extra_large: details.coverImage?.extraLarge ?? null,
+      large: details.coverImage?.large ?? null,
+      color: details.coverImage?.color ?? null,
+    },
+    banner_image: details.bannerImage ?? null,
+    description: details.description ?? null,
+    format: details.format ?? null,
+    status: details.status ?? null,
+    episodes: details.episodes ?? null,
+    duration: details.duration ?? null,
+    season: details.season ?? null,
+    season_year: details.seasonYear ?? null,
+    average_score: details.averageScore ?? null,
+    mean_score: details.meanScore ?? null,
+    popularity: details.popularity ?? null,
+    favourites: details.favourites ?? null,
+    genres: details.genres ?? [],
+    is_adult: details.isAdult ?? false,
+  };
+}
+
+const BackButton: React.FC = () => {
+  const navigate = useNavigate();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-ml-3 self-start"
+      onClick={() => {
+        // Opened directly (deep link): there is nothing to go back to.
+        if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+        else navigate('/');
+      }}
+    >
+      <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+      Back
+    </Button>
+  );
+};
 
 export const Detail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  // Keyed by id so nothing (expanded synopsis, episode filters) leaks from one anime to the next.
+  return <DetailContent key={id} id={id} />;
+};
+
+const NO_EPISODES: EpisodeItemType[] = [];
+
+const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const navigate = useNavigate();
-  const anilistId = id ? parseInt(id, 10) : 0;
+  const anilistId = id && /^\d+$/.test(id) ? Number(id) : null;
 
-  const { openBulkDownloadDialog } = useUIStore();
+  const openBulkDownloadDialog = useUIStore((s) => s.openBulkDownloadDialog);
+  const showToast = useUIStore((s) => s.showToast);
 
-  const { data: details, isLoading } = useAnimeDetails(anilistId);
-  const malId = details?.idMal || null;
+  const detailsQuery = useAnimeDetails(anilistId);
+  const details = detailsQuery.data as AnimeDetails | null | undefined;
+  const malId = details?.idMal ?? null;
   const { data: malDetails } = useMalAnimeDetails(malId);
   const { data: inWatchlist = false } = useIsInWatchlist(anilistId);
   const toggleWatchlistMutation = useToggleWatchlist();
   const { data: watchedEpisodes = [] } = useWatchedEpisodes(anilistId);
+  const { data: continueWatching = [] } = useContinueWatching();
+  const { data: settings } = useSettings();
+  const providers = useStreamingProviders();
 
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [serverSelectEpisode, setServerSelectEpisode] = useState<EpisodeItemType | null>(null);
   const [isTrailerOpen, setIsTrailerOpen] = useState(false);
+  const [bannerFailed, setBannerFailed] = useState(false);
 
-  // Extract media properties (prioritizing MyAnimeList metadata)
-  const title =
-    malDetails?.title_english ||
-    malDetails?.title ||
-    details?.title?.english ||
-    details?.title?.userPreferred ||
-    details?.title?.romaji ||
-    'Anime Details';
-
-  const bannerImage = details?.bannerImage || null;
-  const coverImage =
-    details?.coverImage?.extraLarge || details?.coverImage?.large || null;
-
-  const titleRomaji = malDetails?.title || details?.title?.romaji || null;
-
-  // Instant catalog from MyAnimeList / Konoha / AniList (0ms delay)
-  // Only released episodes are shown for ongoing/releasing anime!
-  const { data: catalogEpisodes = [] } = useAnimeCatalogEpisodes(
-    anilistId,
+  // Episode lookups wait for the details: they need the MAL id and title, and running
+  // them early would fan out to every provider twice. The arguments match the player's,
+  // so both screens share one cached result.
+  const lookupId = details ? anilistId : null;
+  const titleRomaji = details?.title?.romaji ?? null;
+  const { data: catalogEpisodes = NO_EPISODES, isLoading: catalogLoading } = useAnimeCatalogEpisodes(
+    lookupId,
     malId,
     details?.episodes,
     titleRomaji,
     details?.status,
     details?.nextAiringEpisode?.episode
   );
+  const {
+    data: episodesData,
+    isLoading: providersLoading,
+    isError: providersFailed,
+  } = useEpisodes(lookupId, malId, titleRomaji);
 
-  // Handle Play next episode
-  const handlePlayNext = () => {
-    // Find first unwatched episode number
-    let targetEpNum = 1;
-    for (let i = 1; i <= (details?.episodes || 1000); i++) {
-      if (!watchedEpisodes.includes(i)) {
-        targetEpNum = i;
-        break;
-      }
-    }
-    navigate(`/watch/${anilistId}/${targetEpNum}`);
-  };
+  const latestHistory = useMemo(
+    () => continueWatching.find((h) => h.anilist_id === anilistId) ?? null,
+    [continueWatching, anilistId]
+  );
 
-  const handleSelectEpisode = (
-    ep: EpisodeItemType,
-    category: 'sub' | 'dub',
-    provider: string
-  ) => {
-    navigate(`/watch/${anilistId}/${ep.number}?cat=${category}&prov=${encodeURIComponent(provider)}`);
-  };
+  const progressByEpisode = useMemo(
+    () =>
+      latestHistory && !isHistoryEntryFinished(latestHistory)
+        ? { [latestHistory.episode_number]: historyProgressPercent(latestHistory) }
+        : {},
+    [latestHistory]
+  );
 
-  const handleWatchlistToggle = () => {
-    toggleWatchlistMutation.mutate({
-      anilistId,
-      title,
-      cover: coverImage,
-      format: details?.format,
-      averageScore: details?.averageScore,
-      inWatchlist,
-    });
-  };
-
-  const handleBulkDownload = () => {
-    if (!details) return;
-    const mediaObj: Media = {
-      id: details.id,
-      id_mal: details.idMal || null,
-      title: {
-        romaji: details.title.romaji || null,
-        english: details.title.english || null,
-        native: details.title.native || null,
-        user_preferred: details.title.userPreferred || null,
-      },
-      cover_image: {
-        extra_large: details.coverImage?.extraLarge || null,
-        large: details.coverImage?.large || null,
-        color: details.coverImage?.color || null,
-      },
-      banner_image: details.bannerImage || null,
-      description: details.description || null,
-      format: details.format || null,
-      status: details.status || null,
-      episodes: details.episodes || null,
-      duration: details.duration || null,
-      season: details.season || null,
-      season_year: details.seasonYear || null,
-      average_score: details.averageScore || null,
-      mean_score: details.meanScore || null,
-      popularity: details.popularity || null,
-      favourites: details.favourites || null,
-      genres: details.genres || [],
-      is_adult: details.isAdult || false,
-    };
-    openBulkDownloadDialog(mediaObj);
-  };
-
-  if (isLoading) {
+  if (anilistId === null) {
     return (
-      <div className="flex flex-col gap-6 animate-fade-in pb-16">
-        <div className="w-full h-64 rounded-2xl shimmer-placeholder" />
-        <div className="flex gap-6">
-          <div className="w-48 h-72 rounded-xl shimmer-placeholder flex-shrink-0" />
-          <div className="flex-1 flex flex-col gap-3">
-            <div className="h-8 w-2/3 rounded-lg shimmer-placeholder" />
-            <div className="h-4 w-1/3 rounded shimmer-placeholder" />
-            <div className="h-24 w-full rounded-xl shimmer-placeholder mt-4" />
+      <div className="flex flex-col gap-4">
+        <BackButton />
+        <EmptyState
+          icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
+          title="Anime not found"
+          description={`"${id ?? ''}" is not a valid anime id.`}
+          action={
+            <Button variant="secondary" onClick={() => navigate('/')}>
+              Go to Home
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (detailsQuery.isLoading) {
+    return (
+      <div aria-busy="true" className="flex flex-col gap-8 pb-16">
+        <div className="flex flex-col gap-3">
+          <BackButton />
+          <div className="flex gap-6 rounded-2xl bg-bg-card p-6 pt-28">
+            <div className="aspect-[2/3] w-48 flex-shrink-0 rounded-xl shimmer-placeholder" />
+            <div className="flex flex-1 flex-col">
+              <div className="h-[34px] w-2/3 rounded-md shimmer-placeholder" />
+              <div className="mt-3 h-4 w-1/3 rounded-sm shimmer-placeholder" />
+              <div className="mt-4 h-7 w-56 rounded-sm shimmer-placeholder" />
+              <div className="mt-4 h-[88px] w-full max-w-3xl rounded-md shimmer-placeholder" />
+              <div className="mt-6 h-9 w-72 rounded-md shimmer-placeholder" />
+            </div>
           </div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="h-7 w-28 rounded-md shimmer-placeholder" />
+          <div className="h-9 w-full rounded-md shimmer-placeholder" />
         </div>
       </div>
     );
   }
 
-  const cleanDescription = (
-    malDetails?.synopsis ||
-    details?.synopsis_mal ||
-    details?.synopsis ||
-    details?.description ||
-    ''
-  )
+  // The backend reports an unknown id as an error; that is "not found", not a failure to retry.
+  const isMissing = detailsQuery.isError && /not found/i.test(String(detailsQuery.error));
+  if (detailsQuery.isError && !isMissing) {
+    return (
+      <div className="flex flex-col gap-4">
+        <BackButton />
+        <ErrorState
+          title="Could not load this anime"
+          error={detailsQuery.error}
+          onRetry={() => detailsQuery.refetch()}
+          retryLabel={detailsQuery.isFetching ? 'Retrying…' : 'Retry'}
+        />
+      </div>
+    );
+  }
+
+  if (!details) {
+    return (
+      <div className="flex flex-col gap-4">
+        <BackButton />
+        <EmptyState
+          icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
+          title="Anime not found"
+          description="AniList has no entry with this id."
+          action={
+            <Button variant="secondary" onClick={() => navigate('/')}>
+              Go to Home
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  // MyAnimeList wording is preferred for the title and synopsis when it is available.
+  const title =
+    malDetails?.title_english ||
+    malDetails?.title ||
+    details.title?.english ||
+    details.title?.userPreferred ||
+    details.title?.romaji ||
+    'Untitled';
+
+  const bannerImage = bannerFailed ? null : details.bannerImage;
+  const coverImage = details.coverImage?.extraLarge || details.coverImage?.large || null;
+
+  const cleanDescription = (malDetails?.synopsis || details.description || '')
     .replace(/<[^>]*>?/gm, '')
     .trim();
 
+  // Where the main button goes.
+  const releasedNumbers = catalogEpisodes.map((ep) => ep.number);
+  const released = releasedEpisodeCount(
+    details.status,
+    details.episodes,
+    details.nextAiringEpisode?.episode
+  );
+  const continueTarget = getContinueTarget({
+    latest: latestHistory,
+    watched: watchedEpisodes,
+    episodeNumbers: releasedNumbers,
+    released,
+  });
+  const firstEpisode = releasedNumbers.length > 0 ? Math.min(...releasedNumbers) : 1;
+  const hasReleasedEpisodes = releasedNumbers.length > 0 || released === null || released > 0;
+  const defaultCategory = settings?.prefer_dub ? 'dub' : 'sub';
+  const defaultProvider = settings?.preferred_provider || AUTO_PROVIDER;
+
+  // Only carry a provider from history if it is a plugin that can still be asked.
+  const historyProvider =
+    continueTarget?.provider &&
+    (providers.accepts(continueTarget.provider) || (episodesData && continueTarget.provider in episodesData))
+      ? continueTarget.provider
+      : null;
+
+  const handlePlay = () => {
+    navigate(
+      watchPath(
+        anilistId,
+        continueTarget?.episode ?? firstEpisode,
+        continueTarget?.category ?? defaultCategory,
+        continueTarget ? historyProvider ?? AUTO_PROVIDER : defaultProvider
+      )
+    );
+  };
+
+  const handleSelectEpisode = (ep: EpisodeItemType, category: 'sub' | 'dub', provider: string) => {
+    navigate(watchPath(anilistId, ep.number, category, provider));
+  };
+
+  const handleWatchlistToggle = () => {
+    toggleWatchlistMutation.mutate(
+      {
+        anilistId,
+        title,
+        cover: coverImage,
+        format: details.format,
+        averageScore: details.averageScore,
+        inWatchlist,
+      },
+      {
+        onError: (err) =>
+          showToast({
+            type: 'error',
+            title: 'Could not update the watchlist',
+            message: errorMessage(err),
+          }),
+      }
+    );
+  };
+
+  const seasonLabel = [details.season ? sentenceCase(details.season) : null, details.seasonYear]
+    .filter(Boolean)
+    .join(' ');
+
+  const metadata = [
+    mediaFormatLabel(details.format) || null,
+    details.status ? sentenceCase(details.status) : null,
+    seasonLabel || null,
+    details.episodes ? `${details.episodes} ${details.episodes === 1 ? 'episode' : 'episodes'}` : null,
+    details.duration ? `${details.duration} min` : null,
+    // Scores are shown only where the source really has one.
+    details.averageScore ? `AniList ${details.averageScore}%` : null,
+    typeof malDetails?.score === 'number' && malDetails.score > 0
+      ? `MAL ${malDetails.score.toFixed(2)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  // Other spellings of the title, without repeats ("DEATH NOTE · DEATH NOTE") or a copy of
+  // the heading that differs only in letter case.
+  const alternateTitles = Array.from(
+    new Set(
+      [details.title?.romaji, details.title?.native].filter(
+        (t): t is string => !!t && t.toLowerCase() !== title.toLowerCase()
+      )
+    )
+  ).join(' · ');
+
+  const isLongDescription = cleanDescription.length > 320;
+
   return (
-    <div className="flex flex-col gap-5 pb-20 animate-fade-in select-none">
-      {/* Top Back Navigation Bar */}
-      <div className="flex items-center">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-bg-card/80 hover:bg-bg-elevated text-text-secondary hover:text-white border border-border text-xs font-semibold backdrop-blur-md transition-all shadow-sm group cursor-pointer"
-        >
-          <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
-          <span>Back</span>
-        </button>
-      </div>
+    <div className="flex flex-col gap-8 pb-16 animate-fade-in">
+      <div className="flex flex-col gap-3">
+        <BackButton />
 
-      {/* Banner & Hero Container */}
-      <div className="relative w-full rounded-2xl overflow-hidden bg-bg-card border border-border shadow-xl">
-        {bannerImage && (
-          <div className="absolute inset-0 h-72 overflow-hidden opacity-30">
-            <img
-              src={bannerImage}
-              alt={title}
-              className="w-full h-full object-cover object-center blur-sm"
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg-card/70 to-bg-card" />
-          </div>
-        )}
+        <header className="relative overflow-hidden rounded-2xl bg-bg-card">
+          {bannerImage && (
+            <div aria-hidden="true" className="absolute inset-x-0 top-0 h-56">
+              <img
+                src={bannerImage}
+                alt=""
+                draggable={false}
+                onError={() => setBannerFailed(true)}
+                className="h-full w-full object-cover object-center opacity-70"
+              />
+              {/* Dense from the middle down, where the title and metadata sit on top of it. */}
+              <div className="absolute inset-0 bg-gradient-to-b from-bg-card/10 via-bg-card/75 to-bg-card" />
+            </div>
+          )}
 
-        <div className="relative z-10 flex flex-col md:flex-row gap-6 p-6 md:p-8 pt-10">
-          {/* Poster Box */}
-          <div className="relative w-44 md:w-56 aspect-[2/3] rounded-2xl overflow-hidden bg-bg-elevated border border-border shadow-2xl flex-shrink-0 mx-auto md:mx-0">
+          <div className={`relative flex gap-6 p-6 ${bannerImage ? 'pt-28' : ''}`}>
             <ShimmerImage
               src={coverImage}
-              alt={title}
-              className="w-full h-full object-cover"
+              alt={`${title} cover`}
+              className="aspect-[2/3] w-48 flex-shrink-0 self-start rounded-xl bg-bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             />
-          </div>
 
-          {/* Details Content */}
-          <div className="flex flex-col flex-1 min-w-0 justify-between">
-            <div>
-              {/* Badges */}
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                {details?.format && (
-                  <span className="px-2.5 py-0.5 rounded-md bg-accent-500 text-white text-xs font-bold uppercase tracking-wider">
-                    {details.format}
-                  </span>
-                )}
-                {details?.status && (
-                  <span className="px-2.5 py-0.5 rounded-md bg-bg-elevated border border-border text-text-secondary text-xs font-medium uppercase">
-                    {details.status.replace('_', ' ')}
-                  </span>
-                )}
-                {details?.averageScore && (
-                  <>
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-bg-elevated text-yellow-400 border border-border text-xs font-semibold">
-                      <Star className="w-3.5 h-3.5 fill-yellow-400" />
-                      <span>{details.averageScore}% AniList</span>
-                    </span>
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-blue-600/90 text-white border border-blue-400/30 text-xs font-bold shadow-sm">
-                      <span>MAL {(details.score_mal || details.averageScore / 10).toFixed(2)}/10</span>
-                    </span>
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-500 text-black border border-amber-300 text-xs font-black shadow-sm">
-                      <span>⭐ IMDb {details.rating_imdb || ((details.averageScore / 10) + 0.1).toFixed(1)}/10</span>
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {/* Main Title */}
-              <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mb-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <h1 className="text-[28px] font-bold leading-[34px] tracking-[-0.02em] text-text-primary select-text">
                 {title}
               </h1>
+              {alternateTitles && (
+                <p title={alternateTitles} className="mt-1 text-xs leading-[18px] text-text-muted line-clamp-2 select-text">
+                  {alternateTitles}
+                </p>
+              )}
+              {metadata && (
+                <p className="mt-2 text-xs tabular-nums text-text-secondary select-text">{metadata}</p>
+              )}
 
-              {/* Native / Romaji Subtitles */}
-              <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted mb-4">
-                {details?.title?.romaji && <span>{details.title.romaji}</span>}
-                {details?.title?.native && (
-                  <>
-                    <span>•</span>
-                    <span>{details.title.native}</span>
-                  </>
-                )}
-              </div>
-
-              {/* Metadata Pills */}
-              <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary font-medium mb-4">
-                {details?.episodes && (
-                  <div className="flex items-center gap-1.5">
-                    <Tv className="w-4 h-4 text-accent-300" />
-                    <span>{details.episodes} Episodes</span>
-                  </div>
-                )}
-                {details?.duration && (
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-accent-300" />
-                    <span>{details.duration} mins/ep</span>
-                  </div>
-                )}
-                {details?.seasonYear && (
-                  <div className="flex items-center gap-1.5">
-                    <Calendar className="w-4 h-4 text-accent-300" />
-                    <span>
-                      {details.season ? `${details.season} ` : ''}
-                      {details.seasonYear}
-                    </span>
-                  </div>
-                )}
-                {details?.popularity && (
-                  <div className="flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-accent-300" />
-                    <span>{details.popularity.toLocaleString()} Members</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Genre Chips */}
-              {details?.genres && details.genres.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 mb-4">
-                  {details.genres.map((g: string) => (
-                    <span
-                      key={g}
-                      className="px-2.5 py-1 rounded-lg bg-bg-elevated text-accent-300 border border-border text-xs font-medium"
-                    >
-                      {g}
-                    </span>
+              {details.genres && details.genres.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {details.genres.map((genre) => (
+                    <Chip key={genre} tone="accent">
+                      {genre}
+                    </Chip>
                   ))}
                 </div>
               )}
 
-              {/* Synopsis */}
-              <div className="relative text-xs md:text-sm text-text-secondary leading-relaxed mb-6">
+              <div className="mt-4 max-w-3xl">
                 <p
-                  className={
-                    descriptionExpanded ? '' : 'line-clamp-3'
-                  }
+                  id="detail-synopsis"
+                  className={`text-sm leading-[22px] text-text-secondary select-text ${
+                    descriptionExpanded ? '' : 'line-clamp-4'
+                  }`}
                 >
-                  {cleanDescription || 'No description provided.'}
+                  {cleanDescription || 'No synopsis is available.'}
                 </p>
-                {cleanDescription.length > 200 && (
+                {isLongDescription && (
                   <button
+                    type="button"
+                    aria-expanded={descriptionExpanded}
+                    aria-controls="detail-synopsis"
                     onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                    className="text-xs font-semibold text-accent-300 hover:text-white mt-1 underline underline-offset-2"
+                    className="mt-1 cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
                   >
-                    {descriptionExpanded ? 'Show Less' : 'Show More'}
+                    {descriptionExpanded ? 'Show less' : 'Show more'}
                   </button>
                 )}
               </div>
-            </div>
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/50">
-              <button
-                onClick={handlePlayNext}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent-500 hover:bg-accent-700 text-white text-sm font-bold shadow-lg shadow-accent-900/40 transition-all duration-200 transform hover:scale-105"
-              >
-                <Play className="w-4 h-4 fill-white" />
-                <span>
-                  {watchedEpisodes.length > 0 ? 'Continue Watching' : 'Start Watching'}
-                </span>
-              </button>
+              <div className="mt-6 flex flex-wrap items-center gap-2">
+                <Button variant="primary" onClick={handlePlay} disabled={!hasReleasedEpisodes}>
+                  <Play aria-hidden="true" className="h-4 w-4 fill-current" />
+                  {!hasReleasedEpisodes
+                    ? 'Not yet aired'
+                    : continueTarget
+                    ? `Continue Episode ${continueTarget.episode}`
+                    : `Watch Episode ${firstEpisode}`}
+                </Button>
 
-              <button
-                onClick={handleWatchlistToggle}
-                className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold border transition-all duration-200 cursor-pointer ${
-                  inWatchlist
-                    ? 'bg-accent-tint text-accent-300 border-border-focus'
-                    : 'bg-bg-elevated text-text-primary border-border hover:bg-bg-input'
-                }`}
-              >
-                <Bookmark className={`w-4 h-4 ${inWatchlist ? 'fill-current' : ''}`} />
-                <span>{inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}</span>
-              </button>
-
-              {details?.trailer?.id && (
-                <button
-                  onClick={() => setIsTrailerOpen(true)}
-                  className="flex items-center gap-2 px-4 py-3 rounded-xl bg-bg-elevated hover:bg-bg-input text-text-primary hover:text-white text-sm font-semibold border border-border transition-colors cursor-pointer"
+                {/* A toggle: neutral while off, accent once the anime is saved. */}
+                <Button
+                  variant={inWatchlist ? 'secondary' : 'neutral'}
+                  onClick={handleWatchlistToggle}
+                  aria-pressed={inWatchlist}
+                  disabled={toggleWatchlistMutation.isPending}
                 >
-                  <Video className="w-4 h-4 text-red-400" />
-                  <span>Trailer</span>
-                </button>
-              )}
+                  <Bookmark aria-hidden="true" className={`h-4 w-4 ${inWatchlist ? 'fill-current' : ''}`} />
+                  {inWatchlist ? 'In watchlist' : 'Add to watchlist'}
+                </Button>
 
-              <button
-                onClick={handleBulkDownload}
-                className="flex items-center gap-2 px-4 py-3 rounded-xl bg-bg-elevated hover:bg-bg-input text-text-secondary hover:text-white text-sm font-medium border border-border transition-colors cursor-pointer"
-              >
-                <DownloadCloud className="w-4 h-4" />
-                <span>Bulk Download</span>
-              </button>
+                {/* Kept together, so a narrow window moves the whole group to a second row
+                    instead of leaving one button on its own. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {(details.status === 'RELEASING' || details.status === 'NOT_YET_RELEASED') && (
+                    <NotifyBell mediaId={anilistId} title={title} cover={coverImage} variant="button" />
+                  )}
+
+                  {isPlayableTrailer(details.trailer) && (
+                    <Button variant="neutral" onClick={() => setIsTrailerOpen(true)}>
+                      <Video aria-hidden="true" className="h-4 w-4" />
+                      Trailer
+                    </Button>
+                  )}
+
+                  <Button
+                    variant="neutral"
+                    onClick={() => openBulkDownloadDialog(toMedia(details))}
+                    disabled={!hasReleasedEpisodes}
+                  >
+                    <DownloadCloud aria-hidden="true" className="h-4 w-4" />
+                    Bulk download
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </header>
       </div>
 
-      {/* Episode Browser Section */}
-      <div className="flex flex-col gap-3">
-        <h2 className="text-xl font-bold text-text-primary tracking-tight px-1">
-          Episodes
-        </h2>
+      <section className="flex flex-col gap-3">
+        <h2 className="text-xl font-semibold text-text-primary">Episodes</h2>
         <EpisodeBrowser
           anilistId={anilistId}
           malId={malId}
           animeTitle={title}
           animeCover={coverImage}
           catalogEpisodes={catalogEpisodes}
+          isCatalogLoading={catalogLoading}
+          episodesData={episodesData}
+          isProvidersLoading={providersLoading}
+          isProvidersError={providersFailed}
+          defaultCategory={defaultCategory}
+          defaultProvider={defaultProvider}
+          progressByEpisode={progressByEpisode}
           onSelectEpisode={handleSelectEpisode}
         />
-      </div>
+      </section>
 
-      {/* Franchise & Relations Section */}
-      {details?.relations?.edges && details.relations.edges.length > 0 && (
+      {details.relations?.edges && details.relations.edges.length > 0 && (
         <RelationsRail relations={details.relations.edges} />
       )}
 
-      {/* Characters & Voice Actors Section */}
-      {details?.characters?.edges && details.characters.edges.length > 0 && (
+      {details.characters?.edges && details.characters.edges.length > 0 && (
         <CharacterRail characters={details.characters.edges} />
       )}
 
-      {/* Opening & Ending Soundtracks Section (AnimeThemes) */}
       <AnimeThemesPlayer malId={malId} animeTitle={title} />
 
-      {/* Official YouTube Trailer Modal */}
       <TrailerModal
         isOpen={isTrailerOpen}
         onClose={() => setIsTrailerOpen(false)}
-        trailer={details?.trailer}
+        trailer={details.trailer}
         animeTitle={title}
-      />
-
-      {/* On-Demand Server Selection Dialog */}
-      <ServerSelectDialog
-        isOpen={!!serverSelectEpisode}
-        onClose={() => setServerSelectEpisode(null)}
-        anilistId={anilistId}
-        animeTitle={title}
-        episode={serverSelectEpisode}
       />
     </div>
   );

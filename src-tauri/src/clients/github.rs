@@ -20,36 +20,52 @@ impl UpdateInfo {
     }
 }
 
-pub async fn fetch_latest_release(client: &Client) -> Option<UpdateInfo> {
-    let url = "https://api.github.com/repos/kompoti121/Anilili/releases/latest";
+const RELEASES_API: &str = "https://api.github.com/repos/MaidLover69/Anilili_Linux/releases/latest";
+const RELEASES_PAGE: &str = "https://github.com/MaidLover69/Anilili_Linux/releases";
+
+/// The latest published release of this app. `Ok(None)` means there is no release yet;
+/// a network or API failure is an error, so the UI can tell it apart from "up to date".
+pub async fn fetch_latest_release(client: &Client) -> Result<Option<UpdateInfo>, String> {
     let res = client
-        .get(url)
+        .get(RELEASES_API)
         .header("User-Agent", "AnililiLinux/1.0")
+        .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .ok()?;
+        .map_err(|e| format!("Could not reach GitHub: {}", e))?;
 
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
     if !res.status().is_success() {
-        return None;
+        return Err(format!("GitHub answered HTTP {}", res.status().as_u16()));
     }
 
-    let json: serde_json::Value = res.json().await.ok()?;
-    let raw_tag = json["tag_name"].as_str().unwrap_or("v1.0.0");
-    if raw_tag.to_uppercase().contains("APK") {
+    let json: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("Unexpected response from GitHub: {}", e))?;
+    Ok(parse_release(&json))
+}
+
+/// Reads a GitHub release object; a release without a tag is not a usable update.
+pub fn parse_release(json: &serde_json::Value) -> Option<UpdateInfo> {
+    let raw_tag = json["tag_name"].as_str()?;
+    let version = raw_tag.trim_start_matches('v').to_string();
+    if version.is_empty() {
         return None;
     }
-    let version = raw_tag.trim_start_matches('v').to_string();
-    let changelog = json["body"].as_str().unwrap_or("No changelog available.").to_string();
-    let published_at = json["published_at"].as_str().unwrap_or("").to_string();
+    // Only ever link to GitHub: the URL is opened in the user's browser.
     let release_url = json["html_url"]
         .as_str()
-        .unwrap_or("https://github.com/kompoti121/Anilili/releases")
+        .filter(|url| url.starts_with("https://github.com/"))
+        .unwrap_or(RELEASES_PAGE)
         .to_string();
 
     Some(UpdateInfo {
         version,
-        changelog,
-        published_at,
+        changelog: json["body"].as_str().unwrap_or("No changelog available.").to_string(),
+        published_at: json["published_at"].as_str().unwrap_or("").to_string(),
         release_url,
     })
 }

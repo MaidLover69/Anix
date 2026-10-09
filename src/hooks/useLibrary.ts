@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { HistoryEntry, WatchlistEntry, MediaListEntry } from '../types';
+import type { HistoryEntry, WatchlistEntry } from '../types';
 
 export function useWatchlist() {
   return useQuery<WatchlistEntry[]>({
@@ -33,17 +33,26 @@ export function useWatchedEpisodes(anilistId: number | null) {
   });
 }
 
-export function useEpisodeProgress(anilistId: number | null, episodeNumber: number | null) {
+/**
+ * Saved `[positionMs, durationMs]` of one episode, read fresh for each player load.
+ * `loadKey` identifies that load, so nothing saved during an earlier one is served from cache.
+ */
+export function useResumePosition(
+  anilistId: number,
+  episodeNumber: number,
+  loadKey: string | number
+) {
   return useQuery<[number, number] | null>({
-    queryKey: ['episodeProgress', anilistId, episodeNumber],
-    queryFn: async () => {
-      if (!anilistId || episodeNumber === null) return null;
-      return await invoke<[number, number] | null>('get_episode_progress', {
-        anilistId,
-        episodeNumber,
-      });
-    },
-    enabled: !!anilistId && episodeNumber !== null,
+    queryKey: ['resumePosition', anilistId, episodeNumber, loadKey],
+    queryFn: () =>
+      invoke<[number, number] | null>('get_episode_progress', { anilistId, episodeNumber }),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+    // A local database read; it must not wait for a network connection.
+    networkMode: 'always',
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -130,22 +139,11 @@ export function useUpdateWatchProgress() {
       });
     },
     onSuccess: (_, variables) => {
+      // Everything that shows progress: the Library history, Home's Continue Watching rail
+      // (part of `homeData`) and the watched ticks on the detail page.
       queryClient.invalidateQueries({ queryKey: ['continueWatching'] });
+      queryClient.invalidateQueries({ queryKey: ['homeData'] });
       queryClient.invalidateQueries({ queryKey: ['watchedEpisodes', variables.anilistId] });
-      queryClient.invalidateQueries({
-        queryKey: ['episodeProgress', variables.anilistId, variables.episodeNumber],
-      });
-    },
-  });
-}
-
-export function useRemoteLibrary(status?: string) {
-  return useQuery<MediaListEntry[]>({
-    queryKey: ['remoteLibrary', status],
-    queryFn: async () => {
-      return await invoke<MediaListEntry[]>('get_library_entries', {
-        status: status || null,
-      });
     },
   });
 }

@@ -42,8 +42,14 @@ impl AnimeThemesClient {
             .await
             .map_err(|e| AppError::Network(e.to_string()))?;
 
-        if !res.status().is_success() {
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(vec![]);
+        }
+        if !res.status().is_success() {
+            return Err(AppError::Network(format!(
+                "AnimeThemes HTTP {}",
+                res.status().as_u16()
+            )));
         }
 
         let json: Value = res

@@ -1,11 +1,10 @@
-use crate::cache::L1Cache;
 use crate::clients::anilist::AniListClient;
 use crate::clients::http::build_http_client;
 use crate::clients::imdb::ImdbClient;
 use crate::clients::mal::MalClient;
+use crate::plugins::registry::PluginRegistry;
 use crate::providers::manager::ProviderManager;
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 pub struct AppState {
     pub pool: SqlitePool,
@@ -13,8 +12,9 @@ pub struct AppState {
     pub anilist_client: AniListClient,
     pub mal_client: MalClient,
     pub imdb_client: ImdbClient,
+    /// Installed streaming plugins; the provider manager asks it for its providers.
+    pub plugins: PluginRegistry,
     pub provider_manager: ProviderManager,
-    pub l1_cache: Arc<L1Cache<String, serde_json::Value>>,
 }
 
 impl AppState {
@@ -23,8 +23,11 @@ impl AppState {
         let anilist_client = AniListClient::new(client.clone());
         let mal_client = MalClient::new(client.clone());
         let imdb_client = ImdbClient::new(client.clone());
-        let provider_manager = ProviderManager::new();
-        let l1_cache = Arc::new(L1Cache::new(500, 3600));
+        let plugins = PluginRegistry::open_default();
+        let provider_manager = {
+            let plugins = plugins.clone();
+            ProviderManager::with_source(std::sync::Arc::new(move || plugins.providers()))
+        };
 
         Self {
             pool,
@@ -32,8 +35,8 @@ impl AppState {
             anilist_client,
             mal_client,
             imdb_client,
+            plugins,
             provider_manager,
-            l1_cache,
         }
     }
 }

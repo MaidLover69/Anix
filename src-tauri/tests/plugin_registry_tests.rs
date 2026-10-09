@@ -1,0 +1,552 @@
+//! Plugin repositories, storage, and plugins as providers behind the provider manager.
+
+mod plugin_support;
+
+use anilili_lib::error::AppError;
+use anilili_lib::models::Category;
+use anilili_lib::plugins::provider::servers_for;
+use anilili_lib::plugins::registry::{index_candidates, valid_plugin_id, PluginRegistry, RegistryOptions};
+use anilili_lib::providers::manager::{ProviderManager, NO_PLUGIN_MESSAGE};
+use anilili_lib::web_session::SiteSession;
+use plugin_support::{FakeSession, NoSession, Req, Resp, Site};
+use serde_json::json;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+fn scratch_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "anilili-plugin-test-{}-{}-{}",
+        name,
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn options(session: Arc<dyn SiteSession>) -> RegistryOptions {
+    RegistryOptions {
+        allow_insecure: true,
+        allow_private_network: true,
+        session,
+        ..RegistryOptions::default()
+    }
+}
+
+fn open(dir: &PathBuf) -> PluginRegistry {
+    PluginRegistry::open(dir.clone(), options(Arc::new(NoSession)))
+}
+
+fn manager(registry: &PluginRegistry) -> ProviderManager {
+    let registry = registry.clone();
+    ProviderManager::with_source_offline(Arc::new(move || registry.providers()))
+}
+
+/// The plugin served by the fixture site. `base` comes from the manifest's user config, the
+/// way community plugins take their site address.
+const FIXTURE_PLUGIN: &str = r#"
+class Provider {
+  constructor() { this.base = $getUserPreference('base'); }
+  getSettings() { return { episodeServers: ['alpha', 'beta'], supportsDub: true }; }
+  async search(opts) {
+    const res = await fetch(this.base + '/site/search?q=' + encodeURIComponent(opts.query) + '&dub=' + opts.dub);
+    if (!res.ok) throw new Error('search answered HTTP ' + res.status);
+    return res.json().map((hit) => ({ id: hit.id + (opts.dub ? '|dub' : '|sub'), title: hit.title, url: this.base + '/site/a/' + hit.id, subOrDub: opts.dub ? 'dub' : 'sub', year: hit.year }));
+  }
+  async findEpisodes(id) {
+    const res = await fetch(this.base + '/site/episodes?id=' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('episodes answered HTTP ' + res.status);
+    return res.json();
+  }
+  async findEpisodeServer(episode, server) {
+    const res = await fetch(this.base + '/site/server/' + server + '?ep=' + encodeURIComponent(episode.id));
+    if (!res.ok) throw new Error(server + ' is down');
+    return res.json();
+  }
+}
+"#;
+
+struct Fixture {
+    site: Site,
+    version: Arc<Mutex<String>>,
+    index_broken: Arc<Mutex<bool>>,
+    /// What `/site/server/beta` answers with instead of its stream, when set.
+    beta_down: Arc<Mutex<bool>>,
+}
+
+impl Fixture {
+    fn index(&self) -> String {
+        self.site.url("/repo/index.json")
+    }
+}
+
+async fn fixture() -> Fixture {
+    let version = Arc::new(Mutex::new("1.0.0".to_string()));
+    let index_broken = Arc::new(Mutex::new(false));
+    let beta_down = Arc::new(Mutex::new(false));
+    let (v, broken, down) = (version.clone(), index_broken.clone(), beta_down.clone());
+    let site = Site::start(move |request: &Req| {
+        let base = format!("http://{}", request.header("host"));
+        let version = v.lock().unwrap().clone();
+        match request.route() {
+            "/repo/index.json" if *broken.lock().unwrap() => Resp::html("<html>maintenance</html>"),
+            "/repo/index.json" => Resp::json(json!([
+                {
+                    "id": "fixture", "name": "Fixture Site", "version": version, "author": "tests",
+                    "description": "A site that exists only in tests", "type": "onlinestream-provider",
+                    "language": "javascript", "lang": "en", "icon": "https://example.org/icon.png",
+                    "payloadURI": "plugins/fixture.js",
+                    "userConfig": { "fields": [{ "name": "base", "default": base }] }
+                },
+                { "id": "broken", "name": "Broken", "version": "0.1.0", "type": "onlinestream-provider", "language": "javascript", "payloadURI": "plugins/broken.js" },
+                { "id": "typed", "name": "Typed", "version": "2.0.0", "type": "onlinestream-provider", "language": "typescript", "manifestURI": format!("{}/repo/typed/manifest.json", base) },
+                { "id": "gone", "name": "Gone", "version": "1.0.0", "type": "onlinestream-provider", "language": "javascript", "payloadURI": "plugins/missing.js" },
+                { "id": "a-manga-thing", "name": "Manga", "type": "manga-provider", "language": "javascript", "payloadURI": "plugins/manga.js" },
+                { "id": "../escape", "name": "Bad id", "version": "1", "type": "onlinestream-provider", "payloadURI": "plugins/fixture.js" }
+            ])),
+            "/repo/plugins/fixture.js" => {
+                let marker = format!("\n// version {}\n", version);
+                let source = if version == "1.0.0" {
+                    FIXTURE_PLUGIN.to_string()
+                } else {
+                    FIXTURE_PLUGIN.replace("['alpha', 'beta']", "['alpha', 'beta', 'gamma']")
+                };
+                Resp::new(200, "text/javascript", source + &marker)
+            }
+            "/repo/plugins/broken.js" => Resp::new(200, "text/javascript", "class Provider { getSettings( { "),
+            "/repo/typed/manifest.json" => Resp::json(json!({
+                "id": "typed", "name": "Typed", "version": "2.0.0", "type": "onlinestream-provider", "language": "typescript",
+                "payload": "class Provider { getSettings(): { episodeServers: string[]; supportsDub: boolean } { return { episodeServers: [], supportsDub: false } }\n async search(opts: any): Promise<any[]> { return [] } }"
+            })),
+            "/repo/one.json" => Resp::json(json!({
+                "id": "single", "name": "Single", "version": "3.1.0", "type": "onlinestream-provider", "language": "javascript",
+                "payload": "class Provider { getSettings() { return { episodeServers: ['only'], supportsDub: false }; } }"
+            })),
+            "/repo/empty.json" => Resp::json(json!([{ "id": "m", "type": "manga-provider" }])),
+            "/repo/big.json" => Resp::new(200, "application/json", vec![b' '; 3 * 1024 * 1024]),
+
+            "/site/search" => {
+                if request.query("dub") == "true" {
+                    Resp::json(json!([{ "id": "right", "title": "Test Show", "year": 2020 }]))
+                } else {
+                    // The site ranks a sequel first; the right entry is second.
+                    Resp::json(json!([
+                        { "id": "sequel", "title": "Test Show Season 2", "year": 2022 },
+                        { "id": "right", "title": "Test Show", "year": 2020 }
+                    ]))
+                }
+            }
+            "/site/episodes" => {
+                let id = request.query("id");
+                let entry = |n: u32| json!({ "id": format!("{}|{}", id, n), "number": n, "url": format!("{}/site/watch/{}", base, n), "title": format!("Chapter {}", n), "image": format!("{}/thumb/{}.jpg", base, n) });
+                match id.as_str() {
+                    "right|sub" => Resp::json(json!([entry(2), entry(1), entry(3)])),
+                    "right|dub" => Resp::json(json!([entry(1)])),
+                    _ => Resp::status(404),
+                }
+            }
+            "/site/server/alpha" => Resp::status(500),
+            "/site/server/beta" if *down.lock().unwrap() => Resp::json(json!({
+                "server": "beta", "headers": {},
+                "videoSources": [{ "url": format!("{}/hls/dead/master.m3u8", base), "type": "m3u8", "quality": "auto", "subtitles": [] }]
+            })),
+            "/site/server/beta" | "/site/server/gamma" => {
+                let episode = request.query("ep");
+                let audio = if episode.contains("|dub|") { "dub" } else { "sub" };
+                Resp::json(json!({
+                    "server": "beta",
+                    "headers": { "Referer": format!("{}/site/", base) },
+                    "videoSources": [
+                        { "url": format!("{}/hls/{}/master.m3u8", base, audio), "type": "m3u8", "quality": "1080p", "label": "Soft sub",
+                          "subtitles": [{ "id": "en", "url": format!("{}/subs/{}/en.ass", base, audio), "language": "English", "isDefault": true, "format": "vtt" }] },
+                        { "url": format!("{}/hls/{}-low/master.m3u8", base, audio), "type": "m3u8", "quality": "360p",
+                          "subtitles": [{ "id": "en", "url": format!("{}/subs/{}/en.ass", base, audio), "language": "English", "isDefault": true }] },
+                        { "url": format!("{}/hls/{}-raw/master.m3u8", base, audio), "type": "m3u8", "quality": "raw", "subtitles": [] }
+                    ],
+                    "skip": { "introStart": 12.5, "introEnd": 98, "outroStart": 1300 }
+                }))
+            }
+            route if route.starts_with("/hls/dead/") => Resp::status(404),
+            route if route.ends_with("/master.m3u8") => {
+                // The playlist is only served with the Referer the server result names.
+                if request.header("referer").ends_with("/site/") {
+                    Resp::new(200, "application/vnd.apple.mpegurl", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nmedia.m3u8\n")
+                } else {
+                    Resp::status(403)
+                }
+            }
+            route if route.ends_with("/media.m3u8") => Resp::new(200, "application/vnd.apple.mpegurl", "#EXTM3U\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"),
+            route if route.ends_with("/seg0.ts") => Resp::new(200, "video/mp2t", vec![0x47u8; 188]),
+            _ => Resp::status(404),
+        }
+    })
+    .await;
+    Fixture {
+        site,
+        version,
+        index_broken,
+        beta_down,
+    }
+}
+
+#[test]
+fn repository_links_resolve_to_index_addresses() {
+    assert_eq!(
+        index_candidates("https://github.com/MaidLover69/Anilili_Linux_plugins").unwrap(),
+        vec![
+            "https://raw.githubusercontent.com/MaidLover69/Anilili_Linux_plugins/main/index.json",
+            "https://raw.githubusercontent.com/MaidLover69/Anilili_Linux_plugins/master/index.json",
+        ]
+    );
+    assert_eq!(
+        index_candidates("github.com/o/r.git/").unwrap()[0],
+        "https://raw.githubusercontent.com/o/r/main/index.json"
+    );
+    assert_eq!(
+        index_candidates("https://github.com/o/r/tree/dev").unwrap()[0],
+        "https://raw.githubusercontent.com/o/r/dev/index.json"
+    );
+    assert_eq!(
+        index_candidates("https://github.com/o/r/blob/main/marketplace/main.json").unwrap(),
+        vec!["https://raw.githubusercontent.com/o/r/main/marketplace/main.json"]
+    );
+    assert_eq!(
+        index_candidates("https://raw.githubusercontent.com/o/r/main/index.json").unwrap(),
+        vec!["https://raw.githubusercontent.com/o/r/main/index.json"]
+    );
+    assert!(index_candidates("https://").is_err());
+
+    assert!(valid_plugin_id("gojo-wtf_2"));
+    for bad in ["", "../x", "a/b", "a b", "a.b", "é", &"x".repeat(65)] {
+        assert!(!valid_plugin_id(bad), "{}", bad);
+    }
+}
+
+#[test]
+fn sub_and_dub_servers_are_told_apart_by_name() {
+    let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let gg = names(&["GG-SUB", "GG-DUB"]);
+    assert_eq!(servers_for(&gg, &Category::Sub), names(&["GG-SUB"]));
+    assert_eq!(servers_for(&gg, &Category::Dub), names(&["GG-DUB"]));
+    let plain = names(&["kickassanime", "default", "icarus"]);
+    assert_eq!(servers_for(&plain, &Category::Dub), names(&["default", "kickassanime", "icarus"]));
+    assert_eq!(servers_for(&[], &Category::Sub), names(&["default"]));
+    assert_eq!(servers_for(&names(&["Dubbed"]), &Category::Sub), names(&["Dubbed"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repository_is_added_refreshed_and_removed() {
+    let fx = fixture().await;
+    let dir = scratch_dir("repo");
+    let registry = open(&dir);
+    let changes = Arc::new(AtomicUsize::new(0));
+    let counter = changes.clone();
+    registry.set_notifier(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert!(registry.list_repos().is_empty());
+
+    // Links that are not plugin lists are refused and leave nothing behind.
+    let other_json = registry.add_repo(&fx.site.url("/site/search")).await.unwrap_err();
+    assert!(other_json.contains("no streaming plugins"), "{}", other_json);
+    let not_json = registry.add_repo(&fx.site.url("/repo/plugins/fixture.js")).await.unwrap_err();
+    assert!(not_json.contains("not JSON"), "{}", not_json);
+    let missing = registry.add_repo(&fx.site.url("/repo/nothing.json")).await.unwrap_err();
+    assert!(missing.contains("HTTP 404"), "{}", missing);
+    let empty = registry.add_repo(&fx.site.url("/repo/empty.json")).await.unwrap_err();
+    assert!(empty.contains("no streaming plugins"), "{}", empty);
+    let big = registry.add_repo(&fx.site.url("/repo/big.json")).await.unwrap_err();
+    assert!(big.contains("larger than"), "{}", big);
+    let insecure = PluginRegistry::open(scratch_dir("strict"), RegistryOptions { session: Arc::new(NoSession), ..RegistryOptions::default() });
+    let refused = insecure.add_repo(&fx.index()).await.unwrap_err();
+    assert!(refused.contains("only https"), "{}", refused);
+    assert!(registry.list_repos().is_empty());
+    assert!(registry.list_plugins().is_empty());
+
+    let link = format!("  {}  ", fx.index());
+    let repo = registry.add_repo(&link).await.unwrap();
+    assert_eq!(repo.url, fx.index());
+    assert_eq!(repo.plugin_count, 4);
+    assert!(repo.updated_at_ms > 0);
+    let note = repo.error.clone().unwrap();
+    assert!(note.contains("not a usable plugin id"), "{}", note);
+    assert!(registry.add_repo(&fx.index()).await.unwrap_err().contains("already been added"));
+
+    let plugins = registry.list_plugins();
+    let by_id = |id: &str| plugins.iter().find(|p| p.id == id).unwrap_or_else(|| panic!("{} missing", id)).clone();
+    assert_eq!(plugins.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["fixture", "broken", "typed", "gone"]);
+    let fixture = by_id("fixture");
+    assert_eq!((fixture.name.as_str(), fixture.version.as_str(), fixture.author.as_str(), fixture.lang.as_str()), ("Fixture Site", "1.0.0", "tests", "en"));
+    assert_eq!(fixture.repo_url, repo.url);
+    assert_eq!(fixture.status, "ready");
+    assert!(fixture.enabled && fixture.supports_dub);
+    assert_eq!(fixture.servers, ["alpha", "beta"]);
+    assert_eq!(fixture.icon.as_deref(), Some("https://example.org/icon.png"));
+    // A plugin that cannot run is listed with its reason and does not disturb the others.
+    let broken = by_id("broken");
+    assert_eq!(broken.status, "error");
+    assert!(broken.error.is_some());
+    assert_eq!((broken.author.as_str(), broken.description.as_str(), broken.lang.as_str()), ("", "", ""));
+    assert_eq!(by_id("typed").status, "ready");
+    let gone = by_id("gone");
+    assert_eq!(gone.status, "error");
+    assert!(gone.error.unwrap().contains("HTTP 404"));
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "typed"]);
+    assert!(dir.join("payloads/fixture.js").is_file());
+    assert!(dir.join("payloads/typed.ts").is_file());
+    assert!(!dir.join("payloads").join("..").join("escape.js").exists());
+
+    // Same version: nothing is downloaded again.
+    let payload_hits = fx.site.count("/repo/plugins/fixture.js");
+    registry.refresh_repos().await;
+    assert_eq!(fx.site.count("/repo/plugins/fixture.js"), payload_hits);
+
+    // A new version is picked up.
+    *fx.version.lock().unwrap() = "1.1.0".to_string();
+    let refreshed = registry.refresh_repos().await;
+    assert_eq!(refreshed.len(), 1);
+    assert_eq!(fx.site.count("/repo/plugins/fixture.js"), payload_hits + 1);
+    let fixture = registry.list_plugins().into_iter().find(|p| p.id == "fixture").unwrap();
+    assert_eq!(fixture.version, "1.1.0");
+    assert_eq!(fixture.servers, ["alpha", "beta", "gamma"]);
+    assert!(std::fs::read_to_string(dir.join("payloads/fixture.js")).unwrap().contains("// version 1.1.0"));
+
+    // An index that stops being one is reported; the installed plugins stay.
+    *fx.index_broken.lock().unwrap() = true;
+    let refreshed = registry.refresh_repos().await;
+    assert!(refreshed[0].error.as_deref().unwrap().contains("not JSON"), "{:?}", refreshed[0].error);
+    assert_eq!(refreshed[0].plugin_count, 4);
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "typed"]);
+    *fx.index_broken.lock().unwrap() = false;
+
+    // A single manifest is a repository of one.
+    let single = registry.add_repo(&fx.site.url("/repo/one.json")).await.unwrap();
+    assert_eq!(single.plugin_count, 1);
+    assert_eq!(single.error, None);
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "typed", "single"]);
+
+    assert!(changes.load(Ordering::SeqCst) >= 5);
+    registry.remove_repo(&fx.index()).await.unwrap();
+    assert_eq!(registry.list_repos().len(), 1);
+    assert_eq!(registry.list_plugins().iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["single"]);
+    assert!(!dir.join("payloads/fixture.js").exists());
+    assert_eq!(manager(&registry).provider_names(), ["single"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plugins_serve_episodes_and_sources_through_the_manager() {
+    let fx = fixture().await;
+    let registry = open(&scratch_dir("e2e"));
+
+    // No plugin: no providers, an empty episode map and a message that points to Settings.
+    let empty = manager(&registry);
+    assert!(empty.get_all_episodes(77, None, Some("Test Show".to_string())).await.unwrap().is_empty());
+    let none = empty.get_sources_for_episode(77, None, 1.0, "sub", Some("Test Show".to_string()), None).await.unwrap_err();
+    assert_eq!(none.to_string(), NO_PLUGIN_MESSAGE);
+    assert!(NO_PLUGIN_MESSAGE.contains("Settings → Plugins"));
+
+    registry.add_repo(&fx.index()).await.unwrap();
+    let manager = manager(&registry);
+
+    let lists: Vec<_> = manager
+        .get_all_episodes(77, None, Some("Test Show".to_string()))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|list| !list.is_empty())
+        .collect();
+    assert_eq!(lists.len(), 1, "only the plugin that has the anime lists episodes");
+    assert_eq!(lists[0].name, "fixture");
+    assert_eq!(lists[0].sub.iter().map(|e| e.number).collect::<Vec<_>>(), [1.0, 2.0, 3.0]);
+    assert_eq!(lists[0].dub.iter().map(|e| e.number).collect::<Vec<_>>(), [1.0]);
+    assert_eq!(lists[0].sub[0].title.as_deref(), Some("Chapter 1"));
+    assert!(lists[0].sub[0].image.as_deref().unwrap().ends_with("/thumb/1.jpg"));
+    // The sequel the site ranks first was not taken.
+    assert_eq!(fx.site.count("/site/episodes?id=sequel"), 0);
+    assert_eq!(fx.site.count("/site/episodes?id=right%7Csub"), 1);
+    manager.get_all_episodes(77, None, Some("Test Show".to_string())).await.unwrap();
+    assert_eq!(fx.site.count("/site/episodes?id=right%7Csub"), 1, "episode lists are cached");
+
+    let sub = manager.get_sources_for_episode(77, None, 2.0, "sub", Some("Test Show".to_string()), None).await.unwrap();
+    assert_eq!(sub.provider.as_deref(), Some("fixture"));
+    let first = &sub.streams[0];
+    assert!(first.url.contains("/hls/sub"), "{}", first.url);
+    assert_eq!(first.stream_type, "hls");
+    assert_eq!(first.audio.as_deref(), Some("sub"));
+    assert!(first.referer.as_deref().unwrap().ends_with("/site/"));
+    assert!(first.headers.as_ref().unwrap().contains_key("Referer"));
+    assert!(first.is_active);
+    // The two streams that share the English track are offered; the one without it is not,
+    // because the subtitles returned would not belong to it.
+    let mut urls: Vec<&str> = sub.streams.iter().map(|s| s.url.rsplit("/hls/").next().unwrap()).collect();
+    urls.sort();
+    assert_eq!(urls, ["sub-low/master.m3u8", "sub/master.m3u8"]);
+    let labelled = sub.streams.iter().find(|s| s.url.contains("/hls/sub/")).unwrap();
+    assert_eq!(labelled.quality.as_deref(), Some("1080p - Soft sub"));
+    assert_eq!(labelled.subtitle_variant.as_deref(), Some("s-sub"));
+    assert_eq!(sub.subtitles.len(), 1);
+    assert!(sub.subtitles[0].url.ends_with("/subs/sub/en.ass"));
+    assert_eq!(sub.subtitles[0].language, "English");
+    assert_eq!(sub.subtitles[0].is_default, Some(true));
+    let skip = sub.skip.clone().unwrap();
+    assert_eq!((skip.intro_start, skip.intro_end), (Some(12.5), Some(98.0)));
+    assert_eq!((skip.outro_start, skip.outro_end), (None, None));
+
+    let dub = manager.get_sources_for_episode(77, None, 1.0, "dub", Some("Test Show".to_string()), Some("fixture")).await.unwrap();
+    assert!(dub.streams[0].url.contains("/hls/dub"));
+    assert_eq!(dub.streams[0].audio.as_deref(), Some("dub"));
+    assert!(dub.subtitles[0].url.ends_with("/subs/dub/en.ass"));
+
+    // Failures name the plugin and say why.
+    let reason = |result: Result<_, AppError>| -> String { result.map(|_: anilili_lib::models::SourcesResult| ()).unwrap_err().to_string() };
+    let no_dub = reason(manager.get_sources_for_episode(77, None, 3.0, "dub", Some("Test Show".to_string()), None).await);
+    assert!(no_dub.contains("fixture: episode 3 not listed"), "{}", no_dub);
+    assert!(no_dub.contains("typed: no dub"), "{}", no_dub);
+    let unknown = reason(manager.get_sources_for_episode(78, None, 1.0, "sub", Some("Another Show Entirely".to_string()), None).await);
+    assert!(unknown.contains("fixture, typed: anime not found"), "{}", unknown);
+    *fx.beta_down.lock().unwrap() = true;
+    let down = reason(manager.get_sources_for_episode(77, None, 1.0, "sub", Some("Test Show".to_string()), Some("fixture")).await);
+    assert!(down.contains("alpha is down"), "{}", down);
+    assert!(down.contains("stream check failed: HTTP 404"), "{}", down);
+    *fx.beta_down.lock().unwrap() = false;
+
+    // A disabled plugin takes no part, without a restart; enabling brings it back.
+    registry.set_enabled("fixture", false).await.unwrap();
+    assert_eq!(registry.list_plugins()[0].status, "disabled");
+    assert_eq!(manager.provider_names(), ["typed"]);
+    assert!(manager.get_all_episodes(77, None, Some("Test Show".to_string())).await.unwrap().iter().all(|list| list.is_empty()));
+    let gone = reason(manager.get_sources_for_episode(77, None, 1.0, "sub", Some("Test Show".to_string()), Some("fixture")).await);
+    assert!(gone.contains("Unknown provider 'fixture'"), "{}", gone);
+    registry.set_enabled("fixture", true).await.unwrap();
+    assert_eq!(manager.provider_names(), ["fixture", "typed"]);
+    assert!(manager.get_sources_for_episode(77, None, 1.0, "sub", Some("Test Show".to_string()), None).await.is_ok());
+    assert!(registry.set_enabled("nope", true).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn installed_plugins_survive_a_restart_and_work_offline() {
+    let dir = scratch_dir("restart");
+    let index;
+    {
+        let fx = fixture().await;
+        index = fx.index();
+        let registry = open(&dir);
+        registry.add_repo(&index).await.unwrap();
+        registry.add_repo(&fx.site.url("/repo/one.json")).await.unwrap();
+        registry.set_enabled("typed", false).await.unwrap();
+    }
+
+    // The repository's server is gone; a new process opens the same directory.
+    let registry = open(&dir);
+    assert_eq!(registry.list_repos().len(), 2);
+    let plugins = registry.list_plugins();
+    assert_eq!(plugins.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["fixture", "broken", "typed", "gone", "single"]);
+    assert_eq!(plugins[0].status, "ready");
+    assert_eq!(plugins[0].servers, ["alpha", "beta"]);
+    assert_eq!(plugins[1].status, "error");
+    assert_eq!(plugins[2].status, "disabled");
+    // Providers are there before anything was loaded, and loading confirms them.
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "single"]);
+    registry.load_all().await;
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "single"]);
+    let settings = registry
+        .runtime("single")
+        .unwrap()
+        .call("getSettings", &[], std::time::Duration::from_secs(5), anilili_lib::web_session::SessionUse::Existing)
+        .await
+        .unwrap();
+    assert_eq!(settings["episodeServers"], json!(["only"]));
+
+    // Refreshing while the repository is unreachable reports it and keeps everything.
+    let refreshed = registry.refresh_repos().await;
+    assert!(refreshed.iter().all(|repo| repo.error.is_some()), "{:?}", refreshed);
+    assert_eq!(registry.list_plugins().len(), 5);
+    assert_eq!(manager(&registry).provider_names(), ["fixture", "single"]);
+
+    // A damaged state file does not stop the app; it starts without plugins.
+    std::fs::write(dir.join("state.json"), "{ not json").unwrap();
+    let damaged = open(&dir);
+    assert!(damaged.list_plugins().is_empty());
+    assert!(dir.join("state.json.corrupt").is_file());
+}
+
+const GUARDED_PLUGIN: &str = r#"
+class Provider {
+  constructor() { this.base = $getUserPreference('base'); }
+  getSettings() { return { episodeServers: [], supportsDub: false }; }
+  async search(opts) {
+    const res = await fetch(this.base + '/guarded/search?q=' + encodeURIComponent(opts.query));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+  async findEpisodes(id) { return [{ id: id + '-1', number: 1, url: this.base + '/watch/1' }]; }
+  async findEpisodeServer(episode, server) {
+    return { server, headers: {}, videoSources: [{ url: this.base + '/hls/open/master.m3u8', type: 'm3u8', quality: 'auto', subtitles: [] }] };
+  }
+}
+"#;
+
+async fn guarded_site() -> Site {
+    Site::start(|request: &Req| {
+        let base = format!("http://{}", request.header("host"));
+        match request.route() {
+            "/index.json" => Resp::json(json!([{
+                "id": "guarded", "name": "Guarded", "version": "1", "type": "onlinestream-provider", "language": "javascript",
+                "payload": GUARDED_PLUGIN, "userConfig": { "fields": [{ "name": "base", "default": base }] }
+            }])),
+            "/guarded/search" => Resp::new(403, "text/html", "<html><head><title>Just a moment...</title></head><body>challenge-platform</body></html>"),
+            route if route.ends_with("/master.m3u8") => Resp::new(200, "application/vnd.apple.mpegurl", "#EXTM3U\n#EXTINF:4,\nseg0.ts\n"),
+            route if route.ends_with("/seg0.ts") => Resp::new(200, "video/mp2t", vec![0x47u8; 188]),
+            _ => Resp::status(404),
+        }
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_anti_bot_page_is_answered_through_the_browser_session_by_the_usual_policy() {
+    let site = guarded_site().await;
+    let session = FakeSession::answering(r#"[{"id":"show","title":"Guarded Show","url":"x","subOrDub":"sub"}]"#);
+    let registry = PluginRegistry::open(scratch_dir("guarded"), options(session.clone()));
+    registry.add_repo(&site.url("/index.json")).await.unwrap();
+    let manager = manager(&registry);
+
+    // Listing never starts a session: the plugin's refusal is all there is.
+    assert!(manager.get_all_episodes(5, None, Some("Guarded Show".to_string())).await.unwrap().is_empty());
+    assert!(session.asked().is_empty());
+
+    // A lookup across all plugins asks the session only as the last resort, and then succeeds.
+    let found = manager.get_sources_for_episode(5, None, 1.0, "sub", Some("Guarded Show".to_string()), None).await.unwrap();
+    assert_eq!(found.provider.as_deref(), Some("guarded"));
+    assert_eq!(session.asked(), ["/guarded/search?q=Guarded%20Show"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_site_that_refuses_the_browser_too_is_reported_as_needing_verification() {
+    let site = guarded_site().await;
+    let session = FakeSession::refusing();
+    let registry = PluginRegistry::open(scratch_dir("refused"), options(session.clone()));
+    registry.add_repo(&site.url("/index.json")).await.unwrap();
+    let manager = manager(&registry);
+
+    let failure = manager
+        .get_sources_for_episode(6, None, 1.0, "sub", Some("Guarded Show".to_string()), Some("guarded"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(failure.contains("guarded: needs verification"), "{}", failure);
+    assert!(!session.asked().is_empty());
+    let key = format!("127.0.0.1:{}", site.addr.port());
+    assert_eq!(anilili_lib::plugins::net::plugins_for_site(&key), ["guarded"]);
+
+    // Without a session at all the plugin's failure is still named for what it is.
+    let plain = PluginRegistry::open(scratch_dir("nosession"), options(Arc::new(NoSession)));
+    plain.add_repo(&site.url("/index.json")).await.unwrap();
+    let blocked = self::manager(&plain)
+        .get_sources_for_episode(6, None, 1.0, "sub", Some("Guarded Show".to_string()), None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(blocked.contains("guarded: blocked by anti-bot check"), "{}", blocked);
+}

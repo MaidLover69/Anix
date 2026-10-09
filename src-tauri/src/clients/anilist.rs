@@ -1,7 +1,9 @@
+use crate::clients::app_settings;
 use crate::error::AppError;
 use crate::models::{AiringEntry, CoverImage, Media, MediaTitle};
-use reqwest::Client;
-use serde_json::json;
+use reqwest::header::RETRY_AFTER;
+use reqwest::{Client, StatusCode};
+use serde_json::{json, Value};
 
 pub const ANILIST_GRAPHQL_URL: &str = "https://graphql.anilist.co";
 
@@ -140,13 +142,247 @@ query ($id: Int) {
 }
 "#;
 
+/// The facts about an anime that provider search results are matched against.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MediaHint {
+    pub id_mal: Option<i64>,
+    /// Romaji first, then English, then synonyms.
+    pub titles: Vec<String>,
+    pub english: Option<String>,
+    pub year: Option<i32>,
+    pub episodes: Option<i32>,
+    pub format: Option<String>,
+}
+
+const MEDIA_HINT_QUERY: &str = r#"
+query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+        idMal
+        title {
+            romaji
+            english
+        }
+        synonyms
+        seasonYear
+        startDate {
+            year
+        }
+        episodes
+        format
+    }
+}
+"#;
+
+pub fn parse_media_hint(media: &Value) -> MediaHint {
+    let mut titles: Vec<String> = Vec::new();
+    let mut push = |value: &Value| {
+        if let Some(title) = value.as_str().map(str::trim).filter(|t| !t.is_empty()) {
+            if !titles.iter().any(|t| t.eq_ignore_ascii_case(title)) {
+                titles.push(title.to_string());
+            }
+        }
+    };
+    push(&media["title"]["romaji"]);
+    push(&media["title"]["english"]);
+    if let Some(synonyms) = media["synonyms"].as_array() {
+        for synonym in synonyms.iter().take(6) {
+            push(synonym);
+        }
+    }
+
+    MediaHint {
+        id_mal: media["idMal"].as_i64(),
+        titles,
+        english: media["title"]["english"]
+            .as_str()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(String::from),
+        year: media["seasonYear"]
+            .as_i64()
+            .or_else(|| media["startDate"]["year"].as_i64())
+            .map(|y| y as i32),
+        episodes: media["episodes"].as_i64().map(|e| e as i32),
+        format: media["format"].as_str().map(String::from),
+    }
+}
+
+pub async fn fetch_media_hint(client: &Client, id: i64) -> Result<MediaHint, AppError> {
+    let body = json!({ "query": MEDIA_HINT_QUERY, "variables": { "id": id } });
+    let data = post_graphql(client, &body, None).await?;
+    let media = &data["Media"];
+    if media.is_null() {
+        return Err(AppError::Parse(format!("Anime with ID {} not found", id)));
+    }
+    Ok(parse_media_hint(media))
+}
+
+fn first_graphql_error(json: &Value) -> Option<(String, Option<u64>)> {
+    let first = json.get("errors")?.as_array()?.first()?;
+    let message = first.get("message").and_then(Value::as_str).unwrap_or("unknown error");
+    Some((message.to_string(), first.get("status").and_then(Value::as_u64)))
+}
+
+/// Turns an AniList HTTP status and body into the `data` object or the error they describe:
+/// 429 is a rate limit, 401 (or a GraphQL "Invalid token") an auth failure, any other failing
+/// status or a GraphQL `errors` array without data a network error carrying AniList's message.
+pub fn interpret_graphql_response(
+    status: u16,
+    retry_after_s: Option<u64>,
+    body: &str,
+) -> Result<Value, AppError> {
+    if status == StatusCode::TOO_MANY_REQUESTS.as_u16() {
+        return Err(AppError::RateLimited {
+            retry_after_s: retry_after_s.unwrap_or(60),
+        });
+    }
+
+    let json: Option<Value> = serde_json::from_str(body).ok();
+    let graphql_error = json.as_ref().and_then(first_graphql_error);
+
+    if let Some((message, error_status)) = &graphql_error {
+        if *error_status == Some(429) {
+            return Err(AppError::RateLimited {
+                retry_after_s: retry_after_s.unwrap_or(60),
+            });
+        }
+        if status == 401 || *error_status == Some(401) || message.eq_ignore_ascii_case("Invalid token") {
+            return Err(AppError::AuthRequired);
+        }
+    } else if status == 401 {
+        return Err(AppError::AuthRequired);
+    }
+
+    if !(200..300).contains(&status) {
+        // A missing record is reported as HTTP 404 with a null field; let the caller see it.
+        if status == 404 {
+            if let Some(data) = json.as_ref().and_then(|j| j.get("data")).filter(|d| d.is_object()) {
+                return Ok(data.clone());
+            }
+        }
+        return Err(match graphql_error {
+            Some((message, _)) => AppError::Network(format!("AniList HTTP {}: {}", status, message)),
+            None => AppError::Network(format!("AniList HTTP {}", status)),
+        });
+    }
+
+    let json = json.ok_or_else(|| AppError::Parse("AniList sent invalid JSON".to_string()))?;
+    match json.get("data") {
+        Some(data) if data.is_object() => Ok(data.clone()),
+        _ => Err(match graphql_error {
+            Some((message, _)) => AppError::Network(format!("AniList error: {}", message)),
+            None => AppError::Parse("AniList response has no data".to_string()),
+        }),
+    }
+}
+
+/// Posts a GraphQL request to AniList and returns its `data` object.
+pub async fn post_graphql(client: &Client, body: &Value, token: Option<&str>) -> Result<Value, AppError> {
+    post_graphql_to(client, ANILIST_GRAPHQL_URL, body, token).await
+}
+
+async fn post_graphql_to(
+    client: &Client,
+    url: &str,
+    body: &Value,
+    token: Option<&str>,
+) -> Result<Value, AppError> {
+    let mut request = client.post(url).json(body);
+    if let Some(token) = token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+    let response = request.send().await?;
+    let status = response.status().as_u16();
+    let retry_after_s = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    let text = response.text().await?;
+    interpret_graphql_response(status, retry_after_s, &text)
+}
+
+/// The viewer's list entry for one anime.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ListEntryState {
+    pub status: String,
+    pub progress: i32,
+}
+
+/// What list sync needs to know about one anime; `entry` is only filled for a signed-in request.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MediaListContext {
+    pub id_mal: Option<i32>,
+    pub episodes: Option<i32>,
+    /// AniList `MediaStatus`: FINISHED, RELEASING, NOT_YET_RELEASED, CANCELLED, HIATUS.
+    pub media_status: Option<String>,
+    pub entry: Option<ListEntryState>,
+}
+
+const MEDIA_LIST_CONTEXT_QUERY: &str = r#"
+query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+        idMal
+        episodes
+        status
+        mediaListEntry {
+            id
+            status
+            progress
+        }
+    }
+}
+"#;
+
+pub fn parse_media_list_context(media: &Value) -> MediaListContext {
+    let entry = &media["mediaListEntry"];
+    MediaListContext {
+        id_mal: media["idMal"].as_i64().map(|v| v as i32),
+        episodes: media["episodes"].as_i64().map(|v| v as i32),
+        media_status: media["status"].as_str().map(String::from),
+        entry: entry["status"].as_str().map(|status| ListEntryState {
+            status: status.to_string(),
+            progress: entry["progress"].as_i64().unwrap_or(0) as i32,
+        }),
+    }
+}
+
 pub struct AniListClient {
     client: Client,
+    url: String,
 }
 
 impl AniListClient {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self::with_base_url(client, ANILIST_GRAPHQL_URL)
+    }
+
+    /// A client for another GraphQL endpoint (tests point it at a local server).
+    pub fn with_base_url(client: Client, url: &str) -> Self {
+        Self {
+            client,
+            url: url.to_string(),
+        }
+    }
+
+    async fn graphql(&self, body: &Value, token: Option<&str>) -> Result<Value, AppError> {
+        post_graphql_to(&self.client, &self.url, body, token).await
+    }
+
+    /// MAL id, episode count and airing status of one anime, plus the viewer's list entry when
+    /// `access_token` is given. `None` when AniList has no such anime.
+    pub async fn list_context(
+        &self,
+        access_token: Option<&str>,
+        media_id: i32,
+    ) -> Result<Option<MediaListContext>, AppError> {
+        let body = json!({ "query": MEDIA_LIST_CONTEXT_QUERY, "variables": { "id": media_id } });
+        let data = self.graphql(&body, access_token).await?;
+        let media = &data["Media"];
+        if media.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(parse_media_list_context(media)))
     }
 
     pub async fn fetch_media_list(
@@ -156,9 +392,9 @@ impl AniListClient {
     ) -> Result<Vec<Media>, AppError> {
         let query = format!(
             r#"
-            query ($sort: [MediaSort], $perPage: Int) {{
+            query ($sort: [MediaSort], $perPage: Int, $isAdult: Boolean) {{
                 Page(perPage: $perPage) {{
-                    media(sort: $sort, type: ANIME) {{
+                    media(sort: $sort, type: ANIME, isAdult: $isAdult) {{
                         {}
                     }}
                 }}
@@ -167,32 +403,20 @@ impl AniListClient {
             MEDIA_FRAGMENT
         );
 
-        let body = json!({
-            "query": query,
-            "variables": {
-                "sort": [sort],
-                "perPage": per_page
-            }
-        });
-
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .json(&body)
-            .send()
-            .await?;
-
-        if !res.status().is_success() {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            return Err(AppError::Parse(format!(
-                "AniList API returned error status {}: {}",
-                status, text
-            )));
+        let mut variables = serde_json::Map::new();
+        variables.insert("sort".to_string(), json!([sort]));
+        variables.insert("perPage".to_string(), json!(per_page));
+        if app_settings::current().hide_adult_content {
+            variables.insert("isAdult".to_string(), json!(false));
         }
 
-        let json_val: serde_json::Value = res.json().await?;
-        let media_arr = json_val["data"]["Page"]["media"]
+        let body = json!({
+            "query": query,
+            "variables": variables
+        });
+
+        let data = self.graphql(&body, None).await?;
+        let media_arr = data["Page"]["media"]
             .as_array()
             .ok_or_else(|| AppError::Parse("Invalid media array response".to_string()))?;
 
@@ -217,9 +441,9 @@ impl AniListClient {
     ) -> Result<Vec<Media>, AppError> {
         let gql_query = format!(
             r#"
-            query ($page: Int, $perPage: Int, $search: String, $genre_in: [String], $format: MediaFormat, $status: MediaStatus, $sort: [MediaSort]) {{
+            query ($page: Int, $perPage: Int, $search: String, $genre_in: [String], $format: MediaFormat, $status: MediaStatus, $sort: [MediaSort], $isAdult: Boolean) {{
                 Page(page: $page, perPage: $perPage) {{
-                    media(search: $search, genre_in: $genre_in, format: $format, status: $status, sort: $sort, type: ANIME) {{
+                    media(search: $search, genre_in: $genre_in, format: $format, status: $status, sort: $sort, type: ANIME, isAdult: $isAdult) {{
                         {}
                     }}
                 }}
@@ -252,21 +476,17 @@ impl AniListClient {
         }
         let sort_val = sort.unwrap_or_else(|| "POPULARITY_DESC".to_string());
         variables.insert("sort".to_string(), json!([sort_val]));
+        if app_settings::current().hide_adult_content {
+            variables.insert("isAdult".to_string(), json!(false));
+        }
 
         let body = json!({
             "query": gql_query,
             "variables": variables
         });
 
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .json(&body)
-            .send()
-            .await?;
-
-        let json_val: serde_json::Value = res.json().await?;
-        let media_arr = json_val["data"]["Page"]["media"]
+        let data = self.graphql(&body, None).await?;
+        let media_arr = data["Page"]["media"]
             .as_array()
             .ok_or_else(|| AppError::Parse("Invalid search media array response".to_string()))?;
 
@@ -287,15 +507,8 @@ impl AniListClient {
             }
         });
 
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .json(&body)
-            .send()
-            .await?;
-
-        let json_val: serde_json::Value = res.json().await?;
-        let media_obj = &json_val["data"]["Media"];
+        let data = self.graphql(&body, None).await?;
+        let media_obj = &data["Media"];
         if media_obj.is_null() {
             return Err(AppError::Parse(format!("Anime with ID {} not found", id)));
         }
@@ -324,16 +537,8 @@ impl AniListClient {
         "#;
 
         let body = json!({ "query": query });
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .json(&body)
-            .send()
-            .await?;
-
-        let json_val: serde_json::Value = res.json().await?;
-        let viewer_val = &json_val["data"]["Viewer"];
+        let data = self.graphql(&body, Some(access_token)).await?;
+        let viewer_val = &data["Viewer"];
         if viewer_val.is_null() {
             return Err(AppError::Parse("Viewer query returned null".to_string()));
         }
@@ -410,25 +615,22 @@ impl AniListClient {
             "variables": variables
         });
 
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .json(&body)
-            .send()
-            .await?;
-
-        let json_val: serde_json::Value = res.json().await?;
-        let lists = json_val["data"]["MediaListCollection"]["lists"]
+        let data = self.graphql(&body, Some(access_token)).await?;
+        let lists = data["MediaListCollection"]["lists"]
             .as_array()
             .cloned()
             .unwrap_or_default();
 
         let mut result = Vec::new();
+        // An entry that is also on a custom list is returned once per list.
+        let mut seen = std::collections::HashSet::new();
         for list in lists {
             if let Some(entries) = list["entries"].as_array() {
                 for item in entries {
                     let entry_id = item["id"].as_i64().unwrap_or(0) as i32;
+                    if !seen.insert(entry_id) {
+                        continue;
+                    }
                     let media_id = item["mediaId"].as_i64().unwrap_or(0) as i32;
                     let progress = item["progress"].as_i64().unwrap_or(0) as i32;
                     let score = item["score"].as_f64().unwrap_or(0.0);
@@ -503,16 +705,8 @@ impl AniListClient {
             "variables": variables
         });
 
-        let res = self
-            .client
-            .post(ANILIST_GRAPHQL_URL)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .json(&body)
-            .send()
-            .await?;
-
-        let json_val: serde_json::Value = res.json().await?;
-        let entry_val = &json_val["data"]["SaveMediaListEntry"];
+        let data = self.graphql(&body, Some(access_token)).await?;
+        let entry_val = &data["SaveMediaListEntry"];
         if entry_val.is_null() {
             return Err(AppError::Parse("SaveMediaListEntry returned null".to_string()));
         }
@@ -565,12 +759,14 @@ impl AniListClient {
                         format
                         duration
                         averageScore
+                        isAdult
                     }
                 }
             }
         }
         "#;
 
+        let hide_adult = app_settings::current().hide_adult_content;
         let mut all_entries = Vec::new();
         let mut page = 1;
 
@@ -584,15 +780,8 @@ impl AniListClient {
                 }
             });
 
-            let res = self
-                .client
-                .post(ANILIST_GRAPHQL_URL)
-                .json(&body)
-                .send()
-                .await?;
-
-            let json: serde_json::Value = res.json().await?;
-            let page_data = &json["data"]["Page"];
+            let data = self.graphql(&body, None).await?;
+            let page_data = &data["Page"];
             let schedules = page_data["airingSchedules"]
                 .as_array()
                 .ok_or_else(|| AppError::Parse("Failed to parse airingSchedules".to_string()))?;
@@ -603,6 +792,9 @@ impl AniListClient {
                 let episode = s["episode"].as_i64().unwrap_or(0) as i32;
 
                 let media = &s["media"];
+                if hide_adult && media["isAdult"].as_bool().unwrap_or(false) {
+                    continue;
+                }
                 let media_id = media["id"].as_i64().unwrap_or(0);
 
                 let title_val = &media["title"];
@@ -706,12 +898,6 @@ pub fn parse_media_json(val: &serde_json::Value) -> Result<Media, AppError> {
         None
     };
 
-    let score_mal = average_score.map(|s| (s as f64) / 10.0);
-    let rating_imdb = average_score.map(|s| {
-        let r = ((s as f64) / 10.0 + 0.1).min(10.0);
-        format!("{:.1}", r)
-    });
-
     Ok(Media {
         id,
         id_mal,
@@ -719,9 +905,10 @@ pub fn parse_media_json(val: &serde_json::Value) -> Result<Media, AppError> {
         title,
         cover_image,
         banner_image,
-        description: description.clone(),
-        synopsis_mal: description.clone(),
-        synopsis_imdb: description,
+        description,
+        // AniList knows neither MAL's nor IMDb's synopsis or score; those stay unset here.
+        synopsis_mal: None,
+        synopsis_imdb: None,
         format,
         season,
         season_year,
@@ -729,8 +916,8 @@ pub fn parse_media_json(val: &serde_json::Value) -> Result<Media, AppError> {
         duration,
         status,
         average_score,
-        score_mal,
-        rating_imdb,
+        score_mal: None,
+        rating_imdb: None,
         mean_score,
         popularity,
         favourites,

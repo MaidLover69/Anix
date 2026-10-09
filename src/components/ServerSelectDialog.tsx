@@ -1,17 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Server,
-  Play,
-  CheckCircle2,
-  X,
-  Sparkles,
-  Volume2,
-  Mic,
-  Zap,
-} from 'lucide-react';
-import { Dialog } from './Dialog';
-import { EpisodeItem as EpisodeItemType, EpisodesResult } from '../types';
+import { Server } from 'lucide-react';
+import { Modal } from './ui/Modal';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { Spinner } from './ui/Spinner';
+import { useStreamingProviders } from '../hooks/usePlugins';
+import { NoPluginsNotice } from './NoPluginsNotice';
+import { watchPath } from '../hooks/watchProgress';
+import type { EpisodeItem as EpisodeItemType, EpisodesResult } from '../types';
+
+type Category = 'sub' | 'dub';
 
 interface ServerSelectDialogProps {
   isOpen: boolean;
@@ -19,9 +17,144 @@ interface ServerSelectDialogProps {
   anilistId: number;
   animeTitle: string;
   episode: EpisodeItemType | null;
+  /** Result of `useEpisodes`: every provider's episode lists. */
   episodesData?: EpisodesResult;
   isLoading?: boolean;
+  /** Shown when the provider lists could not be loaded. */
+  errorMessage?: string | null;
+  /** Audio version selected when the dialog opens. Defaults to sub. */
+  initialCategory?: Category;
+  /** The provider currently playing, marked in the list. */
+  activeProvider?: string | null;
+  /** Called with the choice. Without it the dialog opens the player itself. */
+  onSelectServer?: (provider: string, category: Category) => void;
+  /** Portal target; the player passes the element it shows fullscreen. */
+  container?: HTMLElement | null;
 }
+
+interface ServerListProps {
+  episode: EpisodeItemType;
+  episodesData: EpisodesResult;
+  isLoading: boolean;
+  errorMessage?: string | null;
+  initialCategory: Category;
+  activeProvider?: string | null;
+  onSelect: (provider: string, category: Category) => void;
+  /** Closes the dialog before the app leaves for Settings. */
+  onLeave: () => void;
+}
+
+const ServerList: React.FC<ServerListProps> = ({
+  episode,
+  episodesData,
+  isLoading,
+  errorMessage,
+  initialCategory,
+  activeProvider,
+  onSelect,
+  onLeave,
+}) => {
+  const [category, setCategory] = useState<Category>(initialCategory);
+  const { label: providerLabel, none: noPlugins, installed: installedPlugins } = useStreamingProviders();
+
+  const servers = useMemo(
+    () =>
+      Object.keys(episodesData)
+        .filter((name) =>
+          (episodesData[name]?.[category] ?? []).some(
+            (ep) => Math.abs(ep.number - episode.number) < 0.01
+          )
+        )
+        .sort((a, b) =>
+          providerLabel(a).localeCompare(providerLabel(b), undefined, { sensitivity: 'base' })
+        ),
+    [episodesData, category, episode.number, providerLabel]
+  );
+
+  if (noPlugins) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-[13px] text-text-secondary">Episode {episode.number}</p>
+        <NoPluginsNotice
+          installed={installedPlugins}
+          detail="Servers come from streaming plugins. Add or turn one on in Settings to see them here."
+          onOpenSettings={onLeave}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="min-w-0 truncate text-[13px] text-text-secondary">
+          Episode {episode.number}
+          {episode.title && !/^episode\s+[\d.]+$/i.test(episode.title.trim())
+            ? ` · ${episode.title}`
+            : ''}
+        </p>
+        <SegmentedControl
+          size="sm"
+          aria-label="Audio version"
+          value={category}
+          onChange={setCategory}
+          options={[
+            { value: 'sub', label: 'Sub' },
+            { value: 'dub', label: 'Dub' },
+          ]}
+        />
+      </div>
+
+      <div className="flex max-h-72 flex-col gap-1 overflow-y-auto pr-1">
+        {isLoading ? (
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <Spinner size="lg" label="Loading servers" className="text-accent-300" />
+            <p className="text-[13px] text-text-secondary">
+              Asking every provider for this episode. This can take a while.
+            </p>
+          </div>
+        ) : servers.length === 0 ? (
+          <div className="flex flex-col items-center gap-1 py-10 text-center">
+            <Server aria-hidden="true" className="mb-2 h-6 w-6 text-text-muted" />
+            <p className="text-[13px] font-medium text-text-primary">
+              {errorMessage
+                ? 'The server list could not be loaded'
+                : `No server lists this episode in ${category === 'dub' ? 'dub' : 'sub'}`}
+            </p>
+            <p className="max-w-sm break-words text-xs text-text-muted select-text">
+              {errorMessage || 'Try the other audio version.'}
+            </p>
+          </div>
+        ) : (
+          servers.map((name, index) => {
+            const current = name === activeProvider;
+            return (
+              <button
+                key={name}
+                type="button"
+                data-autofocus={index === 0 ? '' : undefined}
+                onClick={() => onSelect(name, category)}
+                className="flex h-11 flex-shrink-0 items-center justify-between gap-3 rounded-md bg-bg-surface px-3 text-left cursor-pointer transition-colors hover:bg-bg-input"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <Server aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+                  <span className="truncate text-[13px] font-medium text-text-primary">
+                    {providerLabel(name)}
+                  </span>
+                </span>
+                {current && (
+                  <span className="flex-shrink-0 rounded-sm bg-accent-tint px-2 py-0.5 text-[11px] font-semibold text-accent-300">
+                    Playing
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const ServerSelectDialog: React.FC<ServerSelectDialogProps> = ({
   isOpen,
@@ -31,168 +164,41 @@ export const ServerSelectDialog: React.FC<ServerSelectDialogProps> = ({
   episode,
   episodesData = {},
   isLoading = false,
+  errorMessage,
+  initialCategory = 'sub',
+  activeProvider,
+  onSelectServer,
+  container,
 }) => {
   const navigate = useNavigate();
-  const [category, setCategory] = useState<'sub' | 'dub'>('sub');
 
   if (!episode) return null;
 
-  // Extract available servers for this specific episode
-  const availableServers = Object.keys(episodesData)
-    .map((providerName) => {
-      const pData = episodesData[providerName];
-      const subAvailable = pData?.sub?.some(
-        (ep) => Math.abs(ep.number - episode.number) < 0.01
-      );
-      const dubAvailable = pData?.dub?.some(
-        (ep) => Math.abs(ep.number - episode.number) < 0.01
-      );
-
-      return {
-        name: providerName,
-        subAvailable,
-        dubAvailable,
-      };
-    })
-    .filter((s) => (category === 'sub' ? s.subAvailable : s.dubAvailable));
-
-  const handleLaunchServer = (providerName: string) => {
+  const handleSelect = (provider: string, category: Category) => {
     onClose();
-    navigate(
-      `/watch/${anilistId}/${episode.number}?cat=${category}&prov=${encodeURIComponent(
-        providerName
-      )}`
-    );
+    if (onSelectServer) onSelectServer(provider, category);
+    else navigate(watchPath(anilistId, episode.number, category, provider));
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title={`Select Server • Episode ${episode.number}`}>
-      <div className="flex flex-col gap-5 select-none">
-        {/* Header Info */}
-        <div className="flex items-center justify-between p-3 rounded-xl bg-bg-elevated border border-border">
-          <div className="flex flex-col min-w-0 pr-2">
-            <span className="text-xs font-bold text-white truncate">{animeTitle}</span>
-            <span className="text-[11px] text-text-muted mt-0.5">
-              {episode.title || `Episode ${episode.number}`}
-            </span>
-          </div>
-
-          {/* Sub / Dub selector */}
-          <div className="flex items-center p-1 rounded-lg bg-bg-card border border-border flex-shrink-0">
-            <button
-              type="button"
-              onClick={() => setCategory('sub')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
-                category === 'sub'
-                  ? 'bg-accent-500 text-white shadow-sm'
-                  : 'text-text-secondary hover:text-white'
-              }`}
-            >
-              <Volume2 className="w-3 h-3" />
-              <span>SUB</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setCategory('dub')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
-                category === 'dub'
-                  ? 'bg-accent-500 text-white shadow-sm'
-                  : 'text-text-secondary hover:text-white'
-              }`}
-            >
-              <Mic className="w-3 h-3" />
-              <span>DUB</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Server List */}
-        <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="w-8 h-8 rounded-full border-2 border-accent-500 border-t-transparent animate-spin mb-3" />
-              <span className="text-xs font-semibold text-text-primary">
-                Resolving streaming servers, please wait...
-              </span>
-            </div>
-          ) : availableServers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center bg-bg-elevated/50 rounded-xl border border-border">
-              <Server className="w-8 h-8 text-text-muted mb-2 opacity-50" />
-              <span className="text-xs font-semibold text-text-primary">
-                No active servers found for {category.toUpperCase()}
-              </span>
-              <span className="text-[10px] text-text-muted mt-1">
-                Try switching audio between SUB and DUB.
-              </span>
-            </div>
-          ) : (
-            availableServers.map((server, idx) => (
-              <button
-                key={server.name}
-                type="button"
-                onClick={() => handleLaunchServer(server.name)}
-                className="group flex items-center justify-between p-3 rounded-xl bg-bg-elevated hover:bg-bg-input border border-border hover:border-border-focus transition-all duration-200 cursor-pointer text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-accent-tint text-accent-300 border border-border-focus">
-                    <Server className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-white group-hover:text-accent-300 transition-colors">
-                        {server.name}
-                      </span>
-                      {idx === 0 && (
-                        <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-bold border border-emerald-500/30">
-                          <Zap className="w-2.5 h-2.5" /> Recommended
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-text-muted">
-                      HD / Multi-Quality • Adaptive HLS
-                    </span>
-                  </div>
-                </div>
-
-                {(() => {
-                  const miruroMirrors = ['bonk', 'kiwi', 'pewe', 'bee', 'ally', 'moo', 'hop', 'nun', 'bun', 'twin', 'cog', 'telli'];
-                  const isMiruro = miruroMirrors.includes(server.name.toLowerCase());
-                  const subTag = isMiruro ? 's-sub' : 'h-sub';
-                  return (
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider border ${
-                        subTag === 's-sub'
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                      }`}>
-                        {subTag}
-                      </span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-white/5 text-text-secondary">
-                        {category.toUpperCase()}
-                      </span>
-                      <div className="p-1.5 rounded-full bg-accent-500 text-white transform group-hover:scale-110 transition-transform">
-                        <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
-                      </div>
-                    </div>
-                  );
-                })()}
-              </button>
-            ))
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-bg-elevated hover:bg-bg-input text-text-secondary hover:text-white text-xs font-semibold border border-border transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </Dialog>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Choose a server"
+      header={<p className="mt-0.5 truncate text-xs text-text-muted">{animeTitle}</p>}
+      container={container}
+    >
+      <ServerList
+        episode={episode}
+        episodesData={episodesData}
+        isLoading={isLoading}
+        errorMessage={errorMessage}
+        initialCategory={initialCategory}
+        activeProvider={activeProvider}
+        onSelect={handleSelect}
+        onLeave={onClose}
+      />
+    </Modal>
   );
 };
 

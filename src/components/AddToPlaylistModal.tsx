@@ -1,21 +1,11 @@
-import React, { useState } from 'react';
-import {
-  X,
-  Plus,
-  ListPlus,
-  FolderPlus,
-  Check,
-  Music,
-  Tv,
-  Loader2,
-} from 'lucide-react';
-import {
-  usePlaylists,
-  useCreatePlaylist,
-  useAddMultipleToPlaylist,
-} from '../hooks/usePlaylists';
+import React, { useRef, useState } from 'react';
+import { Plus } from 'lucide-react';
+import { Button, ErrorState, Modal, Spinner, errorMessage } from './ui';
+import { usePlaylists, useCreatePlaylist, useAddMultipleToPlaylist } from '../hooks/usePlaylists';
 import { useUIStore } from '../stores/uiStore';
-import type { EpisodeItem, CustomPlaylistItem } from '../types';
+import type { EpisodeItem, CustomPlaylist, CustomPlaylistItem } from '../types';
+import { INPUT_CLASS } from './library/format';
+import { PlaylistCollage } from './library/PlaylistCollage';
 
 interface AddToPlaylistModalProps {
   isOpen: boolean;
@@ -25,7 +15,8 @@ interface AddToPlaylistModalProps {
   seriesTitle: string;
   seriesCover: string | null;
   category?: 'sub' | 'dub';
-  episodes: EpisodeItem[]; // can be 1 or multiple episodes
+  /** One episode or several. */
+  episodes: EpisodeItem[];
 }
 
 export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
@@ -38,234 +29,227 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
   category = 'sub',
   episodes,
 }) => {
-  const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
-  const [isCreatingNew, setIsCreatingNew] = useState(false);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const playlistsQuery = usePlaylists();
+  const playlists = playlistsQuery.data ?? [];
+  const createPlaylist = useCreatePlaylist();
+  const addItems = useAddMultipleToPlaylist();
+  const showToast = useUIStore((state) => state.showToast);
 
-  const { data: playlists = [], isLoading } = usePlaylists();
-  const createPlaylistMutation = useCreatePlaylist();
-  const addItemsMutation = useAddMultipleToPlaylist();
-  const { showToast } = useUIStore();
+  const [formOpen, setFormOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [addingTo, setAddingTo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  const busy = createPlaylist.isPending || addItems.isPending;
+  // `isPending` only changes on the next render, so a ref is what stops a fast double click.
+  const submittingRef = useRef(false);
+  const trimmedName = newName.trim();
+  // With nothing to pick from, the form is the only thing to show.
+  const showForm = formOpen || (playlistsQuery.isSuccess && playlists.length === 0);
 
-  const handleAddEpisodesToPlaylist = async (playlistId: string, playlistTitle: string) => {
+  const episodeSummary =
+    episodes.length === 1
+      ? `${seriesTitle} · Episode ${episodes[0].number}`
+      : `${episodes.length} episodes of ${seriesTitle}`;
+
+  const handleClose = () => {
+    if (!busy) onClose();
+  };
+
+  const addTo = async (playlistId: string, playlistName: string): Promise<boolean> => {
+    setAddingTo(playlistId);
+    // Milliseconds. The sort key is time-based so a later batch always lands after earlier ones.
+    const now = Date.now();
+    const items: CustomPlaylistItem[] = episodes.map((episode, index) => ({
+      id: crypto.randomUUID(),
+      playlist_id: playlistId,
+      anilist_id: anilistId,
+      mal_id: malId ?? null,
+      episode_num: episode.number,
+      episode_title: episode.title || null,
+      series_title: seriesTitle,
+      series_cover: seriesCover,
+      category,
+      sort_order: now + index,
+      added_at: now,
+    }));
+
     try {
-      const now = Math.floor(Date.now() / 1000);
-      const items: CustomPlaylistItem[] = episodes.map((ep, idx) => ({
-        id: crypto.randomUUID(),
-        playlist_id: playlistId,
-        anilist_id: anilistId,
-        mal_id: malId ?? null,
-        episode_num: ep.number,
-        episode_title: ep.title || null,
-        series_title: seriesTitle,
-        series_cover: seriesCover,
-        category,
-        sort_order: idx,
-        added_at: now,
-      }));
-
-      await addItemsMutation.mutateAsync({ playlistId, items });
+      await addItems.mutateAsync({ playlistId, items });
       showToast({
         type: 'success',
-        title: `Added ${episodes.length} episode${episodes.length > 1 ? 's' : ''} to "${playlistTitle}"`,
+        title: `Added ${episodes.length} ${episodes.length === 1 ? 'episode' : 'episodes'} to "${playlistName}"`,
       });
       onClose();
-    } catch (err: any) {
-      showToast({
-        type: 'error',
-        title: 'Failed to add to playlist',
-        message: err?.message || String(err),
-      });
+      return true;
+    } catch (err) {
+      setError(`Could not add to "${playlistName}": ${errorMessage(err)}`);
+      return false;
+    } finally {
+      setAddingTo(null);
     }
   };
 
-  const handleCreateAndAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPlaylistName.trim()) return;
+  const handlePick = async (playlistId: string, playlistName: string) => {
+    if (busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setError(null);
+    try {
+      await addTo(playlistId, playlistName);
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const handleCreateAndAdd = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!trimmedName || busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setError(null);
 
     try {
-      const newPlaylist = await createPlaylistMutation.mutateAsync({
-        name: newPlaylistName.trim(),
-        description: newPlaylistDesc.trim() || undefined,
-      });
+      let created: CustomPlaylist;
+      try {
+        created = await createPlaylist.mutateAsync({
+          name: trimmedName,
+          description: newDescription.trim() || undefined,
+        });
+      } catch (err) {
+        setError(`Could not create the playlist: ${errorMessage(err)}`);
+        return;
+      }
 
-      await handleAddEpisodesToPlaylist(newPlaylist.id, newPlaylist.name);
-    } catch (err: any) {
-      showToast({
-        type: 'error',
-        title: 'Failed to create playlist',
-        message: err?.message || String(err),
-      });
+      const added = await addTo(created.id, created.name);
+      if (!added) {
+        // The playlist exists now; it is in the list for another try.
+        setFormOpen(false);
+        setNewName('');
+        setNewDescription('');
+      }
+    } finally {
+      submittingRef.current = false;
     }
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fade-in"
-      onClick={onClose}
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Add to playlist"
+      size="md"
+      header={<p className="mt-1 text-xs text-text-muted truncate">{episodeSummary}</p>}
     >
-      <div
-        className="w-full max-w-md bg-bg-card border border-border rounded-2xl shadow-2xl overflow-hidden animate-scale-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border bg-bg-surface/50">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-accent-500/10 border border-accent-500/20 text-accent-400">
-              <ListPlus className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-text-primary">
-                Add to Custom Playlist
-              </h3>
-              <p className="text-xs text-text-muted truncate max-w-xs">
-                {episodes.length === 1
-                  ? `${seriesTitle} • Ep ${episodes[0].number}`
-                  : `${episodes.length} selected episodes from ${seriesTitle}`}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+      <div className="flex flex-col gap-4">
+        {error && (
+          <p role="alert" className="text-xs text-state-error select-text break-words">
+            {error}
+          </p>
+        )}
 
-        {/* Content */}
-        <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
-          {/* Create new toggle */}
-          {!isCreatingNew ? (
-            <button
-              onClick={() => setIsCreatingNew(true)}
-              className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-accent-500/40 hover:border-accent-500 bg-accent-500/5 hover:bg-accent-500/10 text-accent-300 font-semibold text-sm transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create New Playlist</span>
-            </button>
-          ) : (
-            <form onSubmit={handleCreateAndAdd} className="p-3.5 rounded-xl bg-bg-surface border border-accent-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-accent-400 uppercase tracking-wider">
-                  New Playlist
-                </span>
+        {playlistsQuery.isLoading ? (
+          <div className="flex justify-center py-8">
+            <Spinner size="lg" label="Loading playlists" className="text-text-muted" />
+          </div>
+        ) : playlistsQuery.isError ? (
+          <ErrorState
+            compact
+            title="Could not load your playlists"
+            error={playlistsQuery.error}
+            onRetry={() => playlistsQuery.refetch()}
+          />
+        ) : playlists.length === 0 ? (
+          <p className="text-[13px] text-text-muted">
+            You have no playlists yet. Create one to add {episodes.length === 1 ? 'this episode' : 'these episodes'}.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1 max-h-64 overflow-y-auto -mx-2">
+            {playlists.map((playlist) => (
+              <li key={playlist.id}>
                 <button
                   type="button"
-                  onClick={() => setIsCreatingNew(false)}
-                  className="text-xs text-text-muted hover:text-white"
+                  onClick={() => handlePick(playlist.id, playlist.name)}
+                  disabled={busy}
+                  aria-label={`Add to ${playlist.name}`}
+                  className="flex items-center gap-3 w-full p-2 rounded-md text-left cursor-pointer hover:bg-white/5 transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:-outline-offset-2"
                 >
-                  Cancel
+                  <PlaylistCollage
+                    covers={playlist.covers.slice(0, 1)}
+                    className="w-10 h-10 rounded-md flex-shrink-0"
+                  />
+                  <span className="flex flex-col flex-1 min-w-0">
+                    <span className="text-[13px] font-medium text-text-primary truncate">
+                      {playlist.name}
+                    </span>
+                    <span className="text-xs text-text-muted truncate">
+                      {playlist.item_count} {playlist.item_count === 1 ? 'episode' : 'episodes'}
+                    </span>
+                  </span>
+                  {addingTo === playlist.id ? (
+                    <Spinner size="sm" label="Adding" className="text-text-muted" />
+                  ) : (
+                    <Plus className="w-4 h-4 flex-shrink-0 text-text-muted" aria-hidden="true" />
+                  )}
                 </button>
-              </div>
-              <input
-                type="text"
-                placeholder="Playlist name (e.g., Epic Fights, Road Trip)..."
-                value={newPlaylistName}
-                onChange={(e) => setNewPlaylistName(e.target.value)}
-                autoFocus
-                className="w-full px-3 py-2 text-sm bg-bg-card border border-border rounded-lg text-white focus:outline-none focus:border-accent-500"
-              />
-              <input
-                type="text"
-                placeholder="Description (optional)..."
-                value={newPlaylistDesc}
-                onChange={(e) => setNewPlaylistDesc(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs bg-bg-card border border-border rounded-lg text-white focus:outline-none focus:border-accent-500"
-              />
-              <button
-                type="submit"
-                disabled={!newPlaylistName.trim() || createPlaylistMutation.isPending}
-                className="w-full py-2 px-3 bg-accent-500 hover:bg-accent-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {createPlaylistMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>Create & Add Episodes</span>
-                  </>
-                )}
-              </button>
-            </form>
-          )}
+              </li>
+            ))}
+          </ul>
+        )}
 
-          {/* Existing Playlists */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-text-muted">
-              Existing Playlists ({playlists.length})
-            </h4>
-
-            {isLoading ? (
-              <div className="flex justify-center p-6">
-                <Loader2 className="w-6 h-6 animate-spin text-accent-400" />
-              </div>
-            ) : playlists.length === 0 ? (
-              <div className="text-center p-6 border border-border rounded-xl bg-bg-surface/30">
-                <p className="text-sm text-text-muted">No custom playlists created yet.</p>
-                <p className="text-xs text-text-secondary mt-1">
-                  Create your first playlist above to get started!
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {playlists.map((playlist) => (
-                  <div
-                    key={playlist.id}
-                    onClick={() => handleAddEpisodesToPlaylist(playlist.id, playlist.name)}
-                    className="flex items-center justify-between p-3 rounded-xl border border-border hover:border-accent-500 bg-bg-surface hover:bg-bg-elevated transition-all cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg overflow-hidden bg-bg-elevated border border-border flex items-center justify-center flex-shrink-0">
-                        {playlist.covers && playlist.covers[0] ? (
-                          <img
-                            src={playlist.covers[0]}
-                            alt={playlist.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <Tv className="w-5 h-5 text-text-muted" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <h5 className="text-sm font-semibold text-text-primary group-hover:text-accent-300 truncate">
-                          {playlist.name}
-                        </h5>
-                        <p className="text-[11px] text-text-muted">
-                          {playlist.item_count} episode{playlist.item_count !== 1 ? 's' : ''}
-                          {playlist.description && ` • ${playlist.description}`}
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={addItemsMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg bg-accent-500/10 hover:bg-accent-500 text-accent-300 hover:text-white border border-accent-500/30 text-xs font-bold transition-all flex items-center gap-1 flex-shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-3 border-t border-border bg-bg-surface/30 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-text-secondary hover:text-white hover:bg-bg-elevated transition-colors"
-          >
-            Close
-          </button>
-        </div>
+        {showForm ? (
+          <form onSubmit={handleCreateAndAdd} className="flex flex-col gap-2">
+            <label htmlFor="add-to-playlist-name" className="text-[13px] font-medium text-text-primary">
+              New playlist
+            </label>
+            <input
+              id="add-to-playlist-name"
+              type="text"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              placeholder="Name"
+              maxLength={120}
+              autoFocus
+              data-autofocus
+              disabled={busy}
+              className={INPUT_CLASS}
+            />
+            <input
+              type="text"
+              value={newDescription}
+              onChange={(event) => setNewDescription(event.target.value)}
+              placeholder="Description (optional)"
+              aria-label="Description (optional)"
+              maxLength={500}
+              disabled={busy}
+              className={INPUT_CLASS}
+            />
+            <div className="flex items-center justify-end gap-2 mt-2">
+              {playlists.length > 0 && (
+                <Button variant="ghost" onClick={() => setFormOpen(false)} disabled={busy}>
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" variant="primary" disabled={!trimmedName || busy}>
+                {createPlaylist.isPending
+                  ? 'Creating…'
+                  : addItems.isPending
+                  ? 'Adding…'
+                  : `Create and add ${episodes.length === 1 ? 'episode' : 'episodes'}`}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          !playlistsQuery.isLoading &&
+          !playlistsQuery.isError && (
+            <div>
+              <Button variant="ghost" size="sm" onClick={() => setFormOpen(true)} disabled={busy}>
+                <Plus className="w-4 h-4" aria-hidden="true" />
+                <span>New playlist</span>
+              </Button>
+            </div>
+          )
+        )}
       </div>
-    </div>
+    </Modal>
   );
 };

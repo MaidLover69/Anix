@@ -1,7 +1,20 @@
+use crate::commands::player::{local_file_player_args, resolve_player_bin, sanitized_command};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+// Common episode patterns: " - 01 ", " - 01.", "E01", "EP01", "Episode 01"
+static EPISODE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)(?:[-_]\s*|ep(?:isode)?\.?\s*|e)(\d{1,4}(?:\.\d)?)"#)
+        .expect("Failed to compile episode regex")
+});
+
+// Release groups and tags like [SubsPlease], [Erai-raws], (1080p)
+static RELEASE_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"\[[^\]]+\]|\([^\)]+\)"#).expect("Failed to compile release tag regex")
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalAnimeFile {
@@ -16,16 +29,11 @@ fn parse_episode_and_title(file_name: &str) -> (String, Option<f64>) {
     // Remove extension
     let name = file_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(file_name);
 
-    // Common episode patterns: " - 01 ", " - 01.", "E01", "EP01", "Episode 01"
-    let re_ep = Regex::new(r#"(?i)(?:[-_]\s*|ep(?:isode)?\.?\s*|e)(\d{1,4}(?:\.\d)?)"#).unwrap();
-
-    let episode = re_ep.captures(name).and_then(|caps| {
+    let episode = EPISODE_REGEX.captures(name).and_then(|caps| {
         caps.get(1).and_then(|m| m.as_str().parse::<f64>().ok())
     });
 
-    // Clean title by stripping release groups like [SubsPlease], [Erai-raws], etc.
-    let re_clean = Regex::new(r#"\[[^\]]+\]|\([^\)]+\)"#).unwrap();
-    let cleaned = re_clean.replace_all(name, "").trim().to_string();
+    let cleaned = RELEASE_TAG_REGEX.replace_all(name, "").trim().to_string();
 
     let title = if let Some((t, _)) = cleaned.rsplit_once('-') {
         t.trim().to_string()
@@ -74,27 +82,49 @@ fn scan_dir_recursive(path: &Path, depth: usize, max_depth: usize, results: &mut
 
 #[tauri::command]
 pub async fn scan_local_anime_directory(dir_path: String) -> Result<Vec<LocalAnimeFile>, String> {
-    let path = PathBuf::from(&dir_path);
-    if !path.exists() || !path.is_dir() {
+    // Absolute so every returned file path is absolute, whatever the user typed. Symlinks are
+    // kept as they are: players look for subtitles next to the name the library shows.
+    let path = std::path::absolute(&dir_path)
+        .map_err(|_| format!("Directory does not exist: {}", dir_path))?;
+    if !path.is_dir() {
         return Err(format!("Directory does not exist: {}", dir_path));
     }
 
-    let mut files = Vec::new();
-    scan_dir_recursive(&path, 0, 4, &mut files);
-    files.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-    Ok(files)
+    tokio::task::spawn_blocking(move || {
+        let mut files = Vec::new();
+        scan_dir_recursive(&path, 0, 4, &mut files);
+        files.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        files
+    })
+    .await
+    .map_err(|e| format!("Directory scan failed: {}", e))
+}
+
+/// Resolves a path from the frontend to an absolute path of a regular file, so it reaches the
+/// player as a file operand (it starts with `/`) and can never be read as a command-line
+/// option. Symlink names are kept; the target must be a regular file.
+pub fn resolve_local_media_file(file_path: &str) -> Result<PathBuf, String> {
+    if file_path.is_empty() {
+        return Err("No file was given".to_string());
+    }
+    let absolute = std::path::absolute(file_path)
+        .map_err(|_| format!("File does not exist: {}", file_path))?;
+    if !absolute.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    if !absolute.is_file() {
+        return Err(format!("Not a regular file: {}", file_path));
+    }
+    Ok(absolute)
 }
 
 #[tauri::command]
 pub async fn open_file_in_player(file_path: String, player: Option<String>) -> Result<(), String> {
-    let p = PathBuf::from(&file_path);
-    if !p.exists() {
-        return Err(format!("File does not exist: {}", file_path));
-    }
+    let player_bin = resolve_player_bin(player.as_deref())?;
+    let file = resolve_local_media_file(&file_path)?;
 
-    let player_bin = player.unwrap_or_else(|| "mpv".to_string());
-    let mut cmd = std::process::Command::new(&player_bin);
-    cmd.arg(&file_path);
+    let mut cmd = sanitized_command(player_bin);
+    cmd.args(local_file_player_args(player_bin, &file));
 
     match cmd.spawn() {
         Ok(_) => Ok(()),

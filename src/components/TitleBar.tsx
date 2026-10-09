@@ -1,8 +1,25 @@
 import React, { useEffect, useState } from 'react';
+import { Minus, Square, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { Window as TauriWindow } from '@tauri-apps/api/window';
 
+type WindowAction = 'minimize' | 'toggleMaximize' | 'close';
+
+async function runWindowAction(action: WindowAction) {
+  try {
+    const appWindow: TauriWindow = getCurrentWindow();
+    await appWindow[action]();
+  } catch (err) {
+    console.error(`[TitleBar] window.${action}() failed:`, err);
+  }
+}
+
+const CONTROL_CLASS =
+  'flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-white/10 hover:text-text-primary';
+
+/** Custom title bar; the window is created without native decorations. */
 export const TitleBar: React.FC = () => {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -12,62 +29,39 @@ export const TitleBar: React.FC = () => {
 
   if (isFullscreen) return null;
 
-  const handleMinimize = () => {
-    try {
-      getCurrentWindow().minimize();
-    } catch (_) {}
-  };
-
-  const handleToggleMaximize = () => {
-    try {
-      getCurrentWindow().toggleMaximize();
-    } catch (_) {}
-  };
-
-  const handleClose = () => {
-    try {
-      getCurrentWindow().close();
-    } catch (_) {}
-  };
-
   return (
-    <div
+    <header
       data-tauri-drag-region
-      className="h-8 w-full fixed top-0 left-0 z-50 flex items-center justify-between px-3 bg-[#050506] border-b border-white/5 select-none"
-      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      className="relative z-[70] flex h-8 w-full flex-shrink-0 items-center justify-between bg-bg-deepest pl-3 select-none"
     >
-      <div className="flex items-center gap-2 pointer-events-none">
-        <span className="text-xs text-[--text-muted] font-semibold tracking-wider">Anilili</span>
-      </div>
-      <div
-        className="flex items-center gap-2"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+      <span className="pointer-events-none text-xs font-medium text-text-muted">Anilili</span>
+
+      <div className="flex items-center">
         <button
           type="button"
-          onClick={handleMinimize}
-          className="p-1 text-xs text-text-muted hover:text-white transition-colors"
+          onClick={() => runWindowAction('minimize')}
           aria-label="Minimize"
+          className={CONTROL_CLASS}
         >
-          ─
+          <Minus aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
-          onClick={handleToggleMaximize}
-          className="p-1 text-xs text-text-muted hover:text-white transition-colors"
-          aria-label="Maximize"
+          onClick={() => runWindowAction('toggleMaximize')}
+          aria-label="Maximize or restore"
+          className={CONTROL_CLASS}
         >
-          □
+          <Square aria-hidden="true" className="h-3 w-3" />
         </button>
         <button
           type="button"
-          onClick={handleClose}
-          className="p-1 text-xs text-text-muted hover:text-red-400 transition-colors"
+          onClick={() => runWindowAction('close')}
           aria-label="Close"
+          className="flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-state-error hover:text-bg-deepest"
         >
-          ×
+          <X aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
       </div>
-    </div>
+    </header>
   );
 };

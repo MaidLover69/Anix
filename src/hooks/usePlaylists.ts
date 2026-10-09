@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { CustomPlaylist, CustomPlaylistItem, ExternalPlaylistItem } from '../types';
+import type {
+  CustomPlaylist,
+  CustomPlaylistItem,
+  ExternalPlaylistItem,
+  SourcesResult,
+} from '../types';
+import { errorMessage } from '../components/ui/ErrorState';
 
 export function usePlaylists() {
   return useQuery<CustomPlaylist[]>({
@@ -26,7 +32,10 @@ export function useCreatePlaylist() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ name, description }: { name: string; description?: string }) => {
-      return await invoke<CustomPlaylist>('create_playlist', { name, description });
+      return await invoke<CustomPlaylist>('create_playlist', {
+        name,
+        description: description ?? null,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
@@ -34,26 +43,14 @@ export function useCreatePlaylist() {
   });
 }
 
-export function useAddToPlaylist() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (item: CustomPlaylistItem) => {
-      return await invoke('add_to_playlist', { item });
-    },
-    onSuccess: (_, item) => {
-      queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
-      queryClient.invalidateQueries({ queryKey: ['customPlaylistItems', item.playlist_id] });
-    },
-  });
-}
-
 export function useAddMultipleToPlaylist() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ playlistId, items }: { playlistId: string; items: CustomPlaylistItem[] }) => {
-      return await invoke('add_multiple_to_playlist', { items });
+    mutationFn: async ({ items }: { playlistId: string; items: CustomPlaylistItem[] }) => {
+      await invoke('add_multiple_to_playlist', { items });
     },
-    onSuccess: (_, { playlistId }) => {
+    // Also after a failure: the list on screen must match what the backend kept.
+    onSettled: (_data, _error, { playlistId }) => {
       queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
       queryClient.invalidateQueries({ queryKey: ['customPlaylistItems', playlistId] });
     },
@@ -63,10 +60,10 @@ export function useAddMultipleToPlaylist() {
 export function useRemoveFromPlaylist() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ itemId, playlistId }: { itemId: string; playlistId: string }) => {
-      return await invoke('remove_from_playlist', { itemId });
+    mutationFn: async ({ itemId }: { itemId: string; playlistId: string }) => {
+      await invoke('remove_from_playlist', { itemId });
     },
-    onSuccess: (_, { playlistId }) => {
+    onSuccess: (_data, { playlistId }) => {
       queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
       queryClient.invalidateQueries({ queryKey: ['customPlaylistItems', playlistId] });
     },
@@ -77,12 +74,85 @@ export function useDeletePlaylist() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (playlistId: string) => {
-      return await invoke('delete_playlist', { playlistId });
+      await invoke('delete_playlist', { playlistId });
     },
-    onSuccess: () => {
+    onSuccess: (_data, playlistId) => {
+      queryClient.setQueryData<CustomPlaylist[]>(['customPlaylists'], (current) =>
+        current?.filter((playlist) => playlist.id !== playlistId)
+      );
       queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
+      queryClient.removeQueries({ queryKey: ['customPlaylistItems', playlistId] });
     },
   });
+}
+
+export interface ResolvedPlaylist {
+  resolved: ExternalPlaylistItem[];
+  failures: { item: CustomPlaylistItem; reason: string }[];
+  cancelled: boolean;
+}
+
+/**
+ * Resolves a stream for every playlist item, in order. Sources are looked up by anime id and
+ * episode number, so no episode list is needed. Items that cannot be resolved are reported
+ * rather than dropped silently.
+ */
+export async function resolvePlaylistStreams(
+  items: CustomPlaylistItem[],
+  options: {
+    /** A `get_all_episodes` provider key, or null / 'auto' to try every provider. */
+    provider: string | null;
+    onProgress?: (done: number, total: number) => void;
+    isCancelled?: () => boolean;
+  }
+): Promise<ResolvedPlaylist> {
+  const result: ResolvedPlaylist = { resolved: [], failures: [], cancelled: false };
+  const preferred = options.provider && options.provider !== 'auto' ? options.provider : null;
+
+  for (let index = 0; index < items.length; index++) {
+    if (options.isCancelled?.()) {
+      result.cancelled = true;
+      break;
+    }
+    const item = items[index];
+    options.onProgress?.(index, items.length);
+
+    try {
+      const request = {
+        anilistId: item.anilist_id,
+        malId: item.mal_id ?? null,
+        episodeNumber: item.episode_num,
+        category: item.category === 'dub' ? 'dub' : 'sub',
+        titleRomaji: item.series_title || null,
+      };
+      const fetchSources = (provider: string | null) =>
+        invoke<SourcesResult>('get_episode_sources', { ...request, provider });
+      // The preferred provider goes first; an item it cannot serve still gets the others.
+      const sources = preferred
+        ? await fetchSources(preferred).catch(() => fetchSources(null))
+        : await fetchSources(null);
+
+      const stream = sources?.streams?.[0];
+      if (!stream) {
+        result.failures.push({ item, reason: 'No stream returned' });
+        continue;
+      }
+      result.resolved.push({
+        url: stream.url,
+        title: `${item.series_title} - Episode ${item.episode_num}`,
+        referer: stream.referer ?? stream.headers?.Referer ?? stream.headers?.referer ?? null,
+      });
+    } catch (err) {
+      result.failures.push({
+        item,
+        reason: errorMessage(err),
+      });
+    }
+  }
+
+  if (options.isCancelled?.()) result.cancelled = true;
+  options.onProgress?.(items.length, items.length);
+  return result;
 }
 
 export async function launchPlaylistExternalPlayer(

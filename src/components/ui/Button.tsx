@@ -1,0 +1,55 @@
+import React from 'react';
+import clsx from 'clsx';
+
+export type ButtonVariant = 'primary' | 'secondary' | 'neutral' | 'ghost' | 'danger';
+export type ButtonSize = 'sm' | 'md';
+
+type NativeButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label'>;
+
+interface CommonProps extends NativeButtonProps {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+}
+
+type LabelledButtonProps = CommonProps & { icon?: false; 'aria-label'?: string };
+// An icon-only button has no visible text, so it must be named for screen readers.
+type IconButtonProps = CommonProps & { icon: true; 'aria-label': string };
+
+export type ButtonProps = LabelledButtonProps | IconButtonProps;
+
+const VARIANT_CLASSES: Record<ButtonVariant, string> = {
+  primary: 'bg-accent-600 hover:bg-accent-700 text-white',
+  secondary: 'bg-accent-tint hover:bg-accent-500/20 text-accent-300 border border-accent-500/30',
+  // A quiet filled button for secondary actions that still need a visible shape.
+  neutral: 'bg-white/[0.08] hover:bg-white/[0.14] text-text-primary',
+  ghost: 'text-text-secondary hover:text-text-primary hover:bg-white/10',
+  danger: 'bg-state-error/15 hover:bg-state-error/25 text-state-error',
+};
+
+const SIZE_CLASSES: Record<ButtonSize, string> = {
+  sm: 'h-8 px-3',
+  md: 'h-9 px-4',
+};
+
+const ICON_SIZE_CLASSES: Record<ButtonSize, string> = {
+  sm: 'h-8 w-8',
+  md: 'h-9 w-9',
+};
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ variant = 'secondary', size = 'md', icon = false, className, type = 'button', ...rest }, ref) => (
+    <button
+      ref={ref}
+      type={type}
+      className={clsx(
+        'inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-md text-[13px] font-medium whitespace-nowrap select-none cursor-pointer transition-colors active:opacity-80 disabled:opacity-40 disabled:pointer-events-none',
+        VARIANT_CLASSES[variant],
+        icon ? ICON_SIZE_CLASSES[size] : SIZE_CLASSES[size],
+        className
+      )}
+      {...rest}
+    />
+  )
+);
+
+Button.displayName = 'Button';

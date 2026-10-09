@@ -42,8 +42,13 @@ jobs:
             librsvg2-dev \
             squashfs-tools \
             rpm \
-            aria2 \
-            libfuse2
+            libfuse2 \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -71,15 +76,14 @@ jobs:
             ${{ runner.os }}-cargo-release-
 
       - name: Build Desktop Artifacts (AppImage, RPM, DEB)
-        run: |
-          npm run build
-          npx @tauri-apps/cli build --bundles appimage,deb,rpm
+        run: npx @tauri-apps/cli build --bundles appimage,deb,rpm
 
       - name: Organize Packages
         id: organize
         run: |
           mkdir -p dist-packages
           find src-tauri/target/release/bundle -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} dist-packages/ \;
+          (cd dist-packages && sha256sum * > SHA256SUMS)
           ls -la dist-packages/
 
       - name: Upload Packaging Artifacts

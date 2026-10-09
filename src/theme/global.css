@@ -3,30 +3,42 @@
 @import "tailwindcss/utilities";
 
 :root {
-  --bg-deepest:     #020203;
-  --bg-page:        #050506;
-  --bg-card:        #0e0e10;
-  --bg-elevated:    #141416;
-  --bg-input:       #1a1a1d;
-  --border:         rgba(255, 255, 255, 0.07);
+  /* Solid colours are RGB channels (see tailwind.config.js) so opacity modifiers work. */
+  --bg-deepest:     6 6 8;
+  --bg-page:        10 10 13;
+  --bg-card:        18 18 23;
+  --bg-elevated:    26 26 33;
+  --bg-surface:     30 30 38;
+  --bg-input:       34 34 43;
+  --border-alpha:   0.08;
+  --border:         rgb(255 255 255 / var(--border-alpha));
+  --border-strong:  rgba(255, 255, 255, 0.14);
   --border-focus:   rgba(137, 121, 242, 0.5);
-  --accent-900:     #3b1fa8;
-  --accent-700:     #5a38d4;
-  --accent-500:     #8979F2;
-  --accent-300:     #a99ef5;
-  --accent-100:     #cfc9fb;
+  --accent-950:     36 18 107;
+  --accent-900:     59 31 168;
+  --accent-700:     90 56 212;
+  --accent-600:     109 90 224;
+  --accent-500:     137 121 242;
+  --accent-400:     154 140 244;
+  --accent-300:     169 158 245;
+  --accent-200:     188 179 248;
+  --accent-100:     207 201 251;
   --accent-tint:    rgba(137, 121, 242, 0.12);
   --text-primary:   #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-muted:     rgba(255, 255, 255, 0.38);
-  --text-disabled:  rgba(255, 255, 255, 0.2);
-  --success:        #1d9e75;
-  --warning:        #ba7517;
-  --error:          #d85a30;
-  --radius-sm:      4px;
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-muted:     rgba(255, 255, 255, 0.56);
+  --text-disabled:  rgba(255, 255, 255, 0.34);
+  --success:        52 199 154;
+  --warning:        224 160 58;
+  --error:          240 128 90;
+  --radius-sm:      6px;
   --radius-md:      8px;
-  --radius-lg:      12px;
-  --radius-xl:      16px;
+  --radius-lg:      10px;
+  --radius-xl:      12px;
+  --radius-2xl:     16px;
+
+  /* Native pieces (number steppers, media controls, textarea scrollbars) follow the dark theme. */
+  color-scheme: dark;
 }
 
 * {
@@ -36,9 +48,9 @@
 }
 
 body {
-  background-color: var(--bg-page);
+  background-color: rgb(var(--bg-page));
   color: var(--text-primary);
-  font-family: "Inter", "Noto Sans", system-ui, sans-serif;
+  font-family: "Inter Variable", "Inter", "Noto Sans", system-ui, sans-serif;
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -60,7 +72,11 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(137, 121, 242, 0.5);
+  background: rgba(255, 255, 255, 0.3);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Focus Ring Styling */
@@ -69,8 +85,26 @@ body {
 }
 
 *:focus-visible {
-  outline: 2px solid var(--accent-500);
+  outline: 2px solid rgb(var(--accent-500));
   outline-offset: 2px;
+}
+
+/* Text fields: one ring that hugs the field instead of a border plus a detached outline. */
+:where(input, textarea):focus-visible {
+  outline-offset: -1px;
+}
+
+/* Surfaces that only hold focus for the keyboard trap (dialogs, drawers, menus) are not
+   controls, so they get no ring of their own. */
+[role="dialog"]:focus-visible,
+[role="listbox"]:focus-visible,
+[role="menu"]:focus-visible {
+  outline: none;
+}
+
+::selection {
+  background: rgb(var(--accent-500) / 0.4);
+  color: #ffffff;
 }
 
 /* Shimmer Animation */
@@ -82,28 +116,7 @@ body {
     rgba(255, 255, 255, 0.03) 100%
   );
   background-size: 200% 100%;
-  animation: shimmer 1.8s infinite linear;
-}
-
-/* Glassmorphic Panel */
-.glass-panel {
-  background: rgba(14, 14, 16, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
-}
-
-.glass-modal {
-  background: rgba(10, 10, 12, 0.92);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Gradient Mask for Rails */
-.mask-rail {
-  mask-image: linear-gradient(to right, black 95%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, black 95%, transparent 100%);
+  animation: shimmer 1.5s infinite linear;
 }
 
 /* App-Wide Dark Dropdown & Select Control Styling Fix for Linux WebKitGTK */
@@ -111,9 +124,9 @@ select {
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
   appearance: none !important;
-  background-color: #141416 !important;
+  background-color: rgb(var(--bg-elevated)) !important;
   color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid var(--border-strong) !important;
   border-radius: 8px !important;
   padding: 6px 32px 6px 12px !important;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238979F2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
@@ -130,7 +143,7 @@ select:focus {
 }
 
 option {
-  background-color: #141416 !important;
+  background-color: rgb(var(--bg-elevated)) !important;
   color: #ffffff !important;
   padding: 8px 12px !important;
 }
@@ -140,28 +153,20 @@ option:checked, option:hover {
   color: #ffffff !important;
 }
 
-/* Card Glow Effect */
-.card-hover-glow:hover {
-  box-shadow: 0 0 24px rgba(137, 121, 242, 0.2);
+/* Text that people copy (titles, synopses, errors, paths) opts back in to selection */
+.select-text {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-@keyframes ping-once {
-  0% {
-    transform: scale(0.8);
-    opacity: 0;
-  }
-  50% {
-    transform: scale(1.1);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 0.9;
+/* Respect the OS "reduce motion" setting */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
-
-.animate-ping-once {
-  animation: ping-once 0.4s cubic-bezier(0, 0, 0.2, 1);
-}
-
-

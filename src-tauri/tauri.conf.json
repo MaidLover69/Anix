@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
   "productName": "Anilili",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "io.anilili.linux",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -22,16 +22,37 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": false,
-        "devtools": true
+        "devtools": true,
+        "backgroundColor": "#0a0a0d"
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' https: data: blob:",
+        "media-src": "'self' http://127.0.0.1:* https: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost http://127.0.0.1:*",
+        "font-src": "'self' data:",
+        "frame-src": "https://www.youtube-nocookie.com",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "rpm", "deb"],
+    "targets": [
+      "appimage",
+      "rpm",
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,16 +62,40 @@
     ],
     "linux": {
       "rpm": {
-        "desktopTemplate": "anilili.desktop"
+        "desktopTemplate": "anilili.desktop",
+        "depends": [
+          "webkit2gtk4.1",
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good",
+          "gstreamer1-plugins-bad-free"
+        ]
       },
       "deb": {
         "desktopTemplate": "anilili.desktop",
         "depends": [
-          "libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37",
-          "libssl3 | libssl1.1",
+          "libwebkit2gtk-4.1-0",
+          "libssl3",
           "libgtk-3-0",
           "libayatana-appindicator3-1 | libappindicator3-1",
-          "librsvg2-2"
+          "librsvg2-2",
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-bad",
+          "gstreamer1.0-libav"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
+    "category": "Video",
+    "shortDescription": "Anime streaming and library app"
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "anilili"
         ]
       }
     }

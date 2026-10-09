@@ -1,343 +1,151 @@
-use anilili_lib::models::{Category, EpisodeItem};
-use anilili_lib::providers::animeheaven::AnimeHeavenProvider;
-use anilili_lib::providers::animepahe::AnimePaheProvider;
-use anilili_lib::providers::gojo::GojoWtfProvider;
-use anilili_lib::providers::miruro::MiruroProvider;
-use anilili_lib::providers::manager::ProviderManager;
-use anilili_lib::providers::AnimeProvider;
-use std::time::Duration;
+//! Helpers shared by every streaming source: episode numbers, title matching and stream headers.
+//! Nothing here touches the network.
+
+use anilili_lib::models::{AnimeQuery, Category};
+use anilili_lib::providers::common::{fmt_ep, json_id, json_number};
+use anilili_lib::providers::manager::{stream_header_map, ProviderManager, NO_PLUGIN_MESSAGE};
+use anilili_lib::providers::matching::{
+    match_score, normalize_title, pick_best, title_similarity, Candidate, MIN_MATCH_SCORE,
+};
+use serde_json::json;
+
+fn query(title: &str) -> AnimeQuery {
+    AnimeQuery::new(1, Some(1), Some(title))
+}
+
+// ---------------------------------------------------------------- basics
 
 #[test]
-fn test_provider_tests_category_conversion() {
+fn category_conversion() {
     assert_eq!(Category::from("sub"), Category::Sub);
     assert_eq!(Category::from("SUB"), Category::Sub);
     assert_eq!(Category::from("dub"), Category::Dub);
     assert_eq!(Category::from("DUB"), Category::Dub);
     assert_eq!(Category::from("unknown"), Category::Sub);
-
     assert_eq!(Category::Sub.as_str(), "sub");
     assert_eq!(Category::Dub.as_str(), "dub");
 }
 
 #[test]
-fn test_provider_tests_manager_initialization() {
-    let manager = ProviderManager::new();
-    assert_eq!(manager.provider_names().len(), 25);
-    assert!(manager.provider_names().contains(&"ally"));
-    assert!(manager.provider_names().contains(&"kiwi"));
-    assert!(manager.provider_names().contains(&"bonk"));
-    assert!(manager.provider_names().contains(&"pewe"));
-    assert!(manager.provider_names().contains(&"bee"));
-    assert!(manager.provider_names().contains(&"moo"));
-    assert!(manager.provider_names().contains(&"hop"));
-    assert!(manager.provider_names().contains(&"Senshi"));
-    assert!(manager.provider_names().contains(&"kaa"));
-    assert!(manager.provider_names().contains(&"AniBD"));
-    assert!(manager.provider_names().contains(&"animekai"));
-    assert!(manager.provider_names().contains(&"anidbapp"));
-    assert!(manager.provider_names().contains(&"animegg"));
-    assert!(manager.provider_names().contains(&"animeshqip"));
-    assert!(manager.provider_names().contains(&"rareanimes"));
-    assert!(manager.provider_names().contains(&"anikoto"));
-    assert!(manager.provider_names().contains(&"anizone"));
-    assert!(manager.provider_names().contains(&"AnimePahe"));
-    assert!(manager.provider_names().contains(&"AnimeHeaven"));
-    assert!(manager.provider_names().contains(&"GojoWtf"));
+fn episode_numbers_keep_their_fraction() {
+    assert_eq!(fmt_ep(1.0), "1");
+    assert_eq!(fmt_ep(12.0), "12");
+    assert_eq!(fmt_ep(12.5), "12.5");
+    assert_eq!(fmt_ep(1061.25), "1061.25");
+    assert_eq!(fmt_ep(0.0), "0");
+}
+
+// ---------------------------------------------------------------- un-escaping and extraction
+
+// ---------------------------------------------------------------- title matching
+
+#[test]
+fn titles_are_normalised_before_comparison() {
+    assert_eq!(normalize_title("Shingeki no Kyojin 2nd Season"), "shingeki no kyojin season 2");
+    assert_eq!(normalize_title("Shingeki no Kyojin: Season 2"), "shingeki no kyojin season 2");
+    assert_eq!(normalize_title("Jujutsu Kaisen (TV)"), "jujutsu kaisen");
+    assert_eq!(title_similarity("Jujutsu Kaisen (TV)", "jujutsu kaisen"), 1.0);
 }
 
 #[test]
-fn test_provider_tests_episode_item_structure() {
-    let ep = EpisodeItem {
-        number: 1.0,
-        pipe_id: "senshi|12345|1".to_string(),
-        title: Some("Episode 1".to_string()),
-        image: Some("https://example.com/thumb.jpg".to_string()),
-        synopsis: None,
-        filler: false,
-    };
-
-    assert_eq!(ep.number, 1.0);
-    assert_eq!(ep.pipe_id, "senshi|12345|1");
-    assert_eq!(ep.filler, false);
+fn sequels_and_movies_do_not_match_the_series() {
+    assert!(title_similarity("One Piece", "One Piece Movie 01") < MIN_MATCH_SCORE);
+    assert!(title_similarity("Shingeki no Kyojin Season 2", "Shingeki no Kyojin") < MIN_MATCH_SCORE);
+    assert!(title_similarity("Jujutsu Kaisen", "Jujutsu Kaisen 2nd Season") < MIN_MATCH_SCORE);
+    assert!(title_similarity("Mob Psycho 100", "Mob Psycho 100 II") < MIN_MATCH_SCORE);
+    assert!(title_similarity("Naruto", "Boruto") < MIN_MATCH_SCORE);
 }
 
-#[tokio::test]
-async fn test_provider_tests_animeheaven() {
-    let provider = AnimeHeavenProvider::new();
-    assert_eq!(provider.name(), "AnimeHeaven");
-    assert!(!provider.supports_dub());
+#[test]
+fn best_candidate_wins_over_first_candidate() {
+    let q = query("Shingeki no Kyojin Season 2");
+    let candidates = vec![
+        Candidate::new("s1", vec!["Shingeki no Kyojin".to_string()]),
+        Candidate::new("s2", vec!["Shingeki no Kyojin 2nd Season".to_string()]),
+        Candidate::new("s3", vec!["Shingeki no Kyojin Season 3".to_string()]),
+    ];
+    assert_eq!(pick_best(&q, candidates), Some("s2"));
 
-    // 1. Missing title test: must fail gracefully with error, no panic
-    let no_title_res = provider.get_episodes(1, None, None).await;
-    assert!(
-        no_title_res.is_err(),
-        "AnimeHeaven must return Err when no title is provided"
+    let only_wrong = vec![Candidate::new("s1", vec!["Shingeki no Kyojin".to_string()])];
+    assert_eq!(pick_best(&q, only_wrong), None, "a different season must not be accepted");
+    assert_eq!(pick_best::<&str>(&q, Vec::new()), None);
+}
+
+#[test]
+fn year_and_episode_count_break_ties_between_same_titles() {
+    let mut q = query("Hunter x Hunter");
+    q.year = Some(2011);
+    q.episodes = Some(148);
+    let titles = vec!["Hunter x Hunter".to_string()];
+    assert!(match_score(&q, &titles, Some(1999), Some(62)) < MIN_MATCH_SCORE);
+    assert!(match_score(&q, &titles, Some(2011), Some(148)) >= MIN_MATCH_SCORE);
+    // Facts the site does not state are not held against the candidate.
+    assert!(match_score(&q, &titles, None, None) >= MIN_MATCH_SCORE);
+
+    let candidates = vec![
+        Candidate { item: "1999", titles: titles.clone(), year: Some(1999), episodes: Some(62) },
+        Candidate { item: "2011", titles: titles.clone(), year: Some(2011), episodes: Some(148) },
+    ];
+    assert_eq!(pick_best(&q, candidates), Some("2011"));
+}
+
+#[test]
+fn alternative_titles_from_the_query_are_used() {
+    let mut q = query("Sousou no Frieren");
+    let titles = vec!["Frieren: Beyond Journey's End".to_string()];
+    assert!(match_score(&q, &titles, None, None) < MIN_MATCH_SCORE);
+    q.add_title("Frieren: Beyond Journey's End");
+    assert_eq!(match_score(&q, &titles, None, None), 1.0);
+}
+
+// ---------------------------------------------------------------- stream headers
+
+#[test]
+fn custom_headers_never_duplicate_the_referer() {
+    let mut stream = anilili_lib::models::StreamItem::new(
+        "https://cdn.example/x.m3u8".to_string(),
+        "hls".to_string(),
+        None,
+        None,
+        Some("https://site.example/".to_string()),
+        true,
     );
-    println!("[AnimeHeaven] Missing title handled gracefully: {:?}", no_title_res.err());
+    let mut custom = std::collections::HashMap::new();
+    custom.insert("Referer".to_string(), "https://embed.example/v/1".to_string());
+    custom.insert("X-Token".to_string(), "t".to_string());
+    stream.headers = Some(custom);
+    stream.origin = Some("https://explicit.example".to_string());
 
-    // 2. Non-existent anime title: must return empty episodes or error, no panic
-    let non_existent_res = tokio::time::timeout(
-        Duration::from_secs(10),
-        provider.get_episodes(999999, None, Some("ZxyWvuNonExistentAnime999999")),
-    )
-    .await;
-
-    match non_existent_res {
-        Ok(Ok(data)) => {
-            println!("[AnimeHeaven] Non-existent title returned {} episodes (expected 0)", data.sub.len());
-            assert!(data.sub.is_empty(), "Non-existent anime should have 0 episodes");
-        }
-        Ok(Err(e)) => {
-            println!("[AnimeHeaven] Non-existent title returned graceful Err: {}", e);
-        }
-        Err(_) => {
-            println!("[AnimeHeaven] Non-existent title timed out gracefully");
-        }
-    }
-
-    // 3. Real anime title: must return real episodes or fail gracefully (no panics)
-    let real_res = tokio::time::timeout(
-        Duration::from_secs(12),
-        provider.get_episodes(21, Some(21), Some("One Piece")),
-    )
-    .await;
-
-    match real_res {
-        Ok(Ok(data)) => {
-            println!("[AnimeHeaven] Successfully fetched {} episodes", data.sub.len());
-            for ep in &data.sub {
-                assert!(ep.number > 0.0, "Episode numbers must be > 0: got {}", ep.number);
-                assert!(!ep.pipe_id.is_empty(), "Episode pipe_id must not be empty");
-            }
-
-            // Verify get_sources if episodes are present
-            if let Some(first_ep) = data.sub.first() {
-                let sources_res = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    provider.get_sources(first_ep, Category::Sub),
-                )
-                .await;
-
-                match sources_res {
-                    Ok(Ok(sources)) => {
-                        println!("[AnimeHeaven] Resolved {} streams", sources.streams.len());
-                        for s in &sources.streams {
-                            assert!(s.url.starts_with("http"), "Stream URL must be HTTP/HTTPS: {}", s.url);
-                            assert!(!s.url.contains("dummy"), "Stream URL must not be dummy: {}", s.url);
-                            assert!(!s.url.contains("example.com"), "Stream URL must not be placeholder: {}", s.url);
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        println!("[AnimeHeaven] get_sources returned graceful error: {}", e);
-                    }
-                    Err(_) => {
-                        println!("[AnimeHeaven] get_sources timed out gracefully");
-                    }
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            println!("[AnimeHeaven] get_episodes returned graceful error: {}", e);
-        }
-        Err(_) => {
-            println!("[AnimeHeaven] Network query timed out gracefully (no panic)");
-        }
-    }
+    let headers = stream_header_map(&stream);
+    assert_eq!(headers.get_all("referer").iter().count(), 1);
+    assert_eq!(headers.get("referer").unwrap(), "https://embed.example/v/1");
+    assert_eq!(headers.get("origin").unwrap(), "https://explicit.example");
+    assert_eq!(headers.get("x-token").unwrap(), "t");
 }
+
+// ---------------------------------------------------------------- reading site data
+
+#[test]
+fn ids_and_numbers_are_read_whether_sent_as_text_or_as_numbers() {
+    assert_eq!(json_id(&json!(36396)).as_deref(), Some("36396"));
+    assert_eq!(json_id(&json!(" abc ")).as_deref(), Some("abc"));
+    assert_eq!(json_id(&json!("")), None);
+    assert_eq!(json_id(&json!(null)), None);
+    assert_eq!(json_number(&json!("12.5")), Some(12.5));
+    assert_eq!(json_number(&json!(3)), Some(3.0));
+    assert_eq!(json_number(&json!("three")), None);
+}
+
+// ---------------------------------------------------------------- without plugins
 
 #[tokio::test]
-async fn test_provider_tests_gojowtf() {
-    let provider = GojoWtfProvider::new();
-    assert_eq!(provider.name(), "GojoWtf");
-    assert!(provider.supports_dub());
-
-    // 1. Missing title test: must fail gracefully with error, no panic
-    let no_title_res = provider.get_episodes(1, None, None).await;
-    assert!(
-        no_title_res.is_err(),
-        "GojoWtf must return Err when no title is provided"
-    );
-    println!("[GojoWtf] Missing title handled gracefully: {:?}", no_title_res.err());
-
-    // 2. Non-existent anime title: must return empty episodes or error, no panic
-    let non_existent_res = tokio::time::timeout(
-        Duration::from_secs(10),
-        provider.get_episodes(999999, None, Some("ZxyWvuNonExistentAnime999999")),
-    )
-    .await;
-
-    match non_existent_res {
-        Ok(Ok(data)) => {
-            println!("[GojoWtf] Non-existent title returned {} sub, {} dub", data.sub.len(), data.dub.len());
-            assert!(data.sub.is_empty(), "Non-existent anime should have 0 sub episodes");
-        }
-        Ok(Err(e)) => {
-            println!("[GojoWtf] Non-existent title returned graceful Err: {}", e);
-        }
-        Err(_) => {
-            println!("[GojoWtf] Non-existent title timed out gracefully");
-        }
-    }
-
-    // 3. Real anime title: must return real episodes or fail gracefully (no panics)
-    let real_res = tokio::time::timeout(
-        Duration::from_secs(12),
-        provider.get_episodes(21, Some(21), Some("One Piece")),
-    )
-    .await;
-
-    match real_res {
-        Ok(Ok(data)) => {
-            println!("[GojoWtf] Successfully fetched {} sub, {} dub episodes", data.sub.len(), data.dub.len());
-            for ep in &data.sub {
-                assert!(ep.number > 0.0, "Episode numbers must be > 0: got {}", ep.number);
-                assert!(!ep.pipe_id.is_empty(), "Episode pipe_id must not be empty");
-            }
-
-            if let Some(first_ep) = data.sub.first() {
-                let sources_res = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    provider.get_sources(first_ep, Category::Sub),
-                )
-                .await;
-
-                match sources_res {
-                    Ok(Ok(sources)) => {
-                        println!("[GojoWtf] Resolved {} streams", sources.streams.len());
-                        for s in &sources.streams {
-                            assert!(s.url.starts_with("http"), "Stream URL must be HTTP/HTTPS: {}", s.url);
-                            assert!(!s.url.contains("dummy"), "Stream URL must not be dummy: {}", s.url);
-                            assert!(!s.url.contains("example.com"), "Stream URL must not be placeholder: {}", s.url);
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        println!("[GojoWtf] get_sources returned graceful error: {}", e);
-                    }
-                    Err(_) => {
-                        println!("[GojoWtf] get_sources timed out gracefully");
-                    }
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            println!("[GojoWtf] get_episodes returned graceful error: {}", e);
-        }
-        Err(_) => {
-            println!("[GojoWtf] Network query timed out gracefully (no panic)");
-        }
-    }
+async fn a_manager_without_plugins_has_nothing_to_offer_and_says_so() {
+    let manager = ProviderManager::new();
+    assert!(manager.provider_names().is_empty());
+    assert!(manager.get_all_episodes(21, None, Some("One Piece".to_string())).await.unwrap().is_empty());
+    let error = manager
+        .get_sources_for_episode(21, None, 1.0, "sub", Some("One Piece".to_string()), None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), NO_PLUGIN_MESSAGE);
 }
-
-#[tokio::test]
-async fn test_provider_tests_no_dummy_streams() {
-    let ah = AnimeHeavenProvider::new();
-    let gojo = GojoWtfProvider::new();
-
-    let fake_ep = EpisodeItem {
-        number: 999.0,
-        pipe_id: "fake_nonexistent_pipe_id_99999|999".to_string(),
-        title: Some("Fake Episode".to_string()),
-        image: None,
-        synopsis: None,
-        filler: false,
-    };
-
-    // Both providers must never return dummy streams for invalid episode data;
-    // they must either return Err or empty streams, never dummy/mock URLs.
-    let ah_sources = tokio::time::timeout(
-        Duration::from_secs(10),
-        ah.get_sources(&fake_ep, Category::Sub),
-    )
-    .await;
-
-    match ah_sources {
-        Ok(Ok(sources)) => {
-            for s in &sources.streams {
-                assert!(!s.url.contains("dummy"), "AnimeHeaven returned a dummy stream: {}", s.url);
-                assert!(!s.url.contains("example.com"), "AnimeHeaven returned placeholder: {}", s.url);
-            }
-        }
-        Ok(Err(e)) => {
-            println!("[AnimeHeaven] Correctly rejected fake episode: {}", e);
-        }
-        Err(_) => {
-            println!("[AnimeHeaven] Fake episode request timed out gracefully");
-        }
-    }
-
-    let gojo_sources = tokio::time::timeout(
-        Duration::from_secs(10),
-        gojo.get_sources(&fake_ep, Category::Sub),
-    )
-    .await;
-
-    match gojo_sources {
-        Ok(Ok(sources)) => {
-            for s in &sources.streams {
-                assert!(!s.url.contains("dummy"), "GojoWtf returned a dummy stream: {}", s.url);
-                assert!(!s.url.contains("example.com"), "GojoWtf returned placeholder: {}", s.url);
-            }
-        }
-        Ok(Err(e)) => {
-            println!("[GojoWtf] Correctly rejected fake episode: {}", e);
-        }
-        Err(_) => {
-            println!("[GojoWtf] Fake episode request timed out gracefully");
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_provider_tests_animepahe() {
-    let provider = AnimePaheProvider::new();
-    assert_eq!(provider.name(), "AnimePahe");
-
-    let real_res = tokio::time::timeout(
-        Duration::from_secs(12),
-        provider.get_episodes(21, Some(21), Some("One Piece")),
-    )
-    .await;
-
-    match real_res {
-        Ok(Ok(data)) => {
-            println!("[AnimePahe] Fetched {} episodes", data.sub.len());
-            for ep in &data.sub {
-                assert!(ep.number > 0.0);
-                assert!(!ep.pipe_id.is_empty());
-            }
-        }
-        Ok(Err(e)) => {
-            println!("[AnimePahe] Returned graceful error: {}", e);
-        }
-        Err(_) => {
-            println!("[AnimePahe] Request timed out gracefully (no panic)");
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_provider_tests_miruro() {
-    let provider = MiruroProvider::new("ally");
-    assert_eq!(provider.name(), "ally");
-    assert!(provider.supports_dub());
-
-    let ep_res = provider.get_episodes(21, Some(21), Some("One Piece")).await;
-    assert!(ep_res.is_ok(), "Miruro get_episodes should return Ok");
-    let data = ep_res.unwrap();
-    assert_eq!(data.name, "ally");
-    // data.sub may return real episodes or empty if provider is rate-limited; both are graceful
-    println!("[Miruro] Returned {} sub episodes and {} dub episodes", data.sub.len(), data.dub.len());
-
-    // Invalid pipe_id must return Err(AppError::NoSourcesFound), no panic, no dummy stream
-    let fake_ep = EpisodeItem {
-        number: 1.0,
-        pipe_id: "invalid_no_id".to_string(),
-        title: Some("Episode 1".to_string()),
-        image: None,
-        synopsis: None,
-        filler: false,
-    };
-    let src_res = provider.get_sources(&fake_ep, Category::Sub).await;
-    assert!(src_res.is_err(), "Miruro must return Err for unparseable pipe_id");
-}
-

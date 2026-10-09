@@ -6,149 +6,142 @@ import {
   Bookmark,
   Calendar,
   Settings,
-  Tv,
   ChevronLeft,
   ChevronRight,
-  DownloadCloud,
   Search,
   HelpCircle,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import clsx from 'clsx';
 import { useUIStore } from '../stores/uiStore';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+
+const NAV_ITEMS: { to: string; icon: LucideIcon; label: string }[] = [
+  { to: '/', icon: Home, label: 'Home' },
+  { to: '/discover', icon: Compass, label: 'Discover' },
+  { to: '/schedule', icon: Calendar, label: 'Schedule' },
+  { to: '/library', icon: Bookmark, label: 'Library' },
+];
+
+const itemClass = (expanded: boolean) =>
+  clsx(
+    'relative flex h-9 w-full items-center gap-3 rounded-md text-[13px] font-medium cursor-pointer transition-colors',
+    expanded ? 'px-3' : 'justify-center'
+  );
+const IDLE_CLASS = 'text-text-secondary hover:bg-white/5 hover:text-text-primary';
+
+const SidebarLink: React.FC<{
+  to: string;
+  icon: LucideIcon;
+  label: string;
+  expanded: boolean;
+}> = ({ to, icon: Icon, label, expanded }) => (
+  <NavLink
+    to={to}
+    end={to === '/'}
+    title={expanded ? undefined : label}
+    aria-label={label}
+    draggable={false}
+    className={({ isActive }) =>
+      clsx(itemClass(expanded), isActive ? 'bg-accent-tint text-accent-300' : IDLE_CLASS)
+    }
+  >
+    {({ isActive }) => (
+      <>
+        {isActive && (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-accent-500"
+          />
+        )}
+        <Icon aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+        {expanded && <span className="truncate">{label}</span>}
+      </>
+    )}
+  </NavLink>
+);
 
 export const Sidebar: React.FC = () => {
-  const {
-    sidebarExpanded,
-    toggleSidebar,
-    setCommandPaletteOpen,
-    setHotkeyCheatSheetOpen,
-  } = useUIStore();
+  const sidebarExpanded = useUIStore((s) => s.sidebarExpanded);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const setHotkeyCheatSheetOpen = useUIStore((s) => s.setHotkeyCheatSheetOpen);
 
-  const navItems = [
-    { to: '/', icon: Home, label: 'Home' },
-    { to: '/discover', icon: Compass, label: 'Discover' },
-    { to: '/library', icon: Bookmark, label: 'Library' },
-    { to: '/schedule', icon: Calendar, label: 'Schedule' },
-    { to: '/settings', icon: Settings, label: 'Settings' },
-  ];
+  // Below 1100px the expanded sidebar leaves too little room for content.
+  const isNarrow = useMediaQuery('(max-width: 1099px)');
+  const expanded = sidebarExpanded && !isNarrow;
 
   return (
     <aside
-      className={`relative flex flex-col justify-between h-screen bg-bg-deepest border-r border-border transition-all duration-300 ease-in-out select-none z-30 ${
-        sidebarExpanded ? 'w-56 min-w-[220px]' : 'w-16 min-w-[64px]'
-      }`}
+      className={clsx(
+        'relative z-30 flex h-full flex-shrink-0 flex-col justify-between border-r border-border bg-bg-deepest select-none transition-[width] duration-200',
+        expanded ? 'w-56' : 'w-16'
+      )}
     >
-      {/* Brand Header */}
-      <div>
-        <div className="flex items-center gap-3 h-16 px-4 border-b border-border">
-          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-tr from-accent-700 to-accent-500 text-white shadow-md shadow-accent-900/30 flex-shrink-0">
-            <Tv className="w-5 h-5" />
-          </div>
-          {sidebarExpanded && (
-            <div className="flex flex-col overflow-hidden whitespace-nowrap animate-fade-in">
-              <span className="text-base font-bold tracking-wide bg-gradient-to-r from-white via-accent-100 to-accent-300 bg-clip-text text-transparent">
-                Anilili
-              </span>
-              <span className="text-[10px] text-text-muted font-medium tracking-wider uppercase">
-                Linux Desktop
-              </span>
-            </div>
-          )}
-        </div>
+      <nav aria-label="Main" className="flex flex-col gap-1 p-2 pt-3">
+        {NAV_ITEMS.map((item) => (
+          <SidebarLink key={item.to} {...item} expanded={expanded} />
+        ))}
+      </nav>
 
-        {/* Navigation Links */}
-        <nav className="flex flex-col gap-1.5 p-2 mt-3">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative ${
-                  isActive
-                    ? 'bg-accent-tint text-accent-300 border border-border-focus font-semibold'
-                    : 'text-text-secondary hover:text-white hover:bg-bg-elevated/60'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon
-                    className={`w-5 h-5 flex-shrink-0 transition-transform duration-200 ${
-                      isActive
-                        ? 'text-accent-500 scale-110'
-                        : 'text-text-muted group-hover:text-text-primary'
-                    }`}
-                  />
-                  {sidebarExpanded && (
-                    <span className="whitespace-nowrap overflow-hidden text-ellipsis">
-                      {label}
-                    </span>
-                  )}
-                  {!sidebarExpanded && (
-                    <div className="absolute left-16 px-2.5 py-1 bg-bg-card text-text-primary border border-border text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-50 whitespace-nowrap">
-                      {label}
-                    </div>
-                  )}
-                </>
-              )}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
-
-      {/* Footer / Toggle Section */}
-      <div className="p-2 border-t border-border flex flex-col gap-1.5">
-        {/* Search Ctrl+K Button */}
+      <div className="flex flex-col gap-1 p-2">
         <button
+          type="button"
           onClick={() => setCommandPaletteOpen(true)}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-text-muted hover:text-white hover:bg-bg-elevated transition-colors text-xs w-full text-left group relative"
-          title="Search / Command Palette (Ctrl+K)"
+          title={expanded ? undefined : 'Search (Ctrl+K)'}
+          aria-label="Search"
+          className={clsx(itemClass(expanded), IDLE_CLASS)}
         >
-          <Search className="w-4 h-4 flex-shrink-0 text-accent-500" />
-          {sidebarExpanded ? (
-            <div className="flex items-center justify-between w-full">
-              <span>Quick Search</span>
-              <kbd className="px-1.5 py-0.5 text-[10px] bg-white/10 rounded text-white/50">Ctrl+K</kbd>
-            </div>
-          ) : (
-            <div className="absolute left-16 px-2.5 py-1 bg-bg-card text-text-primary border border-border text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-50 whitespace-nowrap">
-              Quick Search (Ctrl+K)
-            </div>
+          <Search aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+          {expanded && (
+            <>
+              <span className="flex-1 truncate text-left">Search</span>
+              <kbd className="rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
+                Ctrl+K
+              </kbd>
+            </>
           )}
         </button>
 
-        {/* Shortcuts Button */}
         <button
+          type="button"
           onClick={() => setHotkeyCheatSheetOpen(true)}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-text-muted hover:text-white hover:bg-bg-elevated transition-colors text-xs w-full text-left group relative"
-          title="Keyboard Shortcuts (?)"
+          title={expanded ? undefined : 'Keyboard shortcuts (?)'}
+          aria-label="Keyboard shortcuts"
+          className={clsx(itemClass(expanded), IDLE_CLASS)}
         >
-          <HelpCircle className="w-4 h-4 flex-shrink-0 text-emerald-400" />
-          {sidebarExpanded ? (
-            <div className="flex items-center justify-between w-full">
-              <span>Shortcuts</span>
-              <kbd className="px-1.5 py-0.5 text-[10px] bg-white/10 rounded text-white/50">?</kbd>
-            </div>
-          ) : (
-            <div className="absolute left-16 px-2.5 py-1 bg-bg-card text-text-primary border border-border text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-50 whitespace-nowrap">
-              Shortcuts (?)
-            </div>
+          <HelpCircle aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+          {expanded && (
+            <>
+              <span className="flex-1 truncate text-left">Shortcuts</span>
+              <kbd className="rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
+                ?
+              </kbd>
+            </>
           )}
         </button>
 
-        <button
-          onClick={toggleSidebar}
-          aria-label={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="flex items-center justify-center w-full py-1.5 rounded-lg text-text-muted hover:text-white hover:bg-bg-elevated transition-colors text-xs mt-1"
-        >
-          {sidebarExpanded ? (
-            <div className="flex items-center gap-2">
-              <ChevronLeft className="w-4 h-4" />
-              <span>Collapse</span>
-            </div>
-          ) : (
-            <ChevronRight className="w-4 h-4" />
-          )}
-        </button>
+        <SidebarLink to="/settings" icon={Settings} label="Settings" expanded={expanded} />
+
+        {!isNarrow && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+            aria-expanded={expanded}
+            title={expanded ? undefined : 'Expand sidebar'}
+            className={clsx(itemClass(expanded), 'text-text-muted hover:bg-white/5 hover:text-text-primary')}
+          >
+            {expanded ? (
+              <>
+                <ChevronLeft aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+                <span className="truncate">Collapse</span>
+              </>
+            ) : (
+              <ChevronRight aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+            )}
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -1,9 +1,78 @@
 use crate::clients::{aniskip, jikan, konoha};
 use crate::db;
 use crate::models::{EpisodeItem, ProviderEpisodes, SkipTimes, SourcesResult};
+use crate::providers::common::fmt_ep;
 use crate::state::AppState;
-use std::collections::HashMap;
+use crate::web_session;
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
+use std::collections::{BTreeMap, HashMap};
 use tauri::State;
+
+/// Largest episode number the catalog will invent placeholders up to.
+const MAX_FILLED_EPISODES: i64 = 3000;
+
+/// Map key for an episode number that keeps fractional episodes apart (12 and 12.5 differ).
+pub fn episode_key(number: f64) -> i64 {
+    (number * 100.0).round() as i64
+}
+
+/// How many whole episodes have aired, when that is known for certain: one less than the next
+/// episode to air, or none for a show that has not started. `None` means it cannot be told from
+/// these facts.
+pub fn released_episode_cap(status: Option<&str>, next_airing_episode: Option<i32>) -> Option<i64> {
+    match next_airing_episode {
+        Some(next) => Some((next as i64 - 1).max(0)),
+        None if status.map_or(false, |s| s.eq_ignore_ascii_case("NOT_YET_RELEASED")) => Some(0),
+        None => None,
+    }
+}
+
+/// Provider name → episode lists, serialised as a JSON object whose keys keep provider order.
+pub struct ProviderEpisodeMap(pub Vec<(String, ProviderEpisodes)>);
+
+impl Serialize for ProviderEpisodeMap {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, episodes) in &self.0 {
+            map.serialize_entry(name, episodes)?;
+        }
+        map.end()
+    }
+}
+
+async fn mal_episodes(state: &AppState, mal_id: Option<i64>) -> Vec<jikan::MalEpisodeInfo> {
+    let Some(id) = mal_id.filter(|id| *id > 0) else {
+        return Vec::new();
+    };
+    match jikan::fetch_mal_episodes(&state.client, id as i32).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::warn!("MyAnimeList episode list for {} unavailable: {}", id, e.reason());
+            Vec::new()
+        }
+    }
+}
+
+async fn konoha_episodes(anilist_id: i64) -> Vec<EpisodeItem> {
+    match konoha::fetch_konoha_episodes(anilist_id).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::warn!("Konoha episode list for {} unavailable: {}", anilist_id, e.reason());
+            Vec::new()
+        }
+    }
+}
+
+fn apply_mal_info(episode: &mut EpisodeItem, info: &jikan::MalEpisodeInfo) {
+    if let Some(title) = info.title.as_deref().filter(|t| !t.trim().is_empty()) {
+        episode.title = Some(title.to_string());
+    }
+    episode.filler = info.filler;
+    if episode.synopsis.is_none() {
+        episode.synopsis = info.synopsis.clone();
+    }
+}
 
 #[tauri::command]
 pub async fn get_anime_catalog_episodes(
@@ -15,85 +84,72 @@ pub async fn get_anime_catalog_episodes(
     status: Option<String>,
     next_airing_episode: Option<i32>,
 ) -> Result<Vec<EpisodeItem>, String> {
-    let mut catalog_map: HashMap<i32, EpisodeItem> = HashMap::new();
+    let mut catalog: BTreeMap<i64, EpisodeItem> = BTreeMap::new();
 
-    // 1. Fast fetch from Konoha CDN (thumbnails & titles)
-    if let Ok(konoha_eps) = konoha::fetch_konoha_episodes(anilist_id).await {
-        for ep in konoha_eps {
-            catalog_map.insert(ep.number as i32, ep);
+    // Thumbnails and titles from the Konoha CDN, official titles and filler flags from MAL.
+    let (konoha_eps, mal_eps) = tokio::join!(konoha_episodes(anilist_id), mal_episodes(&state, mal_id));
+    for ep in konoha_eps {
+        catalog.insert(episode_key(ep.number), ep);
+    }
+    for info in &mal_eps {
+        if info.number <= 0.0 {
+            continue;
         }
+        let entry = catalog.entry(episode_key(info.number)).or_insert_with(|| EpisodeItem {
+            pipe_id: format!("{}-{}", anilist_id, fmt_ep(info.number)),
+            number: info.number,
+            title: None,
+            image: None,
+            synopsis: None,
+            filler: false,
+        });
+        apply_mal_info(entry, info);
     }
 
-    // 2. Fetch MyAnimeList episode metadata (official titles, filler flags, synopses)
-    if let Some(m_id) = mal_id {
-        if let Ok(mal_eps) = jikan::fetch_mal_episodes(&state.client, m_id as i32).await {
-            for mal_ep in mal_eps {
-                let ep_num_i = mal_ep.number as i32;
-                let entry = catalog_map.entry(ep_num_i).or_insert_with(|| EpisodeItem {
-                    pipe_id: format!("{}-{}", anilist_id, ep_num_i),
-                    number: mal_ep.number,
-                    title: None,
-                    image: None,
-                    synopsis: None,
-                    filler: false,
-                });
-
-                if let Some(ref title) = mal_ep.title {
-                    if !title.trim().is_empty() {
-                        entry.title = Some(title.clone());
-                    }
-                }
-                entry.filler = mal_ep.filler;
-                if entry.synopsis.is_none() {
-                    entry.synopsis = mal_ep.synopsis;
-                }
-            }
-        }
-    }
-
-    // 3. Fetch IMDb episode synopses
-    if let Some(ref title) = title_romaji {
-        let imdb_synopses = state.imdb_client.fetch_episode_synopses(title).await;
-        for (ep_num, plot) in imdb_synopses {
-            if let Some(entry) = catalog_map.get_mut(&ep_num) {
+    // IMDb plots apply only when its season demonstrably is this anime (see the IMDb client).
+    if let Some(title) = title_romaji.as_deref().filter(|t| !t.trim().is_empty()) {
+        let expected = total_episodes
+            .filter(|t| *t > 0)
+            .or_else(|| Some(mal_eps.len() as i32).filter(|n| *n > 0));
+        let synopses = state.imdb_client.fetch_episode_synopses(title, expected).await;
+        for (ep_num, plot) in synopses {
+            if let Some(entry) = catalog.get_mut(&episode_key(ep_num as f64)) {
                 entry.synopsis = Some(plot);
             }
         }
     }
 
-    // 4. Determine currently released episode count
-    let is_releasing = status.as_deref().map(|s| s.eq_ignore_ascii_case("RELEASING")).unwrap_or(false);
-    let max_released = if let Some(next_ep) = next_airing_episode {
-        (next_ep - 1).max(1)
-    } else if is_releasing {
-        (catalog_map.len() as i32).max(1)
-    } else {
-        total_episodes.unwrap_or(0).max(catalog_map.len() as i32)
-    };
+    let known_max = catalog
+        .values()
+        .map(|ep| ep.number.floor() as i64)
+        .max()
+        .unwrap_or(0);
+    let is_releasing = status
+        .as_deref()
+        .map_or(false, |s| s.eq_ignore_ascii_case("RELEASING"));
 
-    // Filter out any unreleased future episodes if releasing
-    if is_releasing && max_released > 0 {
-        catalog_map.retain(|&num, _| num <= max_released);
-    }
-
-    // Fill in any gaps up to max_released
-    if max_released > 0 {
-        for num in 1..=max_released {
-            catalog_map.entry(num).or_insert_with(|| EpisodeItem {
-                pipe_id: format!("{}-{}", anilist_id, num),
-                number: num as f64,
-                title: Some(format!("Episode {}", num)),
-                image: None,
-                synopsis: None,
-                filler: false,
-            });
+    // Placeholders are added only for episodes known to exist: never past what has aired, and
+    // for an airing show with no schedule never past the last episode some source lists.
+    let fill_to = match released_episode_cap(status.as_deref(), next_airing_episode) {
+        Some(cap) => {
+            catalog.retain(|key, _| *key <= cap * 100);
+            cap
         }
+        None if is_releasing => known_max,
+        None => (total_episodes.unwrap_or(0) as i64).max(known_max),
+    };
+    for num in 1..=fill_to.min(MAX_FILLED_EPISODES) {
+        catalog.entry(num * 100).or_insert_with(|| EpisodeItem {
+            pipe_id: format!("{}-{}", anilist_id, num),
+            number: num as f64,
+            title: Some(format!("Episode {}", num)),
+            image: None,
+            synopsis: None,
+            filler: false,
+        });
     }
 
-    let mut result: Vec<EpisodeItem> = catalog_map.into_values().collect();
-    result.sort_by(|a, b| a.number.partial_cmp(&b.number).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(result)
+    Ok(catalog.into_values().collect())
 }
 
 #[tauri::command]
@@ -102,82 +158,85 @@ pub async fn get_all_episodes(
     anilist_id: i64,
     mal_id: Option<i64>,
     title_romaji: Option<String>,
-) -> Result<HashMap<String, ProviderEpisodes>, String> {
-    let pdata_list = state
-        .provider_manager
-        .get_all_episodes(anilist_id, mal_id, title_romaji.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<ProviderEpisodeMap, String> {
+    let (provider_lists, mal_eps, konoha_eps) = tokio::join!(
+        state
+            .provider_manager
+            .get_all_episodes(anilist_id, mal_id, title_romaji.clone()),
+        mal_episodes(&state, mal_id),
+        konoha_episodes(anilist_id)
+    );
+    let provider_lists = provider_lists.map_err(|e| e.to_string())?;
 
-    // 1. Fetch MyAnimeList episode metadata (titles, filler tags, synopses)
-    let mut mal_ep_map: HashMap<i32, jikan::MalEpisodeInfo> = HashMap::new();
-    if let Some(m_id) = mal_id {
-        if let Ok(mal_eps) = jikan::fetch_mal_episodes(&state.client, m_id as i32).await {
-            for ep in mal_eps {
-                mal_ep_map.insert(ep.number as i32, ep);
+    let mal_by_key: HashMap<i64, &jikan::MalEpisodeInfo> = mal_eps
+        .iter()
+        .filter(|ep| ep.number > 0.0)
+        .map(|ep| (episode_key(ep.number), ep))
+        .collect();
+
+    let imdb_by_key: HashMap<i64, String> = match title_romaji.as_deref().filter(|t| !t.trim().is_empty()) {
+        Some(title) => {
+            let expected = Some(mal_eps.len() as i32).filter(|n| *n > 0);
+            state
+                .imdb_client
+                .fetch_episode_synopses(title, expected)
+                .await
+                .into_iter()
+                .map(|(ep_num, plot)| (episode_key(ep_num as f64), plot))
+                .collect()
+        }
+        None => HashMap::new(),
+    };
+
+    let enrich = |episodes: &mut Vec<EpisodeItem>| {
+        for ep in episodes.iter_mut() {
+            let key = episode_key(ep.number);
+            if let Some(info) = mal_by_key.get(&key) {
+                apply_mal_info(ep, info);
             }
+            if let Some(plot) = imdb_by_key.get(&key) {
+                ep.synopsis = Some(plot.clone());
+            }
+        }
+    };
+
+    // Providers that are asked by episode number list the episodes the catalog knows about.
+    let mut catalog_numbers: BTreeMap<i64, f64> = BTreeMap::new();
+    for number in mal_eps.iter().map(|ep| ep.number).chain(konoha_eps.iter().map(|ep| ep.number)) {
+        if number > 0.0 {
+            catalog_numbers.insert(episode_key(number), number);
         }
     }
+    let catalog_list = |anilist_id: i64| -> Vec<EpisodeItem> {
+        catalog_numbers
+            .values()
+            .map(|number| EpisodeItem {
+                pipe_id: format!("{}-{}", anilist_id, fmt_ep(*number)),
+                number: *number,
+                title: Some(format!("Episode {}", fmt_ep(*number))),
+                image: None,
+                synopsis: None,
+                filler: false,
+            })
+            .collect()
+    };
 
-    // 2. Fetch IMDb episode synopses
-    let mut imdb_ep_map: HashMap<i32, String> = HashMap::new();
-    if let Some(ref title) = title_romaji {
-        let synopses = state.imdb_client.fetch_episode_synopses(title).await;
-        for (ep_num, plot) in synopses {
-            imdb_ep_map.insert(ep_num, plot);
-        }
+    let mut entries: Vec<(String, ProviderEpisodes)> = Vec::new();
+    for pdata in provider_lists {
+        let (mut sub, mut dub) = if state.provider_manager.is_number_addressed(&pdata.name) {
+            (catalog_list(anilist_id), catalog_list(anilist_id))
+        } else if pdata.is_empty() {
+            // The anime is not on this provider; leaving it out keeps it from being offered.
+            continue;
+        } else {
+            (pdata.sub, pdata.dub)
+        };
+        enrich(&mut sub);
+        enrich(&mut dub);
+        entries.push((pdata.name, ProviderEpisodes { sub, dub }));
     }
 
-    let mut map = HashMap::new();
-    for pdata in pdata_list {
-        let mut sub = pdata.sub;
-        let mut dub = pdata.dub;
-
-        // Enrich SUB episodes
-        for ep in &mut sub {
-            let ep_num_i = ep.number as i32;
-            if let Some(mal_info) = mal_ep_map.get(&ep_num_i) {
-                if let Some(ref mal_title) = mal_info.title {
-                    if !mal_title.trim().is_empty() {
-                        ep.title = Some(mal_title.clone());
-                    }
-                }
-                ep.filler = mal_info.filler;
-                if ep.synopsis.is_none() {
-                    ep.synopsis = mal_info.synopsis.clone();
-                }
-            }
-            if let Some(imdb_plot) = imdb_ep_map.get(&ep_num_i) {
-                ep.synopsis = Some(imdb_plot.clone());
-            }
-        }
-
-        // Enrich DUB episodes
-        for ep in &mut dub {
-            let ep_num_i = ep.number as i32;
-            if let Some(mal_info) = mal_ep_map.get(&ep_num_i) {
-                if let Some(ref mal_title) = mal_info.title {
-                    if !mal_title.trim().is_empty() {
-                        ep.title = Some(mal_title.clone());
-                    }
-                }
-                ep.filler = mal_info.filler;
-                if ep.synopsis.is_none() {
-                    ep.synopsis = mal_info.synopsis.clone();
-                }
-            }
-            if let Some(imdb_plot) = imdb_ep_map.get(&ep_num_i) {
-                ep.synopsis = Some(imdb_plot.clone());
-            }
-        }
-
-        map.insert(
-            pdata.name,
-            ProviderEpisodes { sub, dub },
-        );
-    }
-
-    Ok(map)
+    Ok(ProviderEpisodeMap(entries))
 }
 
 #[tauri::command]
@@ -198,6 +257,7 @@ pub async fn get_episode_sources(
     episode_number: f64,
     category: String,
     title_romaji: Option<String>,
+    provider: Option<String>,
 ) -> Result<SourcesResult, String> {
     state
         .provider_manager
@@ -207,6 +267,7 @@ pub async fn get_episode_sources(
             episode_number,
             &category,
             title_romaji,
+            provider.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())
@@ -245,4 +306,47 @@ pub async fn get_filler_episodes(
 
     let _ = db::cache_filler_episodes(&state.pool, mal_id, &episodes).await;
     Ok(episodes)
+}
+
+/// A site that refused the in-app browser until the user verifies, and the providers it serves.
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteVerificationStatus {
+    pub site: String,
+    pub label: String,
+    pub origin: String,
+    pub providers: Vec<String>,
+}
+
+/// Sites that currently need the user to verify before their providers can answer.
+#[tauri::command]
+pub async fn get_site_verification_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<SiteVerificationStatus>, String> {
+    Ok(web_session::verification_status()
+        .into_iter()
+        .map(|pending| SiteVerificationStatus {
+            providers: {
+                // Plugins whose requests met the site's check, plus providers bound to the site.
+                let mut names = crate::plugins::net::plugins_for_site(&pending.site);
+                for name in state.provider_manager.providers_for_site(&pending.site) {
+                    if !names.iter().any(|known| known == name) {
+                        names.push(name.to_string());
+                    }
+                }
+                names
+            },
+            site: pending.site,
+            label: pending.label,
+            origin: pending.origin,
+        })
+        .collect())
+}
+
+/// Shows the site's own window so the user can pass its check. The frontend hears the outcome
+/// as a `site-verified` or `site-verification-cancelled` event.
+#[tauri::command]
+pub async fn open_site_verification(site: String) -> Result<(), String> {
+    web_session::open_verification(&site)
+        .await
+        .map_err(|e| e.reason())
 }

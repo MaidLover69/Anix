@@ -4,5 +4,5 @@ use tauri::State;
 
 #[tauri::command]
 pub async fn check_for_update(state: State<'_, AppState>) -> Result<Option<UpdateInfo>, String> {
-    Ok(fetch_latest_release(&state.client).await)
+    fetch_latest_release(&state.client).await
 }

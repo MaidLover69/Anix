@@ -3,8 +3,8 @@
 //! Every test uses a private in-memory database or a file in a fresh temp directory; none
 //! touches the user's database.
 
-use anilili_lib::db;
-use anilili_lib::models::{
+use anix_lib::db;
+use anix_lib::models::{
     AiringEntry, CustomPlaylistItem, DownloadRecord, HistoryEntry, NotificationPreference,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -20,7 +20,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "anilili-db-test-{}-{}-{}",
+            "anix-db-test-{}-{}-{}",
             name,
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
@@ -31,7 +31,7 @@ impl TempDir {
     }
 
     fn db_path(&self) -> PathBuf {
-        self.0.join("anilili.db")
+        self.0.join("anix.db")
     }
 }
 

@@ -59,8 +59,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "anilili-linux"
-version = "1.0.3"
+name = "anix"
+version = "1.1.0"
 dependencies = [
  "aes",
  "async-trait",

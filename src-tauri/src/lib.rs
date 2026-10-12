@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod downloads;
 pub mod error;
+pub mod migration;
 pub mod models;
 pub mod notifier;
 pub mod plugins;
@@ -17,6 +18,12 @@ use state::AppState;
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+/// An environment variable under its current name, or under the name it had before the app
+/// was renamed (`ANILILI_…`), which keeps working.
+pub fn env_var_os(name: &str, legacy_name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name).or_else(|| std::env::var_os(legacy_name))
+}
+
 /// Sends backend logs to stderr in development and to a log file in packaged builds,
 /// where nothing is attached to stderr.
 fn init_logging() {
@@ -28,7 +35,7 @@ fn init_logging() {
     }
 
     let log_file = db::get_app_dir().ok().and_then(|dir| {
-        let path = dir.join("anilili.log");
+        let path = dir.join(migration::LOG_FILE_NAME);
         // Start over once the file grows past 2 MB.
         let too_big = std::fs::metadata(&path).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false);
         std::fs::OpenOptions::new()
@@ -50,11 +57,17 @@ fn init_logging() {
 }
 
 pub fn run() {
+    // Before anything else: the log file, the database and the webview's storage are all in
+    // folders this renames when they still carry the app's earlier name. Tauri creates the
+    // webview's folder while building the main window, which is before `setup` runs.
+    let bases = migration::BaseDirs::system();
+    let migrated = migration::migrate(&bases);
     init_logging();
+    migrated.log();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second launch (for example from an anilili:// link) focuses the running window.
+            // A second launch (for example from an anix:// link) focuses the running window.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
@@ -63,10 +76,15 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
-        .setup(|app| {
+        .setup(move |app| {
             web_session::init(app.handle().clone());
             match tauri::async_runtime::block_on(db::init_db()) {
                 Ok(pool) => {
+                    match tauri::async_runtime::block_on(migration::repoint_download_paths(&pool, &bases)) {
+                        Ok(0) => {}
+                        Ok(count) => tracing::info!("{} downloads now point into the renamed data folder", count),
+                        Err(e) => tracing::warn!("Download paths could not be checked after the rename: {}", e),
+                    }
                     let state = AppState::new(pool);
                     plugins::start(app.handle().clone(), state.plugins.clone());
                     let registry = state.plugins.clone();
@@ -86,10 +104,10 @@ pub fn run() {
                     let handle = app.handle().clone();
                     app.dialog()
                         .message(format!(
-                            "Anilili could not open its database and has to close.\n\n{}",
+                            "Anix could not open its database and has to close.\n\n{}",
                             e
                         ))
-                        .title("Anilili")
+                        .title("Anix")
                         .kind(MessageDialogKind::Error)
                         .show(move |_| handle.exit(1));
                 }
@@ -155,6 +173,7 @@ pub fn run() {
             commands::open_file_in_player,
             // Updates
             commands::check_for_update,
+            commands::get_site_url,
             // Stream proxy
             stream_proxy::get_stream_proxy_base,
             // Custom Playlists & Queue

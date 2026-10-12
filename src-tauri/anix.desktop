@@ -8,5 +8,5 @@ Icon={{icon}}
 Name={{name}}
 Terminal=false
 Type=Application
-MimeType=x-scheme-handler/anilili;
-Keywords=anime;streaming;
+MimeType=x-scheme-handler/anix;x-scheme-handler/anilili;
+Keywords=anime;tracker;player;

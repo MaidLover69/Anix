@@ -37,7 +37,7 @@ impl AnimeThemesClient {
         let res = self
             .client
             .get(&url)
-            .header("User-Agent", "AnililiLinux/1.0")
+            .header("User-Agent", crate::clients::http::APP_USER_AGENT)
             .send()
             .await
             .map_err(|e| AppError::Network(e.to_string()))?;

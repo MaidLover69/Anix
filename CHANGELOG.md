@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.1.0
+
+### Anilili is now Anix
+- New name, window title, desktop entry and package names (`Anix_1.1.0_amd64.AppImage`,
+  `Anix-1.1.0-1.x86_64.rpm`, `Anix_1.1.0_amd64.deb`). Links use `anix://`; `anilili://` links
+  still open the app.
+- Your data moves with it. The first time Anix starts it finds an Anilili install and renames
+  its folders: `~/.local/share/anilili` → `~/.local/share/anix` (database, downloads,
+  extensions, log), `~/.config/anilili` → `~/.config/anix` (settings), `~/.cache/anilili` →
+  `~/.cache/anix`, and `~/.local/share/io.anilili.linux` → `~/.local/share/io.anix.app` (player
+  preferences and site sessions). History, watchlist, playlists, downloads, settings,
+  installed extensions and sign-ins carry over. Nothing that already exists under the new
+  names is overwritten, what was done is written to the log, and the app starts even when
+  something could not be moved. Close Anilili before the first start of Anix.
+- Extensions written for Anilili run unchanged: the `$anilili` helpers are also available as
+  `$anix`.
+
+### Updates
+- The update check now reads the latest version from the project website instead of GitHub,
+  and the download button opens the website's download page.
+
+### Extensions
+- An extension list can be hosted on Google Drive. Share links (`…/file/d/<id>/view`,
+  `…/open?id=<id>`, `…/uc?id=<id>`) are accepted, and so is a web address that redirects to
+  one; the shared file itself is downloaded.
+- When Drive answers with a page instead of the file (sign-in, download quota or virus-scan
+  notice) the app says "Google Drive did not return the file" with the reason, and the
+  extensions already installed stay as they are.
+- A list can name itself: `{ "name": "…", "plugins": [ … ] }` is accepted next to a bare array.
+- Code that comes inline in a list is replaced whenever it changes, even when the extension's
+  version number stays the same.
+
+### Themes
+- A theme selector in Settings: Default dark, Light, Mocha, Hacker, Dracula, Tokyo Night,
+  Manga and Comic.
+
 ## 1.0.3
 
 ### Plugins
@@ -16,8 +52,7 @@
 
 ### Player
 - Direct MP4 streams now report their length and accept seeking through the stream proxy.
-  Files with their index at the end (for example AnimeWorld's) used to fail with "The video
-  could not be loaded".
+  Files with their index at the end used to fail with "The video could not be loaded".
 
 ## 1.0.2
 
@@ -25,7 +60,6 @@
 - The app no longer contains any streaming source. Sources are JavaScript plugins in Seanime's
   `onlinestream-provider` format, run in a sandboxed engine and installed from a repository
   link in **Settings → Plugins**, each with its own on/off switch.
-- The official repository is `https://github.com/MaidLover69/Anilili_Linux_plugins`.
 - Added repositories are re-read at every launch and with **Refresh all**.
 - With no plugin enabled the app still shows anime and episodes and says what is missing.
 

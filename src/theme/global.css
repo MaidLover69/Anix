@@ -2,18 +2,26 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
-:root {
-  /* Solid colours are RGB channels (see tailwind.config.js) so opacity modifiers work. */
+:root,
+[data-theme-scope],
+:root[data-theme="light"] .dark-scope {
+  /* The default theme ("dark"). Other themes override these in themes.css; a
+     [data-theme-scope] element (the theme picker's previews) starts again from these
+     defaults, and .dark-scope keeps the player dark under the light theme.
+     Solid colours are RGB channels (see tailwind.config.js) so opacity modifiers work. */
   --bg-deepest:     6 6 8;
   --bg-page:        10 10 13;
   --bg-card:        18 18 23;
   --bg-elevated:    26 26 33;
   --bg-surface:     30 30 38;
   --bg-input:       34 34 43;
+  /* Hairlines are --border-rgb at a low alpha. */
+  --border-rgb:     255 255 255;
   --border-alpha:   0.08;
-  --border:         rgb(255 255 255 / var(--border-alpha));
-  --border-strong:  rgba(255, 255, 255, 0.14);
-  --border-focus:   rgba(137, 121, 242, 0.5);
+  --border-strong-alpha: 0.14;
+  --border-focus:   rgb(137 121 242 / 0.5);
+  /* Hover and pressed washes, tracks, shimmer, scrollbars: the text-side colour at a low alpha. */
+  --ink:            255 255 255;
   --accent-950:     36 18 107;
   --accent-900:     59 31 168;
   --accent-700:     90 56 212;
@@ -23,7 +31,10 @@
   --accent-300:     169 158 245;
   --accent-200:     188 179 248;
   --accent-100:     207 201 251;
-  --accent-tint:    rgba(137, 121, 242, 0.12);
+  --accent-tint:    rgb(137 121 242 / 0.12);
+  /* Text and icons on a filled accent surface (accent-600/700/500). */
+  --on-accent:      255 255 255;
+  --switch-knob:    255 255 255;
   --text-primary:   #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.72);
   --text-muted:     rgba(255, 255, 255, 0.56);
@@ -36,9 +47,26 @@
   --radius-lg:      10px;
   --radius-xl:      12px;
   --radius-2xl:     16px;
+  --shadow-pop:     0 8px 24px rgb(0 0 0 / 0.5);
+  --selection-bg:   rgb(137 121 242 / 0.4);
+  --selection-text: #ffffff;
+  --font-ui:        "Inter Variable", "Inter", "Noto Sans", system-ui, sans-serif;
 
-  /* Native pieces (number steppers, media controls, textarea scrollbars) follow the dark theme. */
+  /* Native pieces (number steppers, media controls, textarea scrollbars) follow the theme. */
   color-scheme: dark;
+}
+
+/* A scope is a small island with its own tokens, so it sets the inherited ones itself. */
+[data-theme-scope],
+.dark-scope {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+html {
+  /* index.html carries an inline dark background until the theme bootstrap (main.tsx) has
+     run; after that this rule decides, so light themes are not painted over. */
+  background-color: rgb(var(--bg-page));
 }
 
 * {
@@ -50,7 +78,7 @@
 body {
   background-color: rgb(var(--bg-page));
   color: var(--text-primary);
-  font-family: "Inter Variable", "Inter", "Noto Sans", system-ui, sans-serif;
+  font-family: var(--font-ui);
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -67,12 +95,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgb(var(--ink) / 0.15);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgb(var(--ink) / 0.3);
 }
 
 ::-webkit-scrollbar-corner {
@@ -103,54 +131,49 @@ body {
 }
 
 ::selection {
-  background: rgb(var(--accent-500) / 0.4);
-  color: #ffffff;
+  background: var(--selection-bg);
+  color: var(--selection-text);
 }
 
 /* Shimmer Animation */
 .shimmer-placeholder {
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.03) 0%,
-    rgba(255, 255, 255, 0.08) 50%,
-    rgba(255, 255, 255, 0.03) 100%
+    rgb(var(--ink) / 0.04) 0%,
+    rgb(var(--ink) / 0.09) 50%,
+    rgb(var(--ink) / 0.04) 100%
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite linear;
 }
 
-/* App-Wide Dark Dropdown & Select Control Styling Fix for Linux WebKitGTK */
+/* Native <select>/<option>, themed for WebKitGTK (the app's own dropdown is CustomSelect). */
 select {
   -webkit-appearance: none !important;
-  -moz-appearance: none !important;
   appearance: none !important;
   background-color: rgb(var(--bg-elevated)) !important;
-  color: #ffffff !important;
-  border: 1px solid var(--border-strong) !important;
-  border-radius: 8px !important;
-  padding: 6px 32px 6px 12px !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238979F2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
-  background-repeat: no-repeat !important;
-  background-position: right 10px center !important;
-  background-size: 14px !important;
+  color: var(--text-primary) !important;
+  border: 1px solid rgb(var(--border-rgb) / var(--border-strong-alpha)) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 6px 12px !important;
   outline: none !important;
   cursor: pointer !important;
 }
 
 select:focus {
-  border-color: #8979F2 !important;
-  box-shadow: 0 0 0 2px rgba(137, 121, 242, 0.3) !important;
+  border-color: rgb(var(--accent-500)) !important;
+  box-shadow: 0 0 0 2px rgb(var(--accent-500) / 0.3) !important;
 }
 
 option {
   background-color: rgb(var(--bg-elevated)) !important;
-  color: #ffffff !important;
+  color: var(--text-primary) !important;
   padding: 8px 12px !important;
 }
 
 option:checked, option:hover {
-  background-color: #8979F2 !important;
-  color: #ffffff !important;
+  background-color: rgb(var(--accent-600)) !important;
+  color: rgb(var(--on-accent)) !important;
 }
 
 /* Text that people copy (titles, synopses, errors, paths) opts back in to selection */

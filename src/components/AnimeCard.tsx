@@ -55,7 +55,7 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   return (
     <div className={`group relative flex flex-col flex-shrink-0 select-none ${className}`} style={style}>
       <Link to={`/detail/${media.id}`} draggable={false} className="flex flex-col rounded-xl">
-        <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden bg-bg-card">
+        <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card">
           <ShimmerImage
             src={coverUrl}
             alt=""

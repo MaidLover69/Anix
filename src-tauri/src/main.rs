@@ -10,5 +10,5 @@ fn main() {
         }
     }
 
-    anilili_lib::run();
+    anix_lib::run();
 }

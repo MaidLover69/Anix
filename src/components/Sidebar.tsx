@@ -28,7 +28,7 @@ const itemClass = (expanded: boolean) =>
     'relative flex h-9 w-full items-center gap-3 rounded-md text-[13px] font-medium cursor-pointer transition-colors',
     expanded ? 'px-3' : 'justify-center'
   );
-const IDLE_CLASS = 'text-text-secondary hover:bg-white/5 hover:text-text-primary';
+const IDLE_CLASS = 'text-text-secondary hover:bg-ink/5 hover:text-text-primary';
 
 const SidebarLink: React.FC<{
   to: string;
@@ -43,7 +43,7 @@ const SidebarLink: React.FC<{
     aria-label={label}
     draggable={false}
     className={({ isActive }) =>
-      clsx(itemClass(expanded), isActive ? 'bg-accent-tint text-accent-300' : IDLE_CLASS)
+      clsx(itemClass(expanded), isActive ? 'ui-nav-active bg-accent-tint text-accent-300' : IDLE_CLASS)
     }
   >
     {({ isActive }) => (
@@ -74,7 +74,7 @@ export const Sidebar: React.FC = () => {
   return (
     <aside
       className={clsx(
-        'relative z-30 flex h-full flex-shrink-0 flex-col justify-between border-r border-border bg-bg-deepest select-none transition-[width] duration-200',
+        'ui-sidebar relative z-30 flex h-full flex-shrink-0 flex-col justify-between border-r border-border bg-bg-deepest select-none transition-[width] duration-200',
         expanded ? 'w-56' : 'w-16'
       )}
     >
@@ -96,7 +96,7 @@ export const Sidebar: React.FC = () => {
           {expanded && (
             <>
               <span className="flex-1 truncate text-left">Search</span>
-              <kbd className="rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
+              <kbd className="rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
                 Ctrl+K
               </kbd>
             </>
@@ -114,7 +114,7 @@ export const Sidebar: React.FC = () => {
           {expanded && (
             <>
               <span className="flex-1 truncate text-left">Shortcuts</span>
-              <kbd className="rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
+              <kbd className="rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
                 ?
               </kbd>
             </>
@@ -130,7 +130,7 @@ export const Sidebar: React.FC = () => {
             aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
             aria-expanded={expanded}
             title={expanded ? undefined : 'Expand sidebar'}
-            className={clsx(itemClass(expanded), 'text-text-muted hover:bg-white/5 hover:text-text-primary')}
+            className={clsx(itemClass(expanded), 'text-text-muted hover:bg-ink/5 hover:text-text-primary')}
           >
             {expanded ? (
               <>

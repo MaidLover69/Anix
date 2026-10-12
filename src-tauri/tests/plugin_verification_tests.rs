@@ -5,12 +5,12 @@
 
 mod plugin_support;
 
-use anilili_lib::commands::verification_entries;
-use anilili_lib::plugins::net::{plugins_for_site, NetContext, WireRequest};
-use anilili_lib::plugins::registry::{PluginRegistry, RegistryOptions};
-use anilili_lib::providers::common::with_session_allowance;
-use anilili_lib::providers::manager::ProviderManager;
-use anilili_lib::web_session::{self, SessionState, SessionUse, SiteSession, SiteVerification, WebRequest};
+use anix_lib::commands::verification_entries;
+use anix_lib::plugins::net::{plugins_for_site, NetContext, WireRequest};
+use anix_lib::plugins::registry::{PluginRegistry, RegistryOptions};
+use anix_lib::providers::common::with_session_allowance;
+use anix_lib::providers::manager::ProviderManager;
+use anix_lib::web_session::{self, SessionState, SessionUse, SiteSession, SiteVerification, WebRequest};
 use plugin_support::{guarded, BrowserStandIn, Req, Resp, Site, PASS_COOKIE};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "anilili-verification-test-{}-{}-{}",
+        "anix-verification-test-{}-{}-{}",
         name,
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
@@ -213,7 +213,7 @@ fn state_of(browser: &BrowserStandIn, site: &Site) -> SessionState {
     browser.state(web_session::site_for_origin(&site.base()).unwrap())
 }
 
-async fn play(manager: &ProviderManager, anilist_id: i64, provider: Option<&str>) -> Result<anilili_lib::models::SourcesResult, String> {
+async fn play(manager: &ProviderManager, anilist_id: i64, provider: Option<&str>) -> Result<anix_lib::models::SourcesResult, String> {
     manager
         .get_sources_for_episode(anilist_id, None, 1.0, "sub", Some("Guarded Show".to_string()), provider)
         .await

@@ -48,7 +48,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       aria-label={rest['aria-label']}
-      className={clsx('inline-flex flex-shrink-0 items-center gap-0.5 rounded-md bg-bg-input p-0.5', className)}
+      className={clsx('ui-seg inline-flex flex-shrink-0 items-center gap-0.5 rounded-md bg-bg-input p-0.5', className)}
     >
       {options.map((option, index) => {
         const selected = option.value === value;

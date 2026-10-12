@@ -86,7 +86,7 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
             <Link
               to={viewAllLink}
               draggable={false}
-              className="-mr-3 flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-white/10 hover:text-text-primary"
+              className="-mr-3 flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-ink/10 hover:text-text-primary"
             >
               View all
             </Link>

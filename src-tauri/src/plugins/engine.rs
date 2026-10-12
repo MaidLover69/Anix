@@ -773,7 +773,7 @@ struct Vm {
     stale: bool,
 }
 
-const DRIVER: &str = "__anilili_driver";
+const DRIVER: &str = "__anix_driver";
 
 impl Vm {
     fn build(

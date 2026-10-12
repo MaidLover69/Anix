@@ -23,7 +23,7 @@ export const Chip: React.FC<ChipProps> = ({
 }) => {
   const accent = selected || tone === 'accent';
   const classes = clsx(
-    'inline-flex h-7 items-center rounded-sm px-3 text-xs whitespace-nowrap select-none',
+    'ui-chip inline-flex h-7 items-center rounded-sm px-3 text-xs whitespace-nowrap select-none',
     accent ? 'bg-accent-tint text-accent-300' : 'bg-bg-elevated text-text-secondary',
     className
   );

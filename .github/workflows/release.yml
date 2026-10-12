@@ -89,7 +89,7 @@ jobs:
       - name: Upload Packaging Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: anilili-linux-packages
+          name: anix-linux-packages
           path: dist-packages/
 
       - name: Create GitHub Release

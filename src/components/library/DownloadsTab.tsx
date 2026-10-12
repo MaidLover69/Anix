@@ -184,7 +184,7 @@ const DownloadRow: React.FC<DownloadRowProps> = ({
   const name = `${record.series_title}, ${episodeLabel(record.episode_num)}`;
 
   return (
-    <li className="flex items-center gap-3 p-3 rounded-md bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_88px]">
+    <li className="flex items-center gap-3 p-3 rounded-md ui-card bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_88px]">
       <CoverThumb src={record.series_cover} className="w-12 h-16 rounded-md flex-shrink-0" />
 
       <div className="flex flex-col flex-1 min-w-0 gap-1">
@@ -203,7 +203,7 @@ const DownloadRow: React.FC<DownloadRowProps> = ({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percent}
-              className="flex-1 max-w-xs h-1 rounded-full bg-white/10 overflow-hidden"
+              className="flex-1 max-w-xs h-1 rounded-full bg-ink/10 overflow-hidden"
             >
               <div className="h-full rounded-full bg-accent-500" style={{ width: `${percent}%` }} />
             </div>

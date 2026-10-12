@@ -1,13 +1,13 @@
 [package]
-name = "anilili-linux"
-version = "1.0.3"
-description = "Anilili - Modern Anime Streaming & Library Desktop App for Linux"
-authors = ["Anilili Team"]
+name = "anix"
+version = "1.1.0"
+description = "Anix - anime catalogue, tracker, library and player for Linux"
+authors = ["Anix"]
 license = "MIT"
 edition = "2021"
 
 [lib]
-name = "anilili_lib"
+name = "anix_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

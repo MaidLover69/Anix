@@ -93,7 +93,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       }}
       // clip-path (not overflow + radius) flattens the slides and scrims before rounding, so no
       // sliver of artwork shows along the corners.
-      className="group relative h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 bg-bg-card [clip-path:inset(0_round_16px)]"
+      className="group relative h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 ui-hero bg-bg-card [clip-path:inset(0_round_16px)]"
     >
       {/* Every slide's image stays mounted so the change is a cross-fade, not a cut. */}
       {items.map((item, i) => {
@@ -117,9 +117,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           visible everywhere, so the banner keeps an edge on all four sides. */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg-deepest/95 via-bg-deepest/55 to-transparent" />
       <div className="pointer-events-none absolute inset-y-0 left-0 w-4/5 bg-gradient-to-r from-bg-deepest/90 via-bg-deepest/65 to-transparent" />
-      <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/[0.06]" />
+      <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-ink/[0.06]" />
 
-      <div className="relative z-20 flex h-full max-w-2xl flex-col justify-end p-8 [text-shadow:0_1px_2px_rgb(0_0_0/0.45)]">
+      <div className="relative z-20 flex h-full max-w-2xl flex-col justify-end p-8 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)]">
         {caption && <p className="mb-2 text-xs text-text-secondary">{caption}</p>}
 
         <h2 className="mb-2 text-[28px] font-bold leading-[34px] tracking-[-0.02em] text-text-primary line-clamp-2 select-text">
@@ -190,7 +190,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 <span
                   className={clsx(
                     'block h-1.5 rounded-full transition-[width,background-color] duration-200',
-                    i === currentIndex ? 'w-6 bg-accent-500' : 'w-1.5 bg-white/40'
+                    i === currentIndex ? 'w-6 bg-accent-500' : 'w-1.5 bg-ink/40'
                   )}
                 />
               </button>

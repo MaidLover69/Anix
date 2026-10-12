@@ -108,7 +108,7 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
           role="menu"
           aria-label={label}
           onKeyDown={handleKeyDown}
-          className="absolute bottom-full right-0 z-40 mb-2 max-h-80 min-w-[9rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+          className="ui-menu absolute bottom-full right-0 z-40 mb-2 max-h-80 min-w-[9rem] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-pop"
         >
           {options.map((option) => {
             const selected = option.value === value;

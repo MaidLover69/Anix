@@ -1,13 +1,13 @@
-use anilili_lib::cache::L1Cache;
-use anilili_lib::clients::anilist::{interpret_graphql_response, parse_media_hint, parse_media_json};
-use anilili_lib::clients::aniskip::{skip_times_from_response, AniSkipResponse};
-use anilili_lib::clients::app_settings::{DohProvider, NetworkSettings};
-use anilili_lib::clients::http::parse_doh_answer;
-use anilili_lib::clients::imdb::{imdb_season_for_title, parse_season_page, season_matches_expected};
-use anilili_lib::clients::jikan::retry_delay;
-use anilili_lib::commands::providers::{episode_key, released_episode_cap, ProviderEpisodeMap};
-use anilili_lib::error::AppError;
-use anilili_lib::models::{CoverImage, Media, MediaTitle, ProviderEpisodes, SourcesResult, StreamItem};
+use anix_lib::cache::L1Cache;
+use anix_lib::clients::anilist::{interpret_graphql_response, parse_media_hint, parse_media_json};
+use anix_lib::clients::aniskip::{skip_times_from_response, AniSkipResponse};
+use anix_lib::clients::app_settings::{DohProvider, NetworkSettings};
+use anix_lib::clients::http::parse_doh_answer;
+use anix_lib::clients::imdb::{imdb_season_for_title, parse_season_page, season_matches_expected};
+use anix_lib::clients::jikan::retry_delay;
+use anix_lib::commands::providers::{episode_key, released_episode_cap, ProviderEpisodeMap};
+use anix_lib::error::AppError;
+use anix_lib::models::{CoverImage, Media, MediaTitle, ProviderEpisodes, SourcesResult, StreamItem};
 use serde_json::json;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -400,7 +400,7 @@ fn provider_map_serialises_in_provider_order() {
 
 #[test]
 fn test_anime_themes_model() {
-    use anilili_lib::clients::animethemes::AnimeThemeEntry;
+    use anix_lib::clients::animethemes::AnimeThemeEntry;
     let theme = AnimeThemeEntry {
         theme_type: "OP".to_string(),
         sequence: Some(1),
@@ -418,7 +418,7 @@ fn test_anime_themes_model() {
 
 #[test]
 fn test_local_anime_file_model() {
-    use anilili_lib::commands::local_scanner::LocalAnimeFile;
+    use anix_lib::commands::local_scanner::LocalAnimeFile;
     let file = LocalAnimeFile {
         file_path: "/videos/Frieren - 01.mkv".to_string(),
         file_name: "Frieren - 01.mkv".to_string(),

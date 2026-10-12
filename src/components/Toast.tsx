@@ -51,7 +51,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
         <div
           key={toast.id}
           role={toast.type === 'error' ? 'alert' : 'status'}
-          className="pointer-events-auto flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 pl-4 pr-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)] animate-slide-up"
+          className="ui-toast pointer-events-auto flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 pl-4 pr-2 shadow-pop animate-slide-up"
         >
           {ICONS[toast.type]}
           <div className="flex min-w-0 flex-1 flex-col">

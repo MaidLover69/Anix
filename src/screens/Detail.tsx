@@ -174,7 +174,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       <div aria-busy="true" className="flex flex-col gap-8 pb-16">
         <div className="flex flex-col gap-3">
           <BackButton />
-          <div className="flex gap-6 rounded-2xl bg-bg-card p-6 pt-28">
+          <div className="flex gap-6 rounded-2xl ui-card bg-bg-card p-6 pt-28">
             <div className="aspect-[2/3] w-48 flex-shrink-0 rounded-xl shimmer-placeholder" />
             <div className="flex flex-1 flex-col">
               <div className="h-[34px] w-2/3 rounded-md shimmer-placeholder" />
@@ -340,7 +340,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       <div className="flex flex-col gap-3">
         <BackButton />
 
-        <header className="relative overflow-hidden rounded-2xl bg-bg-card">
+        <header className="relative overflow-hidden rounded-2xl ui-card bg-bg-card">
           {bannerImage && (
             <div aria-hidden="true" className="absolute inset-x-0 top-0 h-56">
               <img
@@ -359,7 +359,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
             <ShimmerImage
               src={coverImage}
               alt={`${title} cover`}
-              className="aspect-[2/3] w-48 flex-shrink-0 self-start rounded-xl bg-bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+              className="aspect-[2/3] w-48 flex-shrink-0 self-start rounded-xl bg-bg-elevated shadow-pop"
             />
 
             <div className="flex min-w-0 flex-1 flex-col">

@@ -2,14 +2,14 @@
 //! argument list, stream and subtitle recognition. Nothing here runs ffmpeg or uses the
 //! network.
 
-use anilili_lib::downloads::{
+use anix_lib::downloads::{
     build_ffmpeg_args, configured_download_dir, detect_subtitle_format, output_base_name,
     parse_hls_demuxer_help, pick_stream, preferred_provider, remove_stale_part_files,
     request_headers, sanitize_filename, truncate_to_bytes, validate_stream_url, work_tag,
     DownloadSource, FfmpegInput, HlsDemuxerOptions, RequestHeaders, SubtitleFormat, SubtitleInput,
     BROWSER_USER_AGENT, MAX_FILE_NAME_BYTES, PART_SUFFIX,
 };
-use anilili_lib::models::StreamItem;
+use anix_lib::models::StreamItem;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -142,7 +142,7 @@ fn download_dir_setting_is_honoured_when_usable() {
 
 #[test]
 fn stale_part_files_are_removed_and_nothing_else() {
-    let dir = std::env::temp_dir().join(format!("anilili-part-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("anix-part-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join(format!("folder{}", PART_SUFFIX))).unwrap();
 
@@ -286,7 +286,7 @@ fn ffmpeg_args_for_an_hls_stream_carry_headers_and_keep_the_url_behind_dash_i() 
         },
         hls: Some(HlsDemuxerOptions { allowed_extensions: true, extension_picky: true }),
     };
-    let output = Path::new("/downloads/Show - EP 01 [SUB 1080p].tag.video.anilili-part");
+    let output = Path::new("/downloads/Show - EP 01 [SUB 1080p].tag.video.anix-part");
     let args = strings(&build_ffmpeg_args(&input, None, output));
 
     assert_eq!(
@@ -303,7 +303,7 @@ fn ffmpeg_args_for_an_hls_stream_carry_headers_and_keep_the_url_behind_dash_i() 
             "-i", "https://cdn.example/a/index.m3u8?t=1",
             "-c", "copy",
             "-f", "matroska",
-            "/downloads/Show - EP 01 [SUB 1080p].tag.video.anilili-part",
+            "/downloads/Show - EP 01 [SUB 1080p].tag.video.anix-part",
         ]
     );
 
@@ -341,11 +341,11 @@ fn ffmpeg_args_only_use_hls_options_the_installed_ffmpeg_has() {
 
 #[test]
 fn ffmpeg_args_with_a_subtitle_add_it_as_a_second_typed_input() {
-    let input = FfmpegInput::Local(PathBuf::from("/d/Show.tag.download.anilili-part"));
-    let output = Path::new("/d/Show.tag.video.anilili-part");
+    let input = FfmpegInput::Local(PathBuf::from("/d/Show.tag.download.anix-part"));
+    let output = Path::new("/d/Show.tag.video.anix-part");
 
     let vtt = SubtitleInput {
-        path: PathBuf::from("/d/Show.tag.sub0.anilili-part"),
+        path: PathBuf::from("/d/Show.tag.sub0.anix-part"),
         format: SubtitleFormat::WebVtt,
         language: "English".to_string(),
     };
@@ -355,12 +355,12 @@ fn ffmpeg_args_with_a_subtitle_add_it_as_a_second_typed_input() {
         vec![
             "-hide_banner", "-nostdin", "-loglevel", "warning", "-y",
             "-nostats", "-progress", "pipe:1",
-            "-i", "/d/Show.tag.download.anilili-part",
-            "-f", "webvtt", "-i", "/d/Show.tag.sub0.anilili-part",
+            "-i", "/d/Show.tag.download.anix-part",
+            "-f", "webvtt", "-i", "/d/Show.tag.sub0.anix-part",
             "-c", "copy", "-c:s", "srt",
             "-metadata:s:s:0", "title=English",
             "-f", "matroska",
-            "/d/Show.tag.video.anilili-part",
+            "/d/Show.tag.video.anix-part",
         ]
     );
     // A local input sends no network options.

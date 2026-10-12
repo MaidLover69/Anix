@@ -20,7 +20,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   <div className={clsx('flex flex-col items-center justify-center px-6 py-16 text-center', className)}>
     {icon && (
       // The tile sizes the icon, so every empty state has the same mark whatever the caller passes.
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06] text-text-secondary [&>svg]:h-6 [&>svg]:w-6">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-ink/[0.06] text-text-secondary [&>svg]:h-6 [&>svg]:w-6">
         {icon}
       </div>
     )}

@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Puzzle, RefreshCw, Trash2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CustomSelect } from '../components/CustomSelect';
+import { ThemePicker } from '../components/ThemePicker';
+import { useTheme } from '../hooks/useTheme';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
 import { Modal } from '../components/ui/Modal';
@@ -65,7 +67,7 @@ const Section: React.FC<{
       <h2 id={titleId} className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
         {title}
       </h2>
-      <div className="divide-y divide-border rounded-xl bg-bg-card px-4">{children}</div>
+      <div className="divide-y divide-border rounded-xl ui-card bg-bg-card px-4">{children}</div>
     </section>
   );
 };
@@ -74,12 +76,20 @@ const Section: React.FC<{
 const Row: React.FC<{
   label: string;
   hint?: string;
+  /** Puts the control under the label, for one that needs the full width. */
+  stacked?: boolean;
   children: (ids: { labelId: string; hintId: string | undefined }) => React.ReactNode;
-}> = ({ label, hint, children }) => {
+}> = ({ label, hint, stacked = false, children }) => {
   const labelId = useId();
   const hintId = useId();
   return (
-    <div className="flex min-h-[56px] items-center justify-between gap-6 py-3">
+    <div
+      className={
+        stacked
+          ? 'flex flex-col gap-3 py-3'
+          : 'flex min-h-[56px] items-center justify-between gap-6 py-3'
+      }
+    >
       <div className="flex min-w-0 flex-col">
         <span id={labelId} className="text-[13px] font-medium text-text-primary">
           {label}
@@ -90,7 +100,7 @@ const Row: React.FC<{
           </span>
         )}
       </div>
-      <div className="flex flex-shrink-0 items-center">
+      <div className={stacked ? 'flex w-full' : 'flex flex-shrink-0 items-center'}>
         {children({ labelId, hintId: hint ? hintId : undefined })}
       </div>
     </div>
@@ -106,13 +116,13 @@ function parseRepoLink(input: string): { url: string } | { problem: string } {
   try {
     parsed = new URL(url);
   } catch {
-    return { problem: 'This does not look like a link. Example: https://github.com/owner/repository' };
+    return { problem: 'This does not look like a link. It should start with https://' };
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     return { problem: 'The link has to start with https://' };
   }
   if (!parsed.hostname.includes('.') || /\s/.test(text)) {
-    return { problem: 'This does not look like a link. Example: https://github.com/owner/repository' };
+    return { problem: 'This does not look like a link. It should start with https://' };
   }
   const isGitHub = /^(www\.)?github\.com$/i.test(parsed.hostname);
   if (isGitHub && parsed.pathname.split('/').filter(Boolean).length < 2) {
@@ -146,7 +156,7 @@ function updatedLabel(updatedAtMs: number): string {
 const PluginIcon: React.FC<{ src: string | null }> = ({ src }) => {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
-    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-white/[0.06] text-text-muted">
+    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-ink/[0.06] text-text-muted">
       {src && failedSrc !== src ? (
         <img
           src={src}
@@ -180,7 +190,7 @@ const PluginRow: React.FC<{
   const failed = plugin.status === 'error';
 
   return (
-    <li className="rounded-md bg-bg-surface px-3 py-2.5">
+    <li className="rounded-md ui-inset bg-bg-surface px-3 py-2.5">
       <div className="flex items-start gap-3">
         <PluginIcon src={plugin.icon} />
         <div className="min-w-0 flex-1">
@@ -355,7 +365,7 @@ const PluginsSection: React.FC = () => {
             inputMode="url"
             autoComplete="off"
             spellCheck={false}
-            placeholder="https://github.com/owner/repository"
+            placeholder="Paste the link of a plugin list"
             value={link}
             onChange={(e) => {
               setLink(e.target.value);
@@ -380,7 +390,7 @@ const PluginsSection: React.FC = () => {
             <p className="text-text-muted">Downloading the repository and its plugins…</p>
           ) : (
             <p className="text-text-muted">
-              A GitHub repository, or a direct link to its index.json or to a single plugin manifest.
+              The link from the Anix website, a Google Drive share link, a GitHub repository, or a direct link to a plugin list.
             </p>
           )}
         </div>
@@ -550,6 +560,7 @@ export const Settings: React.FC = () => {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
   const accountsQuery = useAccountStatus();
+  const { theme, setTheme } = useTheme();
 
   if (settingsQuery.isLoading) {
     return (
@@ -624,6 +635,27 @@ export const Settings: React.FC = () => {
   return (
     <div className="flex max-w-2xl flex-col gap-8 pb-16 animate-fade-in">
       <h1 className="text-xl font-semibold text-text-primary">Settings</h1>
+
+      <Section title="Appearance">
+        <Row label="Theme" hint="Changes the look of the whole app. The player stays dark over the video." stacked>
+          {({ labelId, hintId }) => (
+            <ThemePicker
+              aria-labelledby={labelId}
+              aria-describedby={hintId}
+              value={theme}
+              onChange={(next) =>
+                setTheme(next, (err) =>
+                  showToast({
+                    type: 'error',
+                    title: 'Could not save settings',
+                    message: errorMessage(err),
+                  })
+                )
+              }
+            />
+          )}
+        </Row>
+      </Section>
 
       <Section title="Playback">
         <Row label="Autoplay" hint="Start playing as soon as an episode opens.">
@@ -775,7 +807,7 @@ export const Settings: React.FC = () => {
       </Section>
 
       <Section title="About">
-        <Row label="Anilili" hint={appVersion ? `Version ${appVersion}` : undefined}>
+        <Row label="Anix" hint={appVersion ? `Version ${appVersion}` : undefined}>
           {() => (
             <Button variant="secondary" size="sm" onClick={handleCheckUpdate} disabled={isCheckingUpdate}>
               {isCheckingUpdate && <Spinner size="sm" label="Checking for updates" />}

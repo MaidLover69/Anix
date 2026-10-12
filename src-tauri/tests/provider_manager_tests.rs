@@ -1,14 +1,14 @@
 //! Provider manager behaviour, exercised with in-process providers and a loopback HTTP server
 //! that plays the part of a stream host. No outside network is involved.
 
-use anilili_lib::error::AppError;
-use anilili_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
-use anilili_lib::providers::manager::{
+use anix_lib::error::AppError;
+use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
+use anix_lib::providers::manager::{
     first_playlist_uri, resolve_playlist_uri, summarize_failures, verify_stream_segment,
     verify_streams, ProviderManager,
 };
-use anilili_lib::providers::AnimeProvider;
-use anilili_lib::web_session::{SessionUse, SiteSpec};
+use anix_lib::providers::AnimeProvider;
+use anix_lib::web_session::{SessionUse, SiteSpec};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1,10 +1,10 @@
 //! Release notifications: the planning rules, the notifier driven with a fake schedule and a
 //! fake display, its tables, and the AniList request against a loopback server.
 
-use anilili_lib::notifier;
-use anilili_lib::db;
-use anilili_lib::error::AppError;
-use anilili_lib::models::NotificationPreference;
+use anix_lib::notifier;
+use anix_lib::db;
+use anix_lib::error::AppError;
+use anix_lib::models::NotificationPreference;
 use async_trait::async_trait;
 use notifier::{
     Airing, AniListSchedule, Bell, NotificationSink, Notifier, Plan, PlanInput, ReleaseNotification,

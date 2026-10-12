@@ -54,14 +54,14 @@ const rowClass = (selected: boolean) =>
   `flex h-10 w-full items-center justify-between gap-3 rounded-md px-3 text-left text-[13px] cursor-pointer transition-colors ${
     selected
       ? 'bg-accent-tint text-accent-300'
-      : 'bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
+      : 'ui-inset bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
   }`;
 
 const choiceClass = (selected: boolean) =>
   `flex h-8 items-center justify-center gap-2 rounded-md px-2 text-xs cursor-pointer transition-colors ${
     selected
       ? 'bg-accent-tint text-accent-300'
-      : 'bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
+      : 'ui-inset bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
   }`;
 
 const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -171,7 +171,7 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
 
             <section className="flex flex-col gap-2">
               <SectionLabel>Audio</SectionLabel>
-              <div className="flex items-center justify-between gap-3 rounded-md bg-bg-surface px-3 py-2">
+              <div className="flex items-center justify-between gap-3 rounded-md ui-inset bg-bg-surface px-3 py-2">
                 <span className="text-[13px] text-text-secondary">Version</span>
                 <SegmentedControl
                   size="sm"
@@ -324,7 +324,7 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
 
         {activeTab === 'playback' && (
           <section className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-4 rounded-md bg-bg-surface px-3 py-3">
+            <div className="flex items-center justify-between gap-4 rounded-md ui-inset bg-bg-surface px-3 py-3">
               <div className="min-w-0">
                 <p id="auto-skip-label" className="text-[13px] font-medium text-text-primary">
                   Skip intros and endings automatically
@@ -340,7 +340,7 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
                 onChange={(checked) => saveSettings.mutate({ auto_skip_intro_outro: checked })}
               />
             </div>
-            <div className="flex items-center justify-between gap-4 rounded-md bg-bg-surface px-3 py-3">
+            <div className="flex items-center justify-between gap-4 rounded-md ui-inset bg-bg-surface px-3 py-3">
               <div className="min-w-0">
                 <p id="auto-next-label" className="text-[13px] font-medium text-text-primary">
                   Play the next episode automatically

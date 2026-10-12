@@ -22,7 +22,7 @@ export const UpdateDialog: React.FC = () => {
     <Dialog
       isOpen={updateDialogOpen}
       onClose={() => setUpdateDialogOpen(false)}
-      title={`Anilili ${updateInfo.version} is available`}
+      title={`Anix ${updateInfo.version} is available`}
       maxWidth="max-w-md"
       footer={
         <>
@@ -46,7 +46,7 @@ export const UpdateDialog: React.FC = () => {
       <div className="flex flex-col gap-2">
         {publishedLabel && <p className="text-xs text-text-muted">Released {publishedLabel}</p>}
         <h3 className="text-[13px] font-medium text-text-primary">Release notes</h3>
-        <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md bg-bg-card p-3 text-[13px] leading-relaxed text-text-secondary select-text">
+        <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md ui-card bg-bg-card p-3 text-[13px] leading-relaxed text-text-secondary select-text">
           {updateInfo.changelog || 'No release notes were published.'}
         </div>
       </div>

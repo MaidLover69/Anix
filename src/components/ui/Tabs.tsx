@@ -39,7 +39,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, ...re
     // The rule belongs to the wrapper and the underline to the label, so both stay exactly as
     // wide as before while each tab gains 8px of padding: a larger target, and room for the
     // focus ring.
-    <div className={clsx('border-b border-border', className)}>
+    <div className={clsx('ui-tabs border-b border-border', className)}>
       <div
         role="tablist"
         aria-label={rest['aria-label']}
@@ -60,7 +60,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, ...re
               disabled={tab.disabled}
               onClick={() => onChange(tab.value)}
               onKeyDown={(e) => handleKeyDown(e, index)}
-              className="group flex h-10 flex-shrink-0 items-stretch rounded-sm px-2 text-[13px] font-medium whitespace-nowrap cursor-pointer focus-visible:-outline-offset-2 disabled:opacity-40 disabled:pointer-events-none"
+              className="ui-tab group flex h-10 flex-shrink-0 items-stretch rounded-sm px-2 text-[13px] font-medium whitespace-nowrap cursor-pointer focus-visible:-outline-offset-2 disabled:opacity-40 disabled:pointer-events-none"
             >
               <span
                 className={clsx(

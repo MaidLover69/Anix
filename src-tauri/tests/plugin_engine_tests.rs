@@ -2,10 +2,10 @@
 
 mod plugin_support;
 
-use anilili_lib::plugins::engine::{EngineLimits, PluginEngine, PluginError, PluginRuntime};
-use anilili_lib::plugins::transpile::typescript_to_javascript;
-use anilili_lib::plugins::userconfig::{self, UserConfig};
-use anilili_lib::web_session::SessionUse;
+use anix_lib::plugins::engine::{EngineLimits, PluginEngine, PluginError, PluginRuntime};
+use anix_lib::plugins::transpile::typescript_to_javascript;
+use anix_lib::plugins::userconfig::{self, UserConfig};
+use anix_lib::web_session::SessionUse;
 use base64::Engine as _;
 use plugin_support::{reference_repo, runtime, spec, Req, Resp, Site};
 use serde_json::{json, Value};
@@ -134,6 +134,7 @@ const probes = {
     return {
       version: typeof $anilili.version, id: $anilili.pluginId,
       gunzip: $anilili.gunzip(input.gzip),
+      alias: $anix === $anilili && $anix.gunzip(input.gzip) === $anilili.gunzip(input.gzip),
       xor: $anilili.xor(input.plain, 'key'),
       twice: Buffer.from($anilili.xor($anilili.xor(input.plain, 'key'), 'key'), 'base64').toString(),
       fromBytes: $anilili.gunzip(Buffer.from(input.gzip, 'base64')),
@@ -367,7 +368,7 @@ async fn crypto_buffer_url_and_timers_behave() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn anilili_helpers_gunzip_and_xor() {
+async fn app_helpers_gunzip_and_xor_under_both_names() {
     let engine = runtime("probe", PROBES);
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all("{\"title\":\"ワンピース\"}".as_bytes()).unwrap();
@@ -377,6 +378,7 @@ async fn anilili_helpers_gunzip_and_xor() {
     let out = run(&engine, "anilili", json!({ "gzip": gzip, "plain": plain })).await.unwrap();
     assert_eq!(out["version"], "string");
     assert_eq!(out["id"], "probe");
+    assert_eq!(out["alias"], true, "`$anix` and `$anilili` are the same helpers");
     assert_eq!(out["gunzip"], "{\"title\":\"ワンピース\"}");
     assert_eq!(out["fromBytes"], "{\"title\":\"ワンピース\"}");
     assert_eq!(out["twice"], "secret text");

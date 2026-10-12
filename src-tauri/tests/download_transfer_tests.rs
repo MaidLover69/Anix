@@ -4,9 +4,9 @@
 //! settings or download folder, and nothing outside the loopback interface. The tests that
 //! need ffmpeg print a note and pass when it is not installed.
 
-use anilili_lib::db;
-use anilili_lib::downloads::{self, DownloadOutcome, DownloadSource, PART_SUFFIX};
-use anilili_lib::models::{DownloadRecord, SubtitleItem};
+use anix_lib::db;
+use anix_lib::downloads::{self, DownloadOutcome, DownloadSource, PART_SUFFIX};
+use anix_lib::models::{DownloadRecord, SubtitleItem};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "anilili-dl-test-{}-{}-{}",
+            "anix-dl-test-{}-{}-{}",
             name,
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)

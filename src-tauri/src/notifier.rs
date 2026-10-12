@@ -835,7 +835,7 @@ async fn run(app: tauri::AppHandle) {
 
     info!("Release notifications are running");
     let settings_path = db::get_config_dir().ok().map(|dir| dir.join("settings.json"));
-    let cover_dir = dirs::cache_dir().map(|dir| dir.join("anilili").join("notification-covers"));
+    let cover_dir = dirs::cache_dir().map(|dir| dir.join(db::APP_DIR_NAME).join("notification-covers"));
     if let (Some(dir), Ok(bells)) = (&cover_dir, db::list_notification_bells(&pool).await) {
         prune_covers(dir, &bells);
     }
@@ -863,11 +863,11 @@ async fn run(app: tauri::AppHandle) {
     }
 }
 
-/// Debug builds only: with `ANILILI_TEST_NOTIFICATION` set, shows one sample notification at
+/// Debug builds only: with `ANIX_TEST_NOTIFICATION` (or the earlier `ANILILI_TEST_NOTIFICATION`) set, shows one sample notification at
 /// startup (for the first bell, if there is one) without recording anything.
 #[cfg(debug_assertions)]
 async fn show_test_notification(pool: &SqlitePool, sink: &DesktopSink) {
-    if std::env::var_os("ANILILI_TEST_NOTIFICATION").is_none() {
+    if crate::env_var_os("ANIX_TEST_NOTIFICATION", "ANILILI_TEST_NOTIFICATION").is_none() {
         return;
     }
     let bell = db::list_notification_bells(pool)
@@ -876,7 +876,7 @@ async fn show_test_notification(pool: &SqlitePool, sink: &DesktopSink) {
         .and_then(|bells| bells.into_iter().next());
     let (media_id, title, cover_image) = match bell {
         Some(bell) => (bell.media_id, bell.media_title, bell.cover_image),
-        None => (0, "Anilili test notification".to_string(), None),
+        None => (0, "Anix test notification".to_string(), None),
     };
     sink.show(&ReleaseNotification {
         media_id,

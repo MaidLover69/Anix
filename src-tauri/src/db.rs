@@ -29,18 +29,28 @@ const DOWNLOAD_COLUMNS: &str = "id, anilist_id, episode_num, episode_title, seri
      series_cover, provider, category, quality, status, progress, file_path, file_size, \
      duration_s, error_msg, created_at, updated_at";
 
-/// Picks `preferred` unless the app's data only exists in the pre-XDG `legacy` location.
-fn choose_dir(preferred: Option<PathBuf>, legacy: Option<PathBuf>, marker: &str) -> Option<PathBuf> {
-    match (preferred, legacy) {
-        (Some(p), Some(l)) => {
-            if p != l && !p.join(marker).exists() && l.join(marker).exists() {
-                Some(l)
-            } else {
-                Some(p)
+/// Where the app's folder is, given the directory it belongs in (`base`, for example
+/// `$XDG_DATA_HOME`) and the one an install may still be using (`home_base`, for example
+/// `~/.local/share`): the first folder that holds one of the `markers`, looking under the
+/// current name in both and then under the earlier name in both. The earlier name is only still
+/// there when `migration` could not rename the folder, and using it keeps the data in reach.
+/// With no marker anywhere it is the current name in `base`.
+pub fn choose_app_dir(base: Option<PathBuf>, home_base: Option<PathBuf>, markers: &[&str]) -> Option<PathBuf> {
+    let mut bases: Vec<PathBuf> = Vec::new();
+    for candidate in [base, home_base].into_iter().flatten() {
+        if !bases.contains(&candidate) {
+            bases.push(candidate);
+        }
+    }
+    for name in [APP_DIR_NAME, LEGACY_APP_DIR_NAME] {
+        for base in &bases {
+            let dir = base.join(name);
+            if markers.iter().any(|marker| dir.join(marker).exists()) {
+                return Some(dir);
             }
         }
-        (p, l) => p.or(l),
     }
+    bases.first().map(|base| base.join(APP_DIR_NAME))
 }
 
 fn ensure_dir(path: Option<PathBuf>, what: &str) -> Result<PathBuf, AppError> {
@@ -61,18 +71,38 @@ fn ensure_dir(path: Option<PathBuf>, what: &str) -> Result<PathBuf, AppError> {
     Ok(path)
 }
 
-/// `$XDG_DATA_HOME/anilili`, normally `~/.local/share/anilili`.
+/// The name of the app's folder in the data, config and cache directories.
+pub const APP_DIR_NAME: &str = "anix";
+/// What that folder was called before the app was renamed; see `migration`.
+pub const LEGACY_APP_DIR_NAME: &str = "anilili";
+pub const DB_FILE_NAME: &str = "anix.db";
+/// What the database file was called before the app was renamed. `migration` renames it; it is
+/// still opened under this name if that did not work.
+pub const LEGACY_DB_FILE_NAME: &str = "anilili.db";
+
+/// `$XDG_DATA_HOME/anix`, normally `~/.local/share/anix`.
 pub fn get_app_dir() -> Result<PathBuf, AppError> {
-    let preferred = dirs::data_dir().map(|d| d.join("anilili"));
-    let legacy = dirs::home_dir().map(|h| h.join(".local").join("share").join("anilili"));
-    ensure_dir(choose_dir(preferred, legacy, "anilili.db"), "data")
+    let home_base = dirs::home_dir().map(|h| h.join(".local").join("share"));
+    let chosen = choose_app_dir(dirs::data_dir(), home_base, &[DB_FILE_NAME, LEGACY_DB_FILE_NAME]);
+    ensure_dir(chosen, "data")
 }
 
-/// `$XDG_CONFIG_HOME/anilili`, normally `~/.config/anilili`.
+/// `$XDG_CONFIG_HOME/anix`, normally `~/.config/anix`.
 pub fn get_config_dir() -> Result<PathBuf, AppError> {
-    let preferred = dirs::config_dir().map(|d| d.join("anilili"));
-    let legacy = dirs::home_dir().map(|h| h.join(".config").join("anilili"));
-    ensure_dir(choose_dir(preferred, legacy, "settings.json"), "config")
+    let home_base = dirs::home_dir().map(|h| h.join(".config"));
+    ensure_dir(choose_app_dir(dirs::config_dir(), home_base, &["settings.json"]), "config")
+}
+
+/// The database file in `app_dir`: `anix.db`, or a database still under its earlier name when
+/// that is the only one there.
+pub fn database_path(app_dir: &Path) -> PathBuf {
+    let current = app_dir.join(DB_FILE_NAME);
+    let legacy = app_dir.join(LEGACY_DB_FILE_NAME);
+    if !current.exists() && legacy.exists() {
+        legacy
+    } else {
+        current
+    }
 }
 
 fn error_detail(err: AppError) -> String {
@@ -85,7 +115,7 @@ fn error_detail(err: AppError) -> String {
 /// Opens (creating and migrating if needed) the app's database in the data directory.
 /// The error text names the file and the cause, and is meant to be shown to the user.
 pub async fn init_db() -> Result<SqlitePool, AppError> {
-    let db_path = get_app_dir()?.join("anilili.db");
+    let db_path = database_path(&get_app_dir()?);
     let pool = init_db_at(&db_path).await?;
     info!("Database initialized at {}", db_path.display());
     Ok(pool)

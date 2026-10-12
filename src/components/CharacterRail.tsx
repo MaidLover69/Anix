@@ -53,7 +53,7 @@ export const CharacterRail: React.FC<CharacterRailProps> = ({ characters = [] })
           return (
             <div
               key={char.id ?? `index-${index}`}
-              className="flex w-80 flex-shrink-0 snap-start items-center justify-between gap-3 rounded-xl bg-bg-card p-2"
+              className="flex w-80 flex-shrink-0 snap-start items-center justify-between gap-3 rounded-xl ui-card bg-bg-card p-2"
             >
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <ShimmerImage

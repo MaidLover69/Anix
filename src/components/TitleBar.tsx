@@ -15,7 +15,7 @@ async function runWindowAction(action: WindowAction) {
 }
 
 const CONTROL_CLASS =
-  'flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-white/10 hover:text-text-primary';
+  'flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-ink/10 hover:text-text-primary';
 
 /** Custom title bar; the window is created without native decorations. */
 export const TitleBar: React.FC = () => {
@@ -32,9 +32,9 @@ export const TitleBar: React.FC = () => {
   return (
     <header
       data-tauri-drag-region
-      className="relative z-[70] flex h-8 w-full flex-shrink-0 items-center justify-between bg-bg-deepest pl-3 select-none"
+      className="ui-titlebar relative z-[70] flex h-8 w-full flex-shrink-0 items-center justify-between bg-bg-deepest pl-3 select-none"
     >
-      <span className="pointer-events-none text-xs font-medium text-text-muted">Anilili</span>
+      <span className="pointer-events-none text-xs font-medium text-text-muted">Anix</span>
 
       <div className="flex items-center">
         <button

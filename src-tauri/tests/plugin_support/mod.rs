@@ -1,9 +1,9 @@
 //! A loopback web server and fixtures shared by the plugin tests.
 #![allow(dead_code)]
 
-use anilili_lib::error::AppError;
-use anilili_lib::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
-use anilili_lib::web_session::{
+use anix_lib::error::AppError;
+use anix_lib::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
+use anix_lib::web_session::{
     self, Asked, DocumentState, Outcome, PageAccess, SessionState, SiteSession, SiteSpec, WebRequest, WebResponse,
 };
 use std::time::Instant;

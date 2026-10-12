@@ -32,9 +32,9 @@ import { Library } from './screens/Library';
 import { Schedule } from './screens/Schedule';
 import { Settings } from './screens/Settings';
 
-/** `anilili://anime/<AniList id>` → the id, or null for anything else. */
+/** `anix://anime/<AniList id>` (or the older `anilili://…`) → the id, or null for anything else. */
 function parseDeepLink(url: string): string | null {
-  const match = url.trim().match(/^anilili:\/\/anime\/(\d+)\/?(?:[?#].*)?$/i);
+  const match = url.trim().match(/^(?:anix|anilili):\/\/anime\/(\d+)\/?(?:[?#].*)?$/i);
   return match ? match[1] : null;
 }
 
@@ -65,7 +65,7 @@ const AppLayout: React.FC = () => {
   const hotkeyCheatSheetOpen = useUIStore((s) => s.hotkeyCheatSheetOpen);
   const setHotkeyCheatSheetOpen = useUIStore((s) => s.setHotkeyCheatSheetOpen);
 
-  // Deep links: anilili://anime/:id, at launch and while running (the single-instance
+  // Deep links: anix://anime/:id (and the older anilili://), at launch and while running (the single-instance
   // plugin forwards a second launch to this listener).
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +180,7 @@ const AppLayout: React.FC = () => {
   }, [location.key, navigationType]);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg-page text-text-primary select-none">
+    <div className="ui-app flex h-screen w-screen flex-col overflow-hidden bg-bg-page text-text-primary select-none">
       <TitleBar />
 
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">

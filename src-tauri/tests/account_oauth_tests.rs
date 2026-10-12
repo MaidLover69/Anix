@@ -1,6 +1,6 @@
 //! Authorize URLs, PKCE values and redirect parsing.
 
-use anilili_lib::accounts;
+use anix_lib::accounts;
 
 use accounts::oauth::{
     anilist_authorize_url, denial_message, is_registered_redirect, mal_authorize_url,

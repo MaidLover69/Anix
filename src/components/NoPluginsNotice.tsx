@@ -12,8 +12,8 @@ export function noPluginsTitle(installed: number): string {
 
 export function noPluginsDetail(installed: number): string {
   return installed === 0
-    ? 'Anilili plays episodes through plugins. Add a plugin repository in Settings to start watching.'
-    : 'Anilili plays episodes through plugins. Turn one on in Settings, or check the ones that failed to load.';
+    ? 'Anix plays episodes through plugins. Add a plugin repository in Settings to start watching.'
+    : 'Anix plays episodes through plugins. Turn one on in Settings, or check the ones that failed to load.';
 }
 
 interface NoPluginsNoticeProps {
@@ -38,7 +38,7 @@ export const NoPluginsNotice: React.FC<NoPluginsNoticeProps> = ({
     <div
       role="status"
       className={clsx(
-        'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-bg-surface px-3 py-2.5',
+        'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border ui-inset bg-bg-surface px-3 py-2.5',
         className
       )}
     >

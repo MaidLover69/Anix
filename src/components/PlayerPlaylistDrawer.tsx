@@ -96,7 +96,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
       aria-label="Episodes"
       tabIndex={-1}
       onClick={(e) => e.stopPropagation()}
-      className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.5)] outline-none animate-slide-left"
+      className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-pop outline-none animate-slide-left"
     >
       <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
         <div className="min-w-0">
@@ -200,7 +200,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
                 className={`flex min-h-[2.75rem] flex-shrink-0 items-center gap-3 rounded-md px-3 py-1.5 text-left cursor-pointer transition-colors ${
                   isCurrent
                     ? 'bg-accent-tint text-accent-300'
-                    : 'bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
+                    : 'ui-inset bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
                 }`}
               >
                 {multiSelect &&

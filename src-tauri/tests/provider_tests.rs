@@ -1,10 +1,10 @@
 //! Helpers shared by every streaming source: episode numbers, title matching and stream headers.
 //! Nothing here touches the network.
 
-use anilili_lib::models::{AnimeQuery, Category};
-use anilili_lib::providers::common::{fmt_ep, json_id, json_number};
-use anilili_lib::providers::manager::{stream_header_map, ProviderManager, NO_PLUGIN_MESSAGE};
-use anilili_lib::providers::matching::{
+use anix_lib::models::{AnimeQuery, Category};
+use anix_lib::providers::common::{fmt_ep, json_id, json_number};
+use anix_lib::providers::manager::{stream_header_map, ProviderManager, NO_PLUGIN_MESSAGE};
+use anix_lib::providers::matching::{
     match_score, normalize_title, pick_best, title_similarity, Candidate, MIN_MATCH_SCORE,
 };
 use serde_json::json;
@@ -102,7 +102,7 @@ fn alternative_titles_from_the_query_are_used() {
 
 #[test]
 fn custom_headers_never_duplicate_the_referer() {
-    let mut stream = anilili_lib::models::StreamItem::new(
+    let mut stream = anix_lib::models::StreamItem::new(
         "https://cdn.example/x.m3u8".to_string(),
         "hls".to_string(),
         None,

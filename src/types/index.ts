@@ -1,3 +1,5 @@
+import type { ThemeId } from '../theme/themes';
+
 export interface MediaTitle {
   romaji: string | null;
   english: string | null;
@@ -360,6 +362,8 @@ export interface AppSettings {
   doh_provider: DohProvider;
   download_quality: string;
   download_dir: string;
+  /** A built-in theme id (see `theme/themes.ts`). */
+  theme: ThemeId;
 }
 
 export type AccountService = 'anilist' | 'mal';

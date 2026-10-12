@@ -80,7 +80,7 @@ export const Watch: React.FC = () => {
 
   if (anilistId === null || episodeNumber === null) {
     return (
-      <div className="relative h-full w-full overflow-hidden bg-black">
+      <div className="dark-scope relative h-full w-full overflow-hidden bg-black">
         <PlayerStatus
           kind="error"
           title="Episode not found"
@@ -466,7 +466,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   }
 
   return (
-    <div ref={setContainer} className="relative h-full w-full overflow-hidden bg-black">
+    <div ref={setContainer} className="dark-scope relative h-full w-full overflow-hidden bg-black">
       {playable && sources && proxyQuery.data ? (
         <VideoPlayer
           key={`${anilistId}:${episodeNumber}:${category}:${requestedProvider ?? AUTO_PROVIDER}:${sourcesQuery.dataUpdatedAt}`}

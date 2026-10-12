@@ -1,4 +1,4 @@
-use anilili_lib::stream_proxy::{
+use anix_lib::stream_proxy::{
     ass_to_vtt, parse_target_url, proxied_url, rewrite_playlist, srt_to_vtt,
     starts_with_playlist_tag, subtitle_to_vtt, UpstreamParams,
 };
@@ -246,7 +246,7 @@ fn start_fake_cdn() -> (Arc<Server>, u16) {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_stream_proxy_end_to_end() {
     let (_cdn, port) = start_fake_cdn();
-    let base = anilili_lib::stream_proxy::start().expect("proxy starts");
+    let base = anix_lib::stream_proxy::start().expect("proxy starts");
     assert!(base.starts_with("http://127.0.0.1:"));
 
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -325,7 +325,7 @@ async fn test_stream_proxy_end_to_end() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_stream_proxy_serves_files_with_their_length_for_every_kind_of_range() {
     let (_cdn, port) = start_fake_cdn();
-    let base = anilili_lib::stream_proxy::start().expect("proxy starts");
+    let base = anix_lib::stream_proxy::start().expect("proxy starts");
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let mut url = Url::parse(&format!("{}/proxy", base)).unwrap();
     url.query_pairs_mut()

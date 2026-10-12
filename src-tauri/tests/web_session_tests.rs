@@ -2,14 +2,14 @@
 //! recognising check and block pages, the scripts run in a site's page, reading their answers,
 //! the mirror walk, and the decision to fall back from the plain client to the session.
 
-use anilili_lib::error::AppError;
-use anilili_lib::plugins::net::{NetContext, WireRequest};
-use anilili_lib::providers::common::{decode_text, path_and_query, session_headers, session_referrer};
-use anilili_lib::web_session::{
+use anix_lib::error::AppError;
+use anix_lib::plugins::net::{NetContext, WireRequest};
+use anix_lib::providers::common::{decode_text, path_and_query, session_headers, session_referrer};
+use anix_lib::web_session::{
     ask, document_barrier, document_script, parse_document_state, verification_probe, Asked, DocumentState,
     Outcome, PageAccess,
 };
-use anilili_lib::web_session::{
+use anix_lib::web_session::{
     self, answered_url, cancel_script, collect_script, detect_barrier, js_string, label_with_owners,
     order_origins, parse_collected, request_script, valid_request_path, Barrier, Collected, KnownOrigins,
     SessionChoice, SessionState, SessionUse, SiteSession, SiteSpec, Walk, WalkStep, WebRequest, WebResponse,
@@ -996,7 +996,7 @@ async fn plugin_requests_fall_back_to_the_session_only_for_a_refusal() {
         }
         other => panic!("unexpected: {:?}", other),
     }
-    assert!(anilili_lib::plugins::net::plugins_for_site(&host).contains(&"verify-me".to_string()));
+    assert!(anix_lib::plugins::net::plugins_for_site(&host).contains(&"verify-me".to_string()));
 }
 
 #[test]
@@ -1072,7 +1072,7 @@ fn text_is_decoded_with_the_declared_character_set() {
 
 #[test]
 fn only_origins_are_remembered_across_restarts() {
-    let dir = std::env::temp_dir().join(format!("anilili-known-origins-{}-{:?}", std::process::id(), Instant::now()));
+    let dir = std::env::temp_dir().join(format!("anix-known-origins-{}-{:?}", std::process::id(), Instant::now()));
     let path = dir.join("site-sessions.json");
     let known = KnownOrigins::open(Some(path.clone()));
     assert!(!known.contains("https://site.example"));

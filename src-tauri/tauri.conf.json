@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
-  "productName": "Anilili",
-  "version": "1.0.3",
-  "identifier": "io.anilili.linux",
+  "productName": "Anix",
+  "version": "1.1.0",
+  "identifier": "io.anix.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Anilili",
+        "title": "Anix",
         "width": 1280,
         "height": 780,
         "minWidth": 960,
@@ -62,7 +62,7 @@
     ],
     "linux": {
       "rpm": {
-        "desktopTemplate": "anilili.desktop",
+        "desktopTemplate": "anix.desktop",
         "depends": [
           "webkit2gtk4.1",
           "gstreamer1-plugins-base",
@@ -71,7 +71,7 @@
         ]
       },
       "deb": {
-        "desktopTemplate": "anilili.desktop",
+        "desktopTemplate": "anix.desktop",
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libssl3",
@@ -89,12 +89,13 @@
       }
     },
     "category": "Video",
-    "shortDescription": "Anime streaming and library app"
+    "shortDescription": "Anime catalogue, tracker, library and player"
   },
   "plugins": {
     "deep-link": {
       "desktop": {
         "schemes": [
+          "anix",
           "anilili"
         ]
       }

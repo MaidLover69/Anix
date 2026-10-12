@@ -69,7 +69,7 @@ async fn jikan_get(client: &Client, url: &str) -> Result<Option<serde_json::Valu
     for attempt in 0..MAX_ATTEMPTS {
         let response = client
             .get(url)
-            .header("User-Agent", "AnililiLinux/1.0")
+            .header("User-Agent", crate::clients::http::APP_USER_AGENT)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await?;

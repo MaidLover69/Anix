@@ -78,7 +78,7 @@ export const NotifyBell: React.FC<NotifyBellProps> = ({
               'rounded-md transition-colors active:opacity-80 disabled:opacity-40',
               enabled
                 ? 'text-accent-300 hover:bg-accent-500/20 hover:text-accent-200'
-                : 'text-text-muted hover:bg-white/10 hover:text-text-primary',
+                : 'text-text-muted hover:bg-ink/10 hover:text-text-primary',
             ],
         className
       )}

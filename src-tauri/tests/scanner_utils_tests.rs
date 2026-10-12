@@ -2,7 +2,7 @@
 //! season extraction, the JS-facing dispatcher, and outputs recorded from the Go
 //! implementation running under goja.
 
-use anilili_lib::plugins::scanner_utils::{
+use anix_lib::plugins::scanner_utils::{
     build_advanced_query, build_part_query, build_search_query, build_season_query,
     build_smart_search_titles, call, compare_titles, extract_part_number, extract_season_number,
     extract_year, find_best_match, get_significant_tokens, integer_to_ordinal, normalize_title,

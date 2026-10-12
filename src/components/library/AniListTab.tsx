@@ -12,7 +12,7 @@ import { ANILIST_LIST_STATUSES, mediaFromListRow } from './format';
 import { PosterGrid, PosterGridSkeleton, ShowMore } from './PosterGrid';
 
 /**
- * The connected AniList account's lists. Episodes finished in Anilili are sent to AniList by
+ * The connected AniList account's lists. Episodes finished in Anix are sent to AniList by
  * the backend, which announces each change so the list here is refetched; an entry's status
  * and progress can also be edited by hand.
  */

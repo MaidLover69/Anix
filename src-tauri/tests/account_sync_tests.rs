@@ -3,7 +3,7 @@
 
 mod account_support;
 
-use anilili_lib::accounts;
+use anix_lib::accounts;
 
 use accounts::oauth::Service;
 use accounts::session::Notice;
@@ -13,10 +13,10 @@ use accounts::sync::{
     PendingKind, ProgressUpdate, SkipReason, MAX_ATTEMPTS,
 };
 use account_support::{closed_address, far_future, FakeServer, Recorded, World};
-use anilili_lib::clients::anilist::ListEntryState;
-use anilili_lib::db;
-use anilili_lib::error::AppError;
-use anilili_lib::models::HistoryEntry;
+use anix_lib::clients::anilist::ListEntryState;
+use anix_lib::db;
+use anix_lib::error::AppError;
+use anix_lib::models::HistoryEntry;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

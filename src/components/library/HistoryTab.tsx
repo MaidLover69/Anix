@@ -57,7 +57,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
             <Link
               to={watchPath(entry.anilist_id, entry.episode_number, entry.category, entry.provider?.trim())}
               aria-label={`Continue ${entry.title}, ${episode}`}
-              className="flex flex-col gap-2 p-2 rounded-lg bg-bg-card hover:bg-bg-elevated transition-colors focus-visible:-outline-offset-2"
+              className="flex flex-col gap-2 p-2 rounded-lg ui-card bg-bg-card hover:bg-bg-elevated transition-colors focus-visible:-outline-offset-2"
             >
               <div className="relative w-full aspect-video rounded-md overflow-hidden bg-bg-elevated">
                 <CoverThumb src={entry.cover} className="w-full h-full" />

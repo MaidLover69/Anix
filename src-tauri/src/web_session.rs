@@ -455,7 +455,7 @@ fn new_request_key() -> String {
         hasher.write_u128(std::process::id() as u128);
         hasher.finish()
     };
-    format!("__anilili_{:016x}{:016x}", part(), part())
+    format!("__anix_{:016x}{:016x}", part(), part())
 }
 
 /// The script that makes the request. It keeps its state in one non-enumerable property of the

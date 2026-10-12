@@ -3,15 +3,15 @@
 
 mod account_support;
 
-use anilili_lib::accounts;
+use anix_lib::accounts;
 
 use accounts::oauth::{Redirect, Service};
 use accounts::session::{self, Notice};
 use accounts::store::{self, AccountStore, Profile};
 use account_support::{closed_address, far_future, FakeServer, World};
-use anilili_lib::commands::settings::{read_settings_file, write_settings_file};
-use anilili_lib::db::current_unix_timestamp;
-use anilili_lib::error::AppError;
+use anix_lib::commands::settings::{read_settings_file, write_settings_file};
+use anix_lib::db::current_unix_timestamp;
+use anix_lib::error::AppError;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 
@@ -132,7 +132,7 @@ fn test_account_jwt_expiry() {
     assert_eq!(store::jwt_expiry("not-a-jwt"), None);
     assert_eq!(store::jwt_expiry("a.!!!.c"), None);
 
-    let dir = std::env::temp_dir().join(format!("anilili-account-jwt-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("anix-account-jwt-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("settings.json");
     // A token saved by an older version: no expiry key next to it.

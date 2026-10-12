@@ -146,7 +146,7 @@ export const Modal: React.FC<ModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex overflow-y-auto bg-black/60 px-4 pb-4 pt-12 animate-fade-in"
+      className="ui-backdrop fixed inset-0 z-[60] flex overflow-y-auto bg-black/60 px-4 pb-4 pt-12 animate-fade-in"
       onMouseDown={(e) => {
         pressStartedOnBackdrop.current = e.target === e.currentTarget;
       }}
@@ -161,7 +161,7 @@ export const Modal: React.FC<ModalProps> = ({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={clsx(
-          'relative flex w-full flex-col rounded-2xl border border-border bg-bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.5)] outline-none animate-scale-up',
+          'ui-modal relative flex w-full flex-col rounded-2xl border border-border bg-bg-elevated shadow-pop outline-none animate-scale-up',
           position === 'top' ? 'mx-auto mb-auto mt-12' : 'm-auto',
           SIZE_CLASSES[size],
           padded && 'p-6',

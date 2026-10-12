@@ -42,7 +42,7 @@ const ProgressBar: React.FC<{ percent: number }> = ({ percent }) => (
     aria-valuemin={0}
     aria-valuemax={100}
     aria-valuenow={Math.round(percent)}
-    className="absolute bottom-0 left-0 right-0 h-1 bg-white/20"
+    className="absolute bottom-0 left-0 right-0 h-1 bg-ink/20"
   >
     <div className="h-full bg-accent-500" style={{ width: `${percent}%` }} />
   </div>
@@ -61,7 +61,7 @@ const Thumbnail: React.FC<{ episode: EpisodeItemType; percent: number; className
       // as an image that failed to load.
       <div
         aria-hidden="true"
-        className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-white/[0.07] to-transparent ring-1 ring-inset ring-white/[0.06]"
+        className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br ui-plate from-ink/[0.07] to-transparent ring-1 ring-inset ring-ink/[0.06]"
       >
         <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
           {episode.number}
@@ -89,7 +89,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
   // The row is a container with two sibling controls (play, add to playlist) so both are
   // real buttons that the keyboard can reach.
   const rowClass =
-    'group relative flex rounded-md transition-colors hover:bg-white/5 focus-within:bg-white/5';
+    'group relative flex rounded-md transition-colors hover:bg-ink/5 focus-within:bg-ink/5';
 
   const renderPlaylistButton = (className?: string) =>
     onAddToPlaylist && (
@@ -163,7 +163,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
           {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
           {isWatched && <WatchedMark className="mt-1" />}
         </button>
-        {renderPlaylistButton('absolute right-3 top-3 bg-black/70')}
+        {renderPlaylistButton('dark-scope absolute right-3 top-3 bg-black/70')}
       </div>
     );
   }

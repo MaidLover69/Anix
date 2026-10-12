@@ -88,7 +88,7 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
               title={isPrint ? `Open ${title} in the browser` : title}
               className="group flex w-40 flex-shrink-0 cursor-pointer snap-start flex-col rounded-xl text-left"
             >
-              <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-bg-card">
+              <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl ui-card bg-bg-card">
                 <ShimmerImage
                   src={cover}
                   alt=""

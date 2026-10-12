@@ -1,6 +1,8 @@
 //! Installed plugins and the repositories they come from.
 //!
-//! A repository is a JSON index: an array of plugin manifests (or a single manifest). Everything
+//! A repository is a JSON index: an array of plugin manifests, `{ "name": …, "plugins": [ … ] }`,
+//! or a single manifest. The link to it may be a Google Drive share link, or the address of a
+//! page that redirects to one; the shared file is then downloaded directly. Everything
 //! downloaded is kept under the app's data directory (`plugins/state.json` and
 //! `plugins/payloads/`), so installed plugins work offline and across restarts.
 
@@ -33,8 +35,131 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// Set to `1` to let a repository link be a `file://` directory (for developing plugins
 /// before they are published). The directory holds `index.json`; a plugin's code is taken from
 /// `src/<id>/<file named like the end of payloadURI>` when that file exists.
-pub const DEV_REPOS_ENV: &str = "ANILILI_DEV_PLUGIN_REPOS";
+pub const DEV_REPOS_ENV: &str = "ANIX_DEV_PLUGIN_REPOS";
+/// The name the variable had before the app was renamed; still honoured.
+pub const LEGACY_DEV_REPOS_ENV: &str = "ANILILI_DEV_PLUGIN_REPOS";
 const STATE_FILE: &str = "state.json";
+const MAX_REPO_NAME_CHARS: usize = 80;
+const DRIVE_REPO_NAME: &str = "Google Drive";
+
+/// Where Google Drive is. The defaults are its real hosts; tests point them at a local server.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DriveEndpoints {
+    /// The hosts (`host`, or `host:port` for a port that is not the default) whose links are
+    /// links to shared files.
+    pub share_hosts: Vec<String>,
+    /// The address a shared file is downloaded from, as `<download_base>/download?id=…`.
+    pub download_base: String,
+}
+
+impl Default for DriveEndpoints {
+    fn default() -> Self {
+        Self {
+            share_hosts: vec!["drive.google.com".to_string(), "docs.google.com".to_string()],
+            download_base: "https://drive.usercontent.google.com".to_string(),
+        }
+    }
+}
+
+/// `host` or `host:port`, in lower case.
+fn authority(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    match url.port() {
+        Some(port) => format!("{}:{}", host, port),
+        None => host,
+    }
+}
+
+impl DriveEndpoints {
+    fn is_download_host(&self, url: &Url) -> bool {
+        Url::parse(&self.download_base).map_or(false, |base| authority(&base) == authority(url))
+    }
+
+    fn is_share_host(&self, url: &Url) -> bool {
+        let authority = authority(url);
+        self.share_hosts.iter().any(|host| host.eq_ignore_ascii_case(&authority))
+    }
+
+    /// True for any address on Google Drive.
+    pub fn owns(&self, url: &Url) -> bool {
+        self.is_share_host(url) || self.is_download_host(url)
+    }
+
+    /// The id of the shared file a Drive link points at: `/file/d/<id>/view`, `/open?id=<id>`,
+    /// `/uc?id=<id>` and the download host's `/download?id=<id>`.
+    pub fn file_id(&self, url: &Url) -> Option<String> {
+        if !self.owns(url) {
+            return None;
+        }
+        let parts: Vec<&str> = url.path_segments().map(|p| p.filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+        let in_path = parts
+            .windows(3)
+            .find(|window| window[0] == "file" && window[1] == "d")
+            .map(|window| window[2].to_string());
+        let in_query = url.query_pairs().find(|(name, _)| name == "id").map(|(_, value)| value.into_owned());
+        in_path.or(in_query).filter(|id| {
+            !id.is_empty() && id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+    }
+
+    /// The address that answers with the file itself instead of Drive's page about it.
+    pub fn direct_url(&self, id: &str) -> String {
+        format!("{}/download?id={}&export=download&confirm=t", self.download_base.trim_end_matches('/'), id)
+    }
+}
+
+/// Why Drive sent a page (or something else that is not the list) instead of the shared file.
+fn drive_refusal(data: &[u8], came_from: &Url) -> String {
+    let text = String::from_utf8_lossy(&data[..data.len().min(64 * 1024)]).to_ascii_lowercase();
+    let host = came_from.host_str().unwrap_or_default().to_ascii_lowercase();
+    let reason = if host.starts_with("accounts.google.") || text.contains("servicelogin") || text.contains("sign in") {
+        "it asks to sign in, so the file is not shared with \"Anyone with the link\""
+    } else if text.contains("you need access") || text.contains("access denied") || text.contains("request access") {
+        "the file is not shared with \"Anyone with the link\""
+    } else if text.contains("quota") || text.contains("too many users") {
+        "too many people have downloaded the file recently; try again later"
+    } else if text.contains("virus") {
+        "it asks to confirm the download because it could not scan the file for viruses"
+    } else if text.trim_start().starts_with('<') {
+        "it answered with a web page instead of the plugin list"
+    } else {
+        "what it sent is not a plugin list (it is not JSON)"
+    };
+    format!("Google Drive did not return the file: {}", reason)
+}
+
+/// A downloaded index: its entries and the name it gives itself, if any.
+fn parse_index(data: &[u8]) -> Result<(Vec<Value>, Option<String>), String> {
+    // Editors on Windows put a byte order mark in front of the text.
+    let data = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
+    match serde_json::from_slice::<Value>(data) {
+        Ok(Value::Array(entries)) => Ok((entries, None)),
+        Ok(Value::Object(mut index)) if !index.contains_key("type") && index.get("plugins").map_or(false, Value::is_array) => {
+            let name = index
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|name| name.split_whitespace().collect::<Vec<_>>().join(" "))
+                .map(|name| name.chars().take(MAX_REPO_NAME_CHARS).collect::<String>())
+                .filter(|name| !name.is_empty());
+            match index.remove("plugins") {
+                Some(Value::Array(entries)) => Ok((entries, name)),
+                _ => Ok((Vec::new(), name)),
+            }
+        }
+        Ok(entry @ Value::Object(_)) => Ok((vec![entry], None)),
+        Ok(_) => Err("the link does not hold a plugin list (a JSON array of manifests)".to_string()),
+        Err(_) => Err("the link does not hold a plugin list (it is not JSON)".to_string()),
+    }
+}
+
+/// What a repository link led to.
+struct Index {
+    /// The address the index was read from, against which relative links in it resolve.
+    url: Url,
+    entries: Vec<Value>,
+    /// The index's own `name`.
+    name: Option<String>,
+}
 const PAYLOAD_DIR: &str = "payloads";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -159,6 +284,7 @@ pub struct RegistryOptions {
     pub allow_private_network: bool,
     pub session: Arc<dyn SiteSession>,
     pub limits: EngineLimits,
+    pub drive: DriveEndpoints,
 }
 
 impl Default for RegistryOptions {
@@ -168,6 +294,7 @@ impl Default for RegistryOptions {
             allow_private_network: false,
             session: app_session(),
             limits: EngineLimits::default(),
+            drive: DriveEndpoints::default(),
         }
     }
 }
@@ -252,9 +379,18 @@ fn github_repository(url: &Url) -> Option<(String, String)> {
 
 /// Where the index of a repository link may be, in the order to try.
 pub fn index_candidates(link: &str) -> Result<Vec<String>, String> {
+    index_candidates_with(link, &DriveEndpoints::default())
+}
+
+/// `index_candidates` with Google Drive at `drive`.
+pub fn index_candidates_with(link: &str, drive: &DriveEndpoints) -> Result<Vec<String>, String> {
     let url = Url::parse(&with_scheme(link)).map_err(|_| "That is not a valid link.".to_string())?;
     if url.host_str().map_or(true, str::is_empty) {
         return Err("That is not a valid link.".to_string());
+    }
+    // A link to a file shared on Google Drive is read as a direct download of that file.
+    if let Some(id) = drive.file_id(&url) {
+        return Ok(vec![drive.direct_url(&id)]);
     }
     if let Some((owner, repo)) = github_repository(&url) {
         let mut branches: Vec<String> = Vec::new();
@@ -351,7 +487,7 @@ impl PluginRegistry {
             .map(|dir| dir.join("plugins"))
             .unwrap_or_else(|e| {
                 tracing::error!("plugin storage is unavailable: {}", e);
-                std::env::temp_dir().join("anilili-plugins")
+                std::env::temp_dir().join("anix-plugins")
             });
         Self::open(dir, RegistryOptions::default())
     }
@@ -610,6 +746,11 @@ impl PluginRegistry {
     }
 
     async fn download(&self, url: &Url, limit: usize, what: &str) -> Result<Vec<u8>, String> {
+        self.download_from(url, limit, what).await.map(|(_, data)| data)
+    }
+
+    /// Downloads `url`, following redirects. Also returns the address the data came from.
+    async fn download_from(&self, url: &Url, limit: usize, what: &str) -> Result<(Url, Vec<u8>), String> {
         self.check_link(url)?;
         let host = url.host_str().unwrap_or("the server").to_string();
         let client = http_client().map_err(|e| e.reason())?;
@@ -619,6 +760,8 @@ impl PluginRegistry {
             .send()
             .await
             .map_err(|e| crate::error::AppError::from(e).reason())?;
+        let came_from = response.url().clone();
+        self.check_link(&came_from)?;
         if !response.status().is_success() {
             return Err(format!("HTTP {} from {}", response.status().as_u16(), host));
         }
@@ -634,39 +777,74 @@ impl PluginRegistry {
             }
             data.extend_from_slice(&chunk);
         }
-        Ok(data)
+        Ok((came_from, data))
     }
 
     /// Downloads the index behind a repository link: the first candidate address that answers
     /// with JSON. A single manifest counts as an index of one.
-    async fn fetch_index(&self, link: &str) -> Result<(Url, Vec<Value>), String> {
+    async fn fetch_index(&self, link: &str) -> Result<Index, String> {
         if link.trim().starts_with("file://") {
             return self.read_local_index(link.trim());
         }
-        let candidates = index_candidates(link)?;
+        let drive = &self.inner.options.drive;
+        let candidates = index_candidates_with(link, drive)?;
         let mut last_error = "the link could not be read".to_string();
         for candidate in candidates {
             let url = Url::parse(&candidate).map_err(|_| "That is not a valid link.".to_string())?;
-            let data = match self.download(&url, MAX_INDEX_BYTES, "plugin list").await {
-                Ok(data) => data,
+            let mut on_drive = drive.owns(&url);
+            let drive_error = |reason: String| format!("Google Drive did not return the file: {}", reason);
+            let (mut came_from, mut data) = match self.download_from(&url, MAX_INDEX_BYTES, "plugin list").await {
+                Ok(downloaded) => downloaded,
+                Err(reason) if on_drive => return Err(drive_error(reason)),
                 Err(reason) => {
                     last_error = reason;
                     continue;
                 }
             };
-            return match serde_json::from_slice::<Value>(&data) {
-                Ok(Value::Array(entries)) => Ok((url, entries)),
-                Ok(entry @ Value::Object(_)) => Ok((url, vec![entry])),
-                Ok(_) => Err("the link does not hold a plugin list (a JSON array of manifests)".to_string()),
-                Err(_) => Err("the link does not hold a plugin list (it is not JSON)".to_string()),
+            // The link redirected to Drive's page about a shared file: that page is not the
+            // file, so the file is asked for directly.
+            if let Some(id) = drive.file_id(&came_from).filter(|id| drive.file_id(&url).as_ref() != Some(id)) {
+                let direct = Url::parse(&drive.direct_url(&id)).map_err(|_| "That is not a valid link.".to_string())?;
+                if direct != came_from {
+                    (came_from, data) = self
+                        .download_from(&direct, MAX_INDEX_BYTES, "plugin list")
+                        .await
+                        .map_err(drive_error)?;
+                }
+            }
+            on_drive |= drive.owns(&came_from);
+            return match parse_index(&data) {
+                Ok((entries, name)) => Ok(Index { url: came_from, entries, name }),
+                Err(_) if on_drive => Err(drive_refusal(&data, &came_from)),
+                Err(reason) => Err(reason),
             };
         }
         Err(format!("the plugin list could not be downloaded: {}", last_error))
     }
 
+    /// How a repository is shown: by the name its index gives itself, else after its link.
+    fn repo_display_name(&self, link: &str, index_name: Option<&str>) -> String {
+        if let Some(name) = index_name {
+            return name.to_string();
+        }
+        let drive = &self.inner.options.drive;
+        match Url::parse(&with_scheme(link)) {
+            Ok(url) if drive.owns(&url) => DRIVE_REPO_NAME.to_string(),
+            _ => repo_name(link),
+        }
+    }
+
+    /// True when both links are the same repository: the same address, or the same Drive file.
+    fn same_repo(&self, a: &str, b: &str) -> bool {
+        let drive = &self.inner.options.drive;
+        let file = |link: &str| Url::parse(&with_scheme(link)).ok().and_then(|url| drive.file_id(&url));
+        same_repo(a, b) || matches!((file(a), file(b)), (Some(a), Some(b)) if a == b)
+    }
+
     /// A repository in a local directory; see `DEV_REPOS_ENV`.
-    fn read_local_index(&self, link: &str) -> Result<(Url, Vec<Value>), String> {
-        if std::env::var(DEV_REPOS_ENV).map_or(true, |value| value != "1") {
+    fn read_local_index(&self, link: &str) -> Result<Index, String> {
+        let allowed = crate::env_var_os(DEV_REPOS_ENV, LEGACY_DEV_REPOS_ENV).map_or(false, |value| value == "1");
+        if !allowed {
             return Err("only https links are accepted".to_string());
         }
         let dir = Url::parse(link)
@@ -676,11 +854,7 @@ impl PluginRegistry {
         let index_path = if dir.is_dir() { dir.join("index.json") } else { dir.clone() };
         let root = index_path.parent().map(Path::to_path_buf).unwrap_or(dir);
         let text = std::fs::read_to_string(&index_path).map_err(|e| format!("{}: {}", index_path.display(), e))?;
-        let mut entries = match serde_json::from_str::<Value>(&text) {
-            Ok(Value::Array(entries)) => entries,
-            Ok(entry @ Value::Object(_)) => vec![entry],
-            _ => return Err("the link does not hold a plugin list (it is not JSON)".to_string()),
-        };
+        let (mut entries, name) = parse_index(text.as_bytes())?;
         for entry in entries.iter_mut() {
             let id = entry.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
             let file = entry
@@ -700,7 +874,7 @@ impl PluginRegistry {
             }
         }
         let index_url = Url::from_file_path(&index_path).map_err(|_| "that is not a local directory".to_string())?;
-        Ok((index_url, entries))
+        Ok(Index { url: index_url, entries, name })
     }
 
     /// Turns index entries into what to install. Entries of other extension types are left
@@ -949,17 +1123,17 @@ impl PluginRegistry {
         }
         let _changing = self.inner.changes.lock().await;
         let mut state = self.state();
-        if state.repos.iter().any(|repo| same_repo(&repo.url, &link)) {
+        if state.repos.iter().any(|repo| self.same_repo(&repo.url, &link)) {
             return Err("This repository has already been added.".to_string());
         }
-        let (index_url, entries) = self
+        let Index { url: index_url, entries, name } = self
             .fetch_index(&link)
             .await
             .map_err(|reason| format!("Could not add the repository: {}.", reason))?;
 
         state.repos.push(StoredRepo {
             url: link.clone(),
-            name: repo_name(&link),
+            name: self.repo_display_name(&link, name.as_deref()),
             updated_at_ms: now_ms(),
             error: None,
         });
@@ -987,7 +1161,7 @@ impl PluginRegistry {
             .repos
             .iter()
             .find(|repo| repo.url == link)
-            .or_else(|| state.repos.iter().find(|repo| same_repo(&repo.url, link)))
+            .or_else(|| state.repos.iter().find(|repo| self.same_repo(&repo.url, link)))
             .map(|repo| repo.url.clone())
         else {
             return Ok(());
@@ -1012,15 +1186,18 @@ impl PluginRegistry {
         let links: Vec<String> = state.repos.iter().map(|repo| repo.url.clone()).collect();
         for link in links {
             let outcome = match self.fetch_index(&link).await {
-                Ok((index_url, entries)) => {
-                    let problems = self.sync_repo(&mut state, &link, &index_url, entries).await;
-                    Ok(problems)
+                Ok(index) => {
+                    let problems = self.sync_repo(&mut state, &link, &index.url, index.entries).await;
+                    Ok((problems, index.name))
                 }
                 Err(reason) => Err(reason),
             };
             if let Some(repo) = state.repos.iter_mut().find(|repo| repo.url == link) {
                 match outcome {
-                    Ok(problems) => {
+                    Ok((problems, name)) => {
+                        if let Some(name) = name {
+                            repo.name = name;
+                        }
                         repo.updated_at_ms = now_ms();
                         repo.error = (!problems.is_empty()).then(|| problems.join("; "));
                     }

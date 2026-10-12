@@ -116,3 +116,9 @@ Thumbs.db
 /tests/
 /test/
 !src-tauri/tests/
+
+# Releases and large binaries
+release/
+*.AppImage
+*.deb
+*.rpm

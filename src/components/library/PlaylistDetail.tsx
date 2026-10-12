@@ -120,7 +120,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
         return;
       }
 
-      await launchPlaylistExternalPlayer(player, playlist.name || 'Anilili playlist', result.resolved);
+      await launchPlaylistExternalPlayer(player, playlist.name || 'Anix playlist', result.resolved);
 
       if (result.failures.length > 0) {
         setIssues({
@@ -382,7 +382,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
             return (
               <li
                 key={item.id}
-                className="flex items-center gap-3 p-2 pr-3 rounded-md bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_80px]"
+                className="flex items-center gap-3 p-2 pr-3 rounded-md ui-card bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_80px]"
               >
                 <span className="w-6 flex-shrink-0 text-center text-xs text-text-muted tabular-nums">
                   {index + 1}

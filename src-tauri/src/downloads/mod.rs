@@ -34,7 +34,9 @@ pub const MAX_FILE_NAME_BYTES: usize = 255;
 /// for suffixes such as ` (2)`, a subtitle language and the extension.
 const MAX_BASE_NAME_BYTES: usize = 180;
 /// Suffix of every file a download is still working on.
-pub const PART_SUFFIX: &str = ".anilili-part";
+pub const PART_SUFFIX: &str = ".anix-part";
+/// The suffix working files had before the app was renamed; only cleaned up, never written.
+pub const LEGACY_PART_SUFFIX: &str = ".anilili-part";
 
 /// Queued downloads that run at the same time.
 const MAX_QUEUE_DOWNLOADS: usize = 2;
@@ -234,7 +236,7 @@ fn work_file_name(base: &str, tag: &str, role: &str) -> String {
     format!("{}.{}.{}{}", base, tag, role, PART_SUFFIX)
 }
 
-/// Deletes working files (`*.anilili-part`) left in `dir` by a run that was interrupted.
+/// Deletes working files (`*.anix-part`, and `*.anilili-part` from before the rename) left in `dir` by a run that was interrupted.
 /// Returns how many were removed. Only call it while no download is running.
 pub fn remove_stale_part_files(dir: &Path) -> usize {
     let entries = match std::fs::read_dir(dir) {
@@ -245,7 +247,8 @@ pub fn remove_stale_part_files(dir: &Path) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let is_part = name.to_string_lossy().ends_with(PART_SUFFIX);
+        let name = name.to_string_lossy();
+        let is_part = name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX);
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
         if is_part && is_file && std::fs::remove_file(entry.path()).is_ok() {
             removed += 1;

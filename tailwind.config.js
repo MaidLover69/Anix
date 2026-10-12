@@ -3,11 +3,11 @@ import plugin from 'tailwindcss/plugin';
 // Solid colours are stored as RGB channels so opacity modifiers (bg-accent-500/20) work.
 const rgb = (variable) => `rgb(var(${variable}) / <alpha-value>)`;
 
-// The hairline border is white at a low alpha; a modifier scales that alpha.
+// The hairline border is --border-rgb at a low alpha; a modifier scales that alpha.
 const hairline = ({ opacityValue }) =>
   opacityValue === undefined
-    ? 'var(--border)'
-    : `rgb(255 255 255 / calc(var(--border-alpha) * ${opacityValue}))`;
+    ? 'rgb(var(--border-rgb) / var(--border-alpha))'
+    : `rgb(var(--border-rgb) / calc(var(--border-alpha) * ${opacityValue}))`;
 
 /** @type {import('tailwindcss').Config} */
 export default {
@@ -29,7 +29,7 @@ export default {
         border: {
           DEFAULT: hairline,
           subtle: hairline,
-          strong: 'var(--border-strong)',
+          strong: 'rgb(var(--border-rgb) / var(--border-strong-alpha))',
           focus: 'var(--border-focus)',
         },
         accent: {
@@ -44,6 +44,10 @@ export default {
           100: rgb('--accent-100'),
           tint: 'var(--accent-tint)',
         },
+        // The text-side colour of the theme, for washes: hover:bg-ink/10, bg-ink/20 tracks.
+        ink: rgb('--ink'),
+        // Text and icons on a filled accent surface.
+        'on-accent': rgb('--on-accent'),
         text: {
           primary: 'var(--text-primary)',
           secondary: 'var(--text-secondary)',
@@ -64,7 +68,11 @@ export default {
         '2xl': 'var(--radius-2xl)',
       },
       fontFamily: {
-        sans: ['"Inter Variable"', 'Inter', 'Noto Sans', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-ui)'],
+      },
+      boxShadow: {
+        // Floating surfaces: dialogs, menus, toasts.
+        pop: 'var(--shadow-pop)',
       },
       backdropBlur: {
         xs: '2px',

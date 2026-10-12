@@ -1,4 +1,5 @@
-// Globals a plugin sees, in the shape Seanime gives its onlinestream providers, plus `$anilili`.
+// Globals a plugin sees, in the shape Seanime gives its onlinestream providers, plus `$anix`
+// (also reachable under its earlier name `$anilili`, which existing plugins use).
 // Evaluated once per context with the host functions as `host` and the plugin's settings as
 // `config`; returns the object the engine drives the context through.
 (function (host, config) {
@@ -1188,15 +1189,13 @@
     return false;
   });
 
-  // ------------------------------------------------------------------ $anilili
+  // ------------------------------------------------------------------ $anix / $anilili
 
   function bytesOrBase64(value) {
     return typeof value === 'string' ? host.b64Decode(value) : plainBytes(value);
   }
 
-  define(
-    '$anilili',
-    Object.freeze({
+  const appHelpers = Object.freeze({
       version: config.version,
       pluginId: config.id,
       gunzip(value) {
@@ -1208,7 +1207,7 @@
       xor(value, key) {
         const data = bytesOrBase64(value);
         const mask = host.utf8Encode(String(key));
-        if (!mask.length) throw new Error('$anilili.xor: the key is empty');
+        if (!mask.length) throw new Error('$anix.xor: the key is empty');
         const out = new Uint8Array(data.length);
         for (let i = 0; i < data.length; i++) out[i] = data[i] ^ mask[i % mask.length];
         return host.b64Encode(out);
@@ -1228,8 +1227,10 @@
       bytesToBase64(value) {
         return host.b64Encode(plainBytes(value));
       },
-    })
-  );
+    });
+  define('$anix', appHelpers);
+  // The name plugins written before the rename use; the same object.
+  define('$anilili', appHelpers);
 
   // ------------------------------------------------------------------ what the engine calls
 

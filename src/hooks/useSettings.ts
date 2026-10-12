@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import type { AppSettings, UpdateInfo } from '../types';
+import { DEFAULT_THEME } from '../theme/themes';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoplay: true,
@@ -15,6 +16,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   doh_provider: 'cloudflare',
   download_quality: 'best',
   download_dir: '',
+  theme: DEFAULT_THEME,
 };
 
 /** Stands for "no specific provider" wherever a provider key (a plugin id) is expected. */

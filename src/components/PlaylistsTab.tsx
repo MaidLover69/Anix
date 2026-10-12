@@ -91,7 +91,7 @@ export const PlaylistsTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => selectPlaylist(playlist.id)}
-                className="flex flex-col w-full gap-2 p-2 rounded-lg bg-bg-card hover:bg-bg-elevated text-left cursor-pointer transition-colors"
+                className="flex flex-col w-full gap-2 p-2 rounded-lg ui-card bg-bg-card hover:bg-bg-elevated text-left cursor-pointer transition-colors"
               >
                 <PlaylistCollage covers={playlist.covers} className="w-full aspect-video rounded-md" />
                 <span className="flex flex-col gap-0.5 px-1 pb-1 min-w-0">

@@ -134,7 +134,7 @@ const ServerList: React.FC<ServerListProps> = ({
                 type="button"
                 data-autofocus={index === 0 ? '' : undefined}
                 onClick={() => onSelect(name, category)}
-                className="flex h-11 flex-shrink-0 items-center justify-between gap-3 rounded-md bg-bg-surface px-3 text-left cursor-pointer transition-colors hover:bg-bg-input"
+                className="flex h-11 flex-shrink-0 items-center justify-between gap-3 rounded-md ui-inset bg-bg-surface px-3 text-left cursor-pointer transition-colors hover:bg-bg-input"
               >
                 <span className="flex min-w-0 items-center gap-3">
                   <Server aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />

@@ -133,7 +133,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         aria-labelledby={aria['aria-labelledby']}
         onClick={() => (isOpen ? setIsOpen(false) : openMenu())}
         className={clsx(
-          'flex w-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-bg-input px-3 text-[13px] font-medium text-text-primary cursor-pointer select-none transition-colors hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none',
+          'ui-select flex w-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-bg-input px-3 text-[13px] font-medium text-text-primary cursor-pointer select-none transition-colors hover:bg-ink/10 disabled:opacity-40 disabled:pointer-events-none',
           size === 'sm' ? 'h-8' : 'h-9'
         )}
       >
@@ -147,7 +147,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           id={listId}
           role="listbox"
           className={clsx(
-            'absolute right-0 z-50 max-h-60 w-full min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] animate-fade-in',
+            'ui-menu absolute right-0 z-50 max-h-60 w-full min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-pop animate-fade-in',
             placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
           )}
         >
@@ -168,7 +168,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
                     : index === activeIndex
                     ? 'text-text-primary'
                     : 'text-text-secondary',
-                  index === activeIndex && 'bg-white/10'
+                  index === activeIndex && 'bg-ink/10'
                 )}
               >
                 <span className="truncate">{opt.label}</span>

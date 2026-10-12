@@ -171,7 +171,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
                   onClick={() => handlePick(playlist.id, playlist.name)}
                   disabled={busy}
                   aria-label={`Add to ${playlist.name}`}
-                  className="flex items-center gap-3 w-full p-2 rounded-md text-left cursor-pointer hover:bg-white/5 transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:-outline-offset-2"
+                  className="flex items-center gap-3 w-full p-2 rounded-md text-left cursor-pointer hover:bg-ink/5 transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:-outline-offset-2"
                 >
                   <PlaylistCollage
                     covers={playlist.covers.slice(0, 1)}

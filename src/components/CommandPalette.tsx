@@ -35,7 +35,7 @@ const NAV_ITEMS: NavItem[] = [
 
 const MIN_QUERY_LENGTH = 2;
 
-const KBD_CLASS = 'rounded-sm bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted';
+const KBD_CLASS = 'rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted';
 
 function titleOf(anime: Media): string {
   return anime.title.english || anime.title.user_preferred || anime.title.romaji || 'Untitled';

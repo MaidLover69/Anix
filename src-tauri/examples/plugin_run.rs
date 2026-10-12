@@ -1,12 +1,12 @@
 //! Runs a streaming plugin against the app's real plugin runtime from the command line.
 //! See `usage()` below, or run it without arguments.
 
-use anilili_lib::models::{AnimeQuery, Category};
-use anilili_lib::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
-use anilili_lib::plugins::provider::{PluginProvider, ProviderSettings};
-use anilili_lib::plugins::registry::{PluginRegistry, RegistryOptions};
-use anilili_lib::providers::AnimeProvider;
-use anilili_lib::web_session::{app_session, SessionUse};
+use anix_lib::models::{AnimeQuery, Category};
+use anix_lib::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
+use anix_lib::plugins::provider::{PluginProvider, ProviderSettings};
+use anix_lib::plugins::registry::{PluginRegistry, RegistryOptions};
+use anix_lib::providers::AnimeProvider;
+use anix_lib::web_session::{app_session, SessionUse};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -163,7 +163,7 @@ async fn load(path: &Path, payload_override: Option<&Path>) -> Result<Loaded, St
             }
             None if payload_uri.starts_with("http://") || payload_uri.starts_with("https://") => {
                 eprintln!("downloading {}", payload_uri);
-                let client = anilili_lib::clients::http::http_client().map_err(|e| e.reason())?;
+                let client = anix_lib::clients::http::http_client().map_err(|e| e.reason())?;
                 let response = client.get(&payload_uri).send().await.map_err(|e| e.to_string())?;
                 if !response.status().is_success() {
                     return Err(format!("{} answered HTTP {}", payload_uri, response.status().as_u16()));
@@ -179,8 +179,8 @@ async fn load(path: &Path, payload_override: Option<&Path>) -> Result<Loaded, St
         _ => is_typescript(&origin) || is_typescript(&payload_uri),
     };
     // The manifest's settings at their defaults, as the app runs a plugin nobody configured.
-    let config = anilili_lib::plugins::userconfig::UserConfig::from_manifest(&manifest);
-    let (source, preferences) = anilili_lib::plugins::userconfig::apply(&source, config.as_ref(), None)
+    let config = anix_lib::plugins::userconfig::UserConfig::from_manifest(&manifest);
+    let (source, preferences) = anix_lib::plugins::userconfig::apply(&source, config.as_ref(), None)
         .map_err(|e| e.message().to_string())?;
     Ok(Loaded {
         id,
@@ -210,7 +210,7 @@ fn main() {
 
 async fn run(options: Options) -> i32 {
     if options.positional[0] == "repo" {
-        let dir = std::env::temp_dir().join(format!("anilili-plugin-run-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("anix-plugin-run-{}", std::process::id()));
         let registry = PluginRegistry::open(dir.clone(), RegistryOptions::default());
         let outcome = registry.add_repo(&options.positional[1]).await;
         let _ = match &outcome {

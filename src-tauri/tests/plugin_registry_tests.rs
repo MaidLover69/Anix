@@ -2,12 +2,12 @@
 
 mod plugin_support;
 
-use anilili_lib::error::AppError;
-use anilili_lib::models::Category;
-use anilili_lib::plugins::provider::servers_for;
-use anilili_lib::plugins::registry::{index_candidates, valid_plugin_id, PluginRegistry, RegistryOptions};
-use anilili_lib::providers::manager::{ProviderManager, NO_PLUGIN_MESSAGE};
-use anilili_lib::web_session::SiteSession;
+use anix_lib::error::AppError;
+use anix_lib::models::Category;
+use anix_lib::plugins::provider::servers_for;
+use anix_lib::plugins::registry::{index_candidates, valid_plugin_id, DriveEndpoints, PluginRegistry, RegistryOptions};
+use anix_lib::providers::manager::{ProviderManager, NO_PLUGIN_MESSAGE};
+use anix_lib::web_session::SiteSession;
 use plugin_support::{FakeSession, NoSession, Req, Resp, Site};
 use serde_json::json;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "anilili-plugin-test-{}-{}-{}",
+        "anix-plugin-test-{}-{}-{}",
         name,
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
@@ -193,10 +193,10 @@ async fn fixture() -> Fixture {
 #[test]
 fn repository_links_resolve_to_index_addresses() {
     assert_eq!(
-        index_candidates("https://github.com/MaidLover69/Anilili_Linux_plugins").unwrap(),
+        index_candidates("https://github.com/someone/anix-plugins").unwrap(),
         vec![
-            "https://raw.githubusercontent.com/MaidLover69/Anilili_Linux_plugins/main/index.json",
-            "https://raw.githubusercontent.com/MaidLover69/Anilili_Linux_plugins/master/index.json",
+            "https://raw.githubusercontent.com/someone/anix-plugins/main/index.json",
+            "https://raw.githubusercontent.com/someone/anix-plugins/master/index.json",
         ]
     );
     assert_eq!(
@@ -399,7 +399,7 @@ async fn plugins_serve_episodes_and_sources_through_the_manager() {
     assert!(dub.subtitles[0].url.ends_with("/subs/dub/en.ass"));
 
     // Failures name the plugin and say why.
-    let reason = |result: Result<_, AppError>| -> String { result.map(|_: anilili_lib::models::SourcesResult| ()).unwrap_err().to_string() };
+    let reason = |result: Result<_, AppError>| -> String { result.map(|_: anix_lib::models::SourcesResult| ()).unwrap_err().to_string() };
     let no_dub = reason(manager.get_sources_for_episode(77, None, 3.0, "dub", Some("Test Show".to_string()), None).await);
     assert!(no_dub.contains("fixture: episode 3 not listed"), "{}", no_dub);
     assert!(no_dub.contains("typed: no dub"), "{}", no_dub);
@@ -453,7 +453,7 @@ async fn installed_plugins_survive_a_restart_and_work_offline() {
     let settings = registry
         .runtime("single")
         .unwrap()
-        .call("getSettings", &[], std::time::Duration::from_secs(5), anilili_lib::web_session::SessionUse::Existing)
+        .call("getSettings", &[], std::time::Duration::from_secs(5), anix_lib::web_session::SessionUse::Existing)
         .await
         .unwrap();
     assert_eq!(settings["episodeServers"], json!(["only"]));
@@ -538,7 +538,7 @@ async fn a_site_that_refuses_the_browser_too_is_reported_as_needing_verification
     assert!(failure.contains("guarded: needs verification"), "{}", failure);
     assert!(!session.asked().is_empty());
     let key = format!("127.0.0.1:{}", site.addr.port());
-    assert_eq!(anilili_lib::plugins::net::plugins_for_site(&key), ["guarded"]);
+    assert_eq!(anix_lib::plugins::net::plugins_for_site(&key), ["guarded"]);
 
     // Without a session at all the plugin's failure is still named for what it is.
     let plain = PluginRegistry::open(scratch_dir("nosession"), options(Arc::new(NoSession)));
@@ -555,7 +555,7 @@ async fn a_site_that_refuses_the_browser_too_is_reported_as_needing_verification
 
 mod settings {
     use super::*;
-    use anilili_lib::plugins::userconfig::{self, ConfigError, SavedConfig, UserConfig};
+    use anix_lib::plugins::userconfig::{self, ConfigError, SavedConfig, UserConfig};
     use std::collections::HashMap;
 
     fn config(manifest: serde_json::Value) -> UserConfig {
@@ -758,4 +758,331 @@ class Provider {
         assert_eq!(info(&reopened, "configured").servers, ["b-server", "b-pref", "4"]);
         assert_eq!(info(&reopened, "configured").status, "ready");
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Repositories on Google Drive
+// ---------------------------------------------------------------------------------------
+
+const FILE_ID: &str = "1AbC_dEf-0123456789xyz";
+
+fn drive_plugin(servers: &str) -> String {
+    format!("class Provider {{ getSettings() {{ return {{ episodeServers: [{}], supportsDub: false }}; }} }}", servers)
+}
+
+/// A stand-in for Google Drive (share pages and the download host) and, on another port, a
+/// website whose links redirect to it.
+struct DriveFixture {
+    drive: Site,
+    website: Site,
+    /// What the shared file holds.
+    file: Arc<Mutex<String>>,
+    /// The page Drive sends instead of the file, when set.
+    interstitial: Arc<Mutex<Option<String>>>,
+}
+
+impl DriveFixture {
+    fn endpoints(&self) -> DriveEndpoints {
+        DriveEndpoints {
+            share_hosts: vec![self.drive.addr.to_string()],
+            download_base: self.drive.base(),
+        }
+    }
+
+    fn registry(&self, dir: &PathBuf) -> PluginRegistry {
+        PluginRegistry::open(
+            dir.clone(),
+            RegistryOptions { drive: self.endpoints(), ..options(Arc::new(NoSession)) },
+        )
+    }
+
+    fn set_file(&self, value: serde_json::Value) {
+        *self.file.lock().unwrap() = value.to_string();
+    }
+
+    fn downloads(&self) -> usize {
+        self.drive.count("GET /download?")
+    }
+}
+
+fn drive_index(name: Option<&str>, version: &str, servers: &str) -> serde_json::Value {
+    let plugins = json!([
+        { "id": "drive-one", "name": "Drive One", "version": version, "type": "onlinestream-provider", "language": "javascript", "payload": drive_plugin(servers) },
+        { "id": "drive-two", "name": "Drive Two", "version": "1.0.0", "type": "onlinestream-provider", "language": "javascript", "payload": drive_plugin("'two'") }
+    ]);
+    match name {
+        Some(name) => json!({ "name": name, "plugins": plugins }),
+        None => plugins,
+    }
+}
+
+async fn drive_fixture() -> DriveFixture {
+    let file = Arc::new(Mutex::new(drive_index(Some("Anix extensions"), "1.0.0", "'a'").to_string()));
+    let interstitial: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (contents, page) = (file.clone(), interstitial.clone());
+    let drive = Site::start(move |request: &Req| match request.route() {
+        // The file itself, only for the request the app is meant to make.
+        "/download" => {
+            if request.query("id") != FILE_ID {
+                return Resp::status(404);
+            }
+            if request.query("export") != "download" || request.query("confirm") != "t" {
+                return Resp::html("<html><body>Google Drive can't scan this file for viruses. Download anyway?</body></html>");
+            }
+            match page.lock().unwrap().clone() {
+                Some(html) => Resp::html(&html),
+                // Drive serves every file as a download, whatever it holds.
+                None => Resp::new(200, "application/octet-stream", contents.lock().unwrap().clone()),
+            }
+        }
+        // Drive's pages about the file are web pages, never the file.
+        route if route.starts_with("/file/d/") || route == "/open" || route == "/uc" => {
+            Resp::html("<!DOCTYPE html><html><head><title>index.json - Google Drive</title></head><body>viewer</body></html>")
+        }
+        _ => Resp::status(404),
+    })
+    .await;
+
+    let drive_base = drive.base();
+    let website = Site::start(move |request: &Req| {
+        let to = |path: &str| Resp::status(302).with_header("Location", &format!("{}{}", drive_base, path));
+        match request.route() {
+            "/plugins" => to(&format!("/file/d/{}/view?usp=sharing", FILE_ID)),
+            "/plugins-direct" => to(&format!("/download?id={}&export=download&confirm=t", FILE_ID)),
+            "/hop" => Resp::status(301).with_header("Location", "/plugins"),
+            "/plugins-missing" => to("/file/d/nosuchfile000/view"),
+            "/list.json" => Resp::json(drive_index(Some("  Hosted \n here  "), "1.0.0", "'a'")),
+            _ => Resp::status(404),
+        }
+    })
+    .await;
+
+    DriveFixture { drive, website, file, interstitial }
+}
+
+#[test]
+fn drive_share_links_resolve_to_a_direct_download() {
+    let direct = "https://drive.usercontent.google.com/download?id=1AbC_dEf-0123456789xyz&export=download&confirm=t";
+    for link in [
+        "https://drive.google.com/file/d/1AbC_dEf-0123456789xyz/view?usp=sharing",
+        "https://drive.google.com/file/d/1AbC_dEf-0123456789xyz/view",
+        "https://drive.google.com/file/d/1AbC_dEf-0123456789xyz",
+        "drive.google.com/file/d/1AbC_dEf-0123456789xyz/edit",
+        "https://drive.google.com/file/u/0/d/1AbC_dEf-0123456789xyz/view".replace("/file/u/0/d/", "/u/0/file/d/").as_str(),
+        "https://drive.google.com/open?id=1AbC_dEf-0123456789xyz",
+        "https://drive.google.com/open?usp=drive_link&id=1AbC_dEf-0123456789xyz",
+        "https://drive.google.com/uc?id=1AbC_dEf-0123456789xyz&export=download",
+        "https://drive.google.com/uc?export=download&id=1AbC_dEf-0123456789xyz",
+        "https://DRIVE.GOOGLE.COM/uc?id=1AbC_dEf-0123456789xyz",
+        "https://docs.google.com/uc?id=1AbC_dEf-0123456789xyz",
+        "https://drive.usercontent.google.com/download?id=1AbC_dEf-0123456789xyz",
+        "https://drive.usercontent.google.com/download?id=1AbC_dEf-0123456789xyz&export=download&authuser=0",
+        "https://drive.usercontent.google.com/u/0/uc?id=1AbC_dEf-0123456789xyz&export=download",
+    ] {
+        assert_eq!(index_candidates(link).unwrap(), vec![direct.to_string()], "{}", link);
+    }
+
+    // Other sites, Drive addresses that name no file, and ids that are not ids are left as they are.
+    for link in [
+        "https://example.org/file/d/1AbC_dEf-0123456789xyz/view",
+        "https://example.org/uc?id=1AbC_dEf-0123456789xyz",
+        "https://drive.google.com/drive/folders/1AbC_dEf-0123456789xyz",
+        "https://drive.google.com/uc?id=../../etc",
+        "https://drive.google.com/uc?id=",
+        "https://notdrive.google.com.example.org/uc?id=1AbC_dEf-0123456789xyz",
+    ] {
+        let url = if link.contains("://") { link.to_string() } else { format!("https://{}", link) };
+        assert_eq!(index_candidates(link).unwrap(), vec![url], "{}", link);
+    }
+    assert!(DriveEndpoints::default().file_id(&"https://drive.google.com/file/d/abc/view".parse().unwrap()).is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drive_share_link_is_downloaded_directly_and_kept_as_entered() {
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-share");
+    let registry = fx.registry(&dir);
+
+    let link = fx.drive.url(&format!("/file/d/{}/view?usp=sharing", FILE_ID));
+    let repo = registry.add_repo(&link).await.unwrap();
+    assert_eq!(repo.url, link, "the link the user entered is what is stored");
+    assert_eq!(repo.name, "Anix extensions");
+    assert_eq!((repo.plugin_count, repo.error.clone()), (2, None));
+    // The share page itself was never asked for.
+    assert_eq!(fx.drive.count("/file/d/"), 0, "{:?}", fx.drive.hits());
+    assert_eq!(fx.drive.hits(), [format!("GET /download?id={}&export=download&confirm=t", FILE_ID)]);
+    assert_eq!(manager(&registry).provider_names(), ["drive-one", "drive-two"]);
+    assert!(dir.join("payloads/drive-one.js").is_file());
+
+    // The other spellings of the same file are the same repository.
+    for other in [format!("/open?id={}", FILE_ID), format!("/uc?id={}&export=download", FILE_ID), format!("/download?id={}", FILE_ID)] {
+        let again = registry.add_repo(&fx.drive.url(&other)).await.unwrap_err();
+        assert!(again.contains("already been added"), "{}", again);
+    }
+
+    // It is stored and refreshed under the entered link after a restart.
+    drop(registry);
+    let registry = fx.registry(&dir);
+    assert_eq!(registry.list_repos()[0].url, link);
+    let before = fx.downloads();
+    let refreshed = registry.refresh_repos().await;
+    assert_eq!(fx.downloads(), before + 1);
+    assert_eq!((refreshed[0].plugin_count, refreshed[0].error.clone()), (2, None));
+
+    registry.remove_repo(&fx.drive.url(&format!("/open?id={}", FILE_ID))).await.unwrap();
+    assert!(registry.list_repos().is_empty() && registry.list_plugins().is_empty());
+
+    // Each form of link works on its own, and an index without a name is called after Drive.
+    fx.set_file(drive_index(None, "1.0.0", "'a'"));
+    for form in [format!("/open?id={}", FILE_ID), format!("/uc?id={}&export=download", FILE_ID), format!("/download?id={}&authuser=0", FILE_ID)] {
+        let link = fx.drive.url(&form);
+        let repo = registry.add_repo(&link).await.unwrap_or_else(|e| panic!("{}: {}", form, e));
+        assert_eq!((repo.url.as_str(), repo.name.as_str(), repo.plugin_count), (link.as_str(), "Google Drive", 2));
+        registry.remove_repo(&link).await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_website_link_that_redirects_to_drive_is_followed_to_the_file() {
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-redirect");
+    let registry = fx.registry(&dir);
+
+    // website -> website -> Drive's share page (a web page) -> the file, asked for directly.
+    let link = fx.website.url("/hop");
+    let repo = registry.add_repo(&link).await.unwrap();
+    assert_eq!(repo.url, link);
+    assert_eq!(repo.name, "Anix extensions");
+    assert_eq!(repo.plugin_count, 2);
+    assert_eq!(fx.website.hits(), ["GET /hop", "GET /plugins"]);
+    assert_eq!(
+        fx.drive.hits(),
+        [
+            format!("GET /file/d/{}/view?usp=sharing", FILE_ID),
+            format!("GET /download?id={}&export=download&confirm=t", FILE_ID),
+        ]
+    );
+    assert_eq!(registry.list_plugins().iter().map(|p| p.repo_url.clone()).collect::<Vec<_>>(), [link.clone(), link.clone()]);
+
+    // A website that redirects straight to the download needs no second request.
+    let dir2 = scratch_dir("drive-redirect-direct");
+    let second = fx.registry(&dir2);
+    let before = fx.drive.hits().len();
+    let direct = second.add_repo(&fx.website.url("/plugins-direct")).await.unwrap();
+    assert_eq!(direct.plugin_count, 2);
+    assert_eq!(fx.drive.hits().len(), before + 1);
+
+    // Without a name in the index the repository is called after the link the user entered.
+    fx.set_file(drive_index(None, "1.0.0", "'a'"));
+    let dir3 = scratch_dir("drive-redirect-unnamed");
+    let unnamed = fx.registry(&dir3).add_repo(&fx.website.url("/plugins")).await.unwrap();
+    assert_eq!(unnamed.name, format!("{}/plugins", fx.website.addr.ip()));
+
+    // A name that arrives later is taken up on refresh.
+    fx.set_file(drive_index(Some("Renamed list"), "1.0.0", "'a'"));
+    assert_eq!(registry.refresh_repos().await[0].name, "Renamed list");
+
+    // A redirect to a Drive file that does not exist is reported as Drive's failure.
+    let missing = registry.add_repo(&fx.website.url("/plugins-missing")).await.unwrap_err();
+    assert!(missing.contains("Google Drive did not return the file") && missing.contains("HTTP 404"), "{}", missing);
+
+    // An index with a name works from any host, and the name is tidied.
+    let dir4 = scratch_dir("named-index");
+    let hosted = fx.registry(&dir4).add_repo(&fx.website.url("/list.json")).await.unwrap();
+    assert_eq!((hosted.name.as_str(), hosted.plugin_count), ("Hosted here", 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_from_drive_instead_of_the_file_is_reported_and_plugins_stay() {
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-interstitial");
+    let registry = fx.registry(&dir);
+    let link = fx.drive.url(&format!("/file/d/{}/view", FILE_ID));
+
+    let pages = [
+        ("<html><body><p>Sorry, you can't view or download this file at this time.</p><p>Too many users have viewed or downloaded this file recently.</p></body></html>", "too many people"),
+        ("<html><body>Google Drive can't scan this file for viruses. <a>Download anyway</a></body></html>", "viruses"),
+        ("<html><head><title>Sign in - Google Accounts</title></head><body><form action=\"/ServiceLogin\"></form></body></html>", "sign in"),
+        ("<html><body>You need access. Request access, or switch to an account with access.</body></html>", "Anyone with the link"),
+        ("<!DOCTYPE html><html><body>Something else</body></html>", "web page instead of the plugin list"),
+        ("this is not json", "not JSON"),
+    ];
+
+    // Adding: nothing is stored.
+    for (page, expected) in pages {
+        *fx.interstitial.lock().unwrap() = Some(page.to_string());
+        let refused = registry.add_repo(&link).await.unwrap_err();
+        assert!(refused.contains("Google Drive did not return the file: "), "{}", refused);
+        assert!(refused.contains(expected), "{} / {}", expected, refused);
+    }
+    assert!(registry.list_repos().is_empty() && registry.list_plugins().is_empty());
+
+    // Refreshing: the reason is on the repository and the installed plugins keep working.
+    *fx.interstitial.lock().unwrap() = None;
+    registry.add_repo(&link).await.unwrap();
+    let installed = std::fs::read_to_string(dir.join("payloads/drive-one.js")).unwrap();
+    for (page, expected) in pages {
+        *fx.interstitial.lock().unwrap() = Some(page.to_string());
+        let refreshed = registry.refresh_repos().await;
+        let error = refreshed[0].error.clone().unwrap();
+        assert!(error.starts_with("Google Drive did not return the file: ") && error.contains(expected), "{}", error);
+        assert_eq!(refreshed[0].plugin_count, 2);
+    }
+    assert_eq!(manager(&registry).provider_names(), ["drive-one", "drive-two"]);
+    assert_eq!(std::fs::read_to_string(dir.join("payloads/drive-one.js")).unwrap(), installed);
+    assert!(registry.list_plugins().iter().all(|p| p.status == "ready"));
+
+    // The same through the redirecting website.
+    let dir2 = scratch_dir("drive-interstitial-site");
+    let via_site = fx.registry(&dir2).add_repo(&fx.website.url("/plugins")).await.unwrap_err();
+    assert!(via_site.contains("Google Drive did not return the file"), "{}", via_site);
+
+    // Once Drive serves the file again the error clears.
+    *fx.interstitial.lock().unwrap() = None;
+    assert_eq!(registry.refresh_repos().await[0].error, None);
+
+    // A page from a site that is not Drive keeps its own wording.
+    let other = registry.add_repo(&fx.drive.url("/file/d/")).await.unwrap_err();
+    assert!(other.contains("Google Drive did not return the file"), "{}", other);
+    let plain = PluginRegistry::open(scratch_dir("drive-none"), options(Arc::new(NoSession)));
+    let not_drive = plain.add_repo(&link).await.unwrap_err();
+    assert!(!not_drive.contains("Google Drive") && not_drive.contains("not JSON"), "{}", not_drive);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inline_code_that_changes_under_the_same_version_is_installed() {
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-same-version");
+    let registry = fx.registry(&dir);
+    let link = fx.drive.url(&format!("/uc?id={}", FILE_ID));
+    registry.add_repo(&link).await.unwrap();
+    let server_list = |registry: &PluginRegistry, id: &str| registry.list_plugins().into_iter().find(|p| p.id == id).unwrap().servers;
+    assert_eq!(server_list(&registry, "drive-one"), ["a"]);
+    let two_before = std::fs::metadata(dir.join("payloads/drive-two.js")).unwrap().modified().unwrap();
+    let provider_before = Arc::as_ptr(&registry.providers()[1]) as *const () as usize;
+
+    // Nothing changed: nothing is rewritten.
+    registry.refresh_repos().await;
+    assert_eq!(server_list(&registry, "drive-one"), ["a"]);
+
+    // The code of one plugin changes; every version number stays the same.
+    fx.set_file(drive_index(Some("Anix extensions"), "1.0.0", "'a', 'b'"));
+    let refreshed = registry.refresh_repos().await;
+    assert_eq!(refreshed[0].error, None);
+    let one = registry.list_plugins().into_iter().find(|p| p.id == "drive-one").unwrap();
+    assert_eq!((one.version.as_str(), one.status.as_str()), ("1.0.0", "ready"));
+    assert_eq!(one.servers, ["a", "b"], "the new code is what runs");
+    assert!(std::fs::read_to_string(dir.join("payloads/drive-one.js")).unwrap().contains("'a', 'b'"));
+    // The plugin whose code did not change was left alone.
+    assert_eq!(std::fs::metadata(dir.join("payloads/drive-two.js")).unwrap().modified().unwrap(), two_before);
+    assert_eq!(Arc::as_ptr(&registry.providers()[1]) as *const () as usize, provider_before);
+
+    // A plugin dropped from the list goes away; a new one arrives.
+    fx.set_file(json!({ "plugins": [
+        { "id": "drive-three", "name": "Three", "version": "0.1.0", "type": "onlinestream-provider", "payload": drive_plugin("'c'") }
+    ] }));
+    let refreshed = registry.refresh_repos().await;
+    assert_eq!(refreshed[0].name, "Anix extensions", "a list that stops naming itself keeps its name");
+    assert_eq!(manager(&registry).provider_names(), ["drive-three"]);
+    assert!(!dir.join("payloads/drive-one.js").exists());
 }

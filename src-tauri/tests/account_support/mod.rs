@@ -3,12 +3,12 @@
 
 #![allow(dead_code)]
 
-use anilili_lib::accounts;
+use anix_lib::accounts;
 
 use accounts::session::{Context, Notice, Notifier};
 use accounts::store::AccountStore;
-use anilili_lib::clients::anilist::AniListClient;
-use anilili_lib::clients::mal::MalClient;
+use anix_lib::clients::anilist::AniListClient;
+use anix_lib::clients::mal::MalClient;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -137,7 +137,7 @@ impl World {
     /// AniList at `<base>/graphql`, the MAL API at `<base>/v2`, its token endpoint at `<base>/token`.
     pub async fn new(base: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "anilili-account-test-{}-{}",
+            "anix-account-test-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::SeqCst)
         ));
@@ -149,7 +149,7 @@ impl World {
             store: AccountStore::at(dir.join("settings.json")),
             anilist: AniListClient::with_base_url(client.clone(), &format!("{}/graphql", base)),
             mal: MalClient::with_base_urls(client, &format!("{}/v2", base), &format!("{}/token", base)),
-            pool: anilili_lib::db::init_db_in_memory().await.expect("in-memory database"),
+            pool: anix_lib::db::init_db_in_memory().await.expect("in-memory database"),
             recorder: Recorder::default(),
             dir,
         }
@@ -178,5 +178,5 @@ impl Drop for World {
 }
 
 pub fn far_future() -> i64 {
-    anilili_lib::db::current_unix_timestamp() + 30 * 24 * 3600
+    anix_lib::db::current_unix_timestamp() + 30 * 24 * 3600
 }

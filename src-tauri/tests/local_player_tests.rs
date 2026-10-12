@@ -1,16 +1,16 @@
-use anilili_lib::commands::{
+use anix_lib::commands::{
     build_external_playlist, common_referer, launch_external_player,
     launch_playlist_external_player, local_file_player_args, open_file_in_player,
     read_settings_file, remove_stale_playlist_files, resolve_local_media_file,
     resolve_player_bin, single_line, stream_player_args, strip_appdir_entries,
     validate_media_url, write_settings_file,
 };
-use anilili_lib::models::ExternalPlaylistItem;
+use anix_lib::models::ExternalPlaylistItem;
 use std::os::unix::fs::PermissionsExt;
 
 fn temp_path(tag: &str, ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
-        "anilili_local_player_{}_{}.{}",
+        "anix_local_player_{}_{}.{}",
         tag,
         std::process::id(),
         ext
@@ -252,7 +252,7 @@ fn test_stale_playlist_files_are_removed() {
     let dir = temp_path("playlist_dir", "d");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let ours = dir.join("anilili_playlist_demo_1_2.m3u");
+    let ours = dir.join("anix_playlist_demo_1_2.m3u");
     let other = dir.join("someone_elses.m3u");
     std::fs::write(&ours, b"#EXTM3U\n").unwrap();
     std::fs::write(&other, b"#EXTM3U\n").unwrap();
@@ -269,16 +269,16 @@ fn test_stale_playlist_files_are_removed() {
 
 #[test]
 fn test_strip_appdir_entries() {
-    let appdir = "/tmp/.mount_Anilili";
+    let appdir = "/tmp/.mount_Anix";
     assert_eq!(
-        strip_appdir_entries("/tmp/.mount_Anilili/usr/bin/:/usr/local/bin:/usr/bin", appdir),
+        strip_appdir_entries("/tmp/.mount_Anix/usr/bin/:/usr/local/bin:/usr/bin", appdir),
         "/usr/local/bin:/usr/bin"
     );
-    assert_eq!(strip_appdir_entries("/tmp/.mount_Anilili/usr/lib/:", appdir), "");
+    assert_eq!(strip_appdir_entries("/tmp/.mount_Anix/usr/lib/:", appdir), "");
     // A sibling directory that only shares the prefix is kept.
     assert_eq!(
-        strip_appdir_entries("/tmp/.mount_Anilili2/bin:/tmp/.mount_Anilili", appdir),
-        "/tmp/.mount_Anilili2/bin"
+        strip_appdir_entries("/tmp/.mount_Anix2/bin:/tmp/.mount_Anix", appdir),
+        "/tmp/.mount_Anix2/bin"
     );
 }
 

@@ -106,7 +106,9 @@ pub fn common_referer(items: &[ExternalPlaylistItem]) -> Option<String> {
     referers.all(|r| r.as_deref() == Some(first.as_str())).then_some(first)
 }
 
-const PLAYLIST_FILE_PREFIX: &str = "anilili_playlist_";
+const PLAYLIST_FILE_PREFIX: &str = "anix_playlist_";
+/// The prefix used before the app was renamed; only cleaned up, never written.
+const LEGACY_PLAYLIST_FILE_PREFIX: &str = "anilili_playlist_";
 const PLAYLIST_FILE_MAX_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// An absolute directory for playlist files: the player is started from another directory.
@@ -127,7 +129,8 @@ pub fn remove_stale_playlist_files(dir: &std::path::Path, max_age: Duration) {
         let name = entry.file_name();
         let is_ours = name
             .to_str()
-            .map(|n| n.starts_with(PLAYLIST_FILE_PREFIX) && (n.ends_with(".m3u") || n.ends_with(".m3u8")))
+            .map(|n| (n.starts_with(PLAYLIST_FILE_PREFIX) || n.starts_with(LEGACY_PLAYLIST_FILE_PREFIX))
+                    && (n.ends_with(".m3u") || n.ends_with(".m3u8")))
             .unwrap_or(false);
         let is_old = entry
             .metadata()

@@ -138,7 +138,7 @@ const LocalFileList: React.FC<LocalFileListProps> = ({ files, scannedDir, player
           return (
             <li
               key={file.file_path}
-              className="flex items-center gap-3 p-3 rounded-md bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_76px]"
+              className="flex items-center gap-3 p-3 rounded-md ui-card bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_76px]"
             >
               <div className="flex flex-col flex-1 min-w-0 gap-0.5">
                 <span className="text-[13px] font-medium text-text-primary truncate select-text" title={title}>

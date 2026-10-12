@@ -65,7 +65,7 @@ const ScheduleEntry: React.FC<{ entry: AiringEntry; now: number; variant: ViewMo
 
   // The link and the bell are siblings: a button nested inside a link is invalid and
   // cannot be used on its own from the keyboard.
-  const rowClass = 'group rounded-md transition-colors hover:bg-white/5';
+  const rowClass = 'group rounded-md transition-colors hover:bg-ink/5';
   // Episodes that have already aired step back.
   const linkClass = clsx('rounded-md', hasAired && 'opacity-60');
   const to = `/detail/${entry.media_id}`;
@@ -107,7 +107,7 @@ const ScheduleEntry: React.FC<{ entry: AiringEntry; now: number; variant: ViewMo
     return (
       <div className={clsx(rowClass, 'relative')}>
         <Link to={to} draggable={false} className={clsx(linkClass, 'flex flex-col')}>
-          <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-bg-card">
+          <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl ui-card bg-bg-card">
             <ShimmerImage
               src={entry.cover_image}
               alt=""

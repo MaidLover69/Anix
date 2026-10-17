@@ -113,7 +113,6 @@ chmod +x Anix_1.2.0_amd64.AppImage
 
 *(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.2.0_amd64.AppImage`)*
 
-
 ---
 
 ## Where Anix Stores Data

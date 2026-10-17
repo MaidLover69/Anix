@@ -496,3 +496,27 @@ fn unknown_provider_names_fall_back_to_auto() {
     assert_eq!(preferred_provider("Some Old Display Name", &known), None);
     assert_eq!(preferred_provider("kiwi", &[]), None);
 }
+
+#[test]
+fn hls_media_playlist_length_is_the_sum_of_its_segments() {
+    use anix_lib::downloads::{parse_hls_playlist, HlsPlaylist};
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nseg1.ts\n#EXTINF:9.5,\nseg2.ts\n#EXTINF:4.25,title\nseg3.ts\n#EXT-X-ENDLIST\n";
+    assert_eq!(parse_hls_playlist(text, "https://cdn.example/a/index.m3u8"), Some(HlsPlaylist::Media { duration_s: 23.75 }));
+}
+
+#[test]
+fn hls_master_playlist_points_at_its_first_variant() {
+    use anix_lib::downloads::{parse_hls_playlist, HlsPlaylist};
+    let text = "\u{feff}#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n\n360/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2800000\n1080/index.m3u8\n";
+    assert_eq!(
+        parse_hls_playlist(text, "https://cdn.example/a/master.m3u8?t=1"),
+        Some(HlsPlaylist::Master { first_variant: "https://cdn.example/a/360/index.m3u8".to_string() })
+    );
+}
+
+#[test]
+fn text_that_is_not_a_playlist_has_no_length() {
+    use anix_lib::downloads::parse_hls_playlist;
+    assert_eq!(parse_hls_playlist("<html>blocked</html>", "https://x.example/"), None);
+    assert_eq!(parse_hls_playlist("#EXTM3U\n#EXT-X-ENDLIST\n", "https://x.example/"), None);
+}

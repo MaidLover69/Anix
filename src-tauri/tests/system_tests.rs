@@ -1,0 +1,447 @@
+//! Tests of the offline AniList cache, the autostart entry, the hardware report's parsing and
+//! tips, the tray's "Airing next" list, and the plugin health and directory helpers.
+
+use anix_lib::db;
+use anix_lib::error::AppError;
+use anix_lib::models::AiringEntry;
+use anix_lib::notifier::{Airing, Bell};
+use anix_lib::offline::{self, Kind};
+use anix_lib::plugins::health;
+use anix_lib::system::{autostart, hwaccel, tray, SystemSettings};
+use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+static TEMP_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "anix-system-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+// ------------------------------------------------------------------ offline cache
+
+#[tokio::test]
+async fn cache_round_trips_and_replaces() {
+    let pool = db::init_db_in_memory().await.unwrap();
+    assert_eq!(offline::load(&pool, Kind::Details, "21").await.unwrap(), None);
+
+    offline::store_at(&pool, Kind::Details, "21", &json!({ "id": 21, "title": "old" }), 1_000).await.unwrap();
+    offline::store_at(&pool, Kind::Details, "21", &json!({ "id": 21, "title": "new" }), 2_000).await.unwrap();
+    let (value, at) = offline::load(&pool, Kind::Details, "21").await.unwrap().unwrap();
+    assert_eq!(value["title"], "new");
+    assert_eq!(at, 2_000);
+
+    // Kinds do not share keys.
+    assert_eq!(offline::load(&pool, Kind::Search, "21").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn cache_keeps_only_the_newest_rows_of_a_kind() {
+    let pool = db::init_db_in_memory().await.unwrap();
+    let limit = Kind::Search.max_rows();
+    for i in 0..(limit + 5) {
+        offline::store_at(&pool, Kind::Search, &format!("q{}", i), &json!([i]), 10_000 + i).await.unwrap();
+    }
+    // A different kind is not pruned by search writes.
+    offline::store_at(&pool, Kind::Details, "1", &json!({}), 10_000).await.unwrap();
+
+    let rows = offline::load_all(&pool, Kind::Search).await.unwrap();
+    assert_eq!(rows.len() as i64, limit);
+    assert_eq!(rows[0].0, format!("q{}", limit + 4), "newest first");
+    assert!(offline::load(&pool, Kind::Search, "q0").await.unwrap().is_none(), "oldest dropped");
+    assert!(offline::load(&pool, Kind::Details, "1").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn prune_drops_rows_past_the_age_limit() {
+    let pool = db::init_db_in_memory().await.unwrap();
+    let now = 100 * 24 * 3600;
+    offline::store_at(&pool, Kind::Details, "old", &json!({}), now - offline::MAX_AGE_S - 1).await.unwrap();
+    offline::store_at(&pool, Kind::Details, "fresh", &json!({}), now - 60).await.unwrap();
+    offline::prune(&pool, now).await.unwrap();
+    assert!(offline::load(&pool, Kind::Details, "old").await.unwrap().is_none());
+    assert!(offline::load(&pool, Kind::Details, "fresh").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn migrations_create_the_cache_table_on_an_existing_database() {
+    let dir = TempDir::new("migrate");
+    let path = dir.0.join("anix.db");
+    let pool = db::init_db_at(&path).await.unwrap();
+    offline::store(&pool, Kind::Home, "home", &json!({ "trending": [] })).await.unwrap();
+    pool.close().await;
+    // Opening again runs the migrations a second time and keeps the row.
+    let pool = db::init_db_at(&path).await.unwrap();
+    assert!(offline::load(&pool, Kind::Home, "home").await.unwrap().is_some());
+}
+
+#[test]
+fn only_connection_failures_serve_the_cache() {
+    assert!(offline::is_offline_error(&AppError::Unreachable("graphql.anilist.co: dns".into())));
+    assert!(offline::is_offline_error(&AppError::Network("graphql.anilist.co timed out".into())));
+    assert!(offline::is_offline_error(&AppError::RateLimited { retry_after_s: 60 }));
+    assert!(!offline::is_offline_error(&AppError::Parse("Anime with ID 1 not found".into())));
+    assert!(!offline::is_offline_error(&AppError::AuthRequired));
+}
+
+#[test]
+fn search_keys_ignore_case_spacing_and_genre_order() {
+    let a = offline::search_key(Some(" Frieren "), &["Drama".into(), "Action".into()], None, Some(""), None, 1, 20, true);
+    let b = offline::search_key(Some("frieren"), &["action".into(), "drama".into()], None, None, None, 1, 20, true);
+    assert_eq!(a, b);
+    let other_page = offline::search_key(Some("frieren"), &[], None, None, None, 2, 20, true);
+    let adult = offline::search_key(Some("frieren"), &[], None, None, None, 1, 20, false);
+    let plain = offline::search_key(Some("frieren"), &[], None, None, None, 1, 20, true);
+    assert_ne!(plain, other_page);
+    assert_ne!(plain, adult);
+}
+
+fn airing(id: i64, at: i64) -> AiringEntry {
+    AiringEntry {
+        id,
+        airing_at: at,
+        episode: 1,
+        media_id: id * 10,
+        media_title: format!("Anime {}", id),
+        ..AiringEntry::default()
+    }
+}
+
+#[test]
+fn saved_schedules_are_merged_for_the_requested_window() {
+    let saved = vec![
+        ("200-300".to_string(), json!([airing(3, 250), airing(4, 290)]), 5_000),
+        ("100-200".to_string(), json!([airing(1, 120), airing(2, 180), airing(3, 250)]), 4_000),
+        ("0-50".to_string(), json!([airing(9, 10)]), 1_000),
+    ];
+    let (entries, saved_at) = offline::saved_schedule(saved, 150, 260);
+    let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+    assert_eq!(ids, vec![2, 3]);
+    assert_eq!(saved_at, Some(4_000), "the oldest schedule that contributed");
+
+    let (none, at) = offline::saved_schedule(vec![("0-50".into(), json!([airing(9, 10)]), 1)], 100, 200);
+    assert!(none.is_empty());
+    assert_eq!(at, None);
+}
+
+// ------------------------------------------------------------------ autostart
+
+#[test]
+fn autostart_entry_names_the_program_and_starts_minimised() {
+    let entry = autostart::desktop_entry(Path::new("/opt/Anix/anix"));
+    assert!(entry.starts_with("[Desktop Entry]\n"));
+    assert!(entry.contains("\nType=Application\n"));
+    assert!(entry.contains("\nName=Anix\n"));
+    assert!(entry.contains("\nExec=/opt/Anix/anix --minimized\n"));
+    assert!(entry.contains("\nX-GNOME-Autostart-enabled=true\n"));
+    assert!(entry.contains("\nX-Anix-Autostart=true\n"));
+}
+
+#[test]
+fn exec_arguments_are_quoted_as_the_desktop_entry_spec_asks() {
+    assert_eq!(autostart::quote_exec_arg("/usr/bin/anix"), "/usr/bin/anix");
+    assert_eq!(
+        autostart::quote_exec_arg("/run/media/me/Extra Volume/Anix.AppImage"),
+        "\"/run/media/me/Extra Volume/Anix.AppImage\""
+    );
+    // `$` and `"` are escaped inside the quotes, then every backslash is doubled.
+    assert_eq!(autostart::quote_exec_arg("/a/$b\"c"), "\"/a/\\\\$b\\\\\"c\"");
+    assert_eq!(autostart::quote_exec_arg("/a/100%"), "/a/100%%");
+}
+
+#[test]
+fn the_appimage_is_started_rather_than_its_mounted_binary() {
+    let exe = Some(PathBuf::from("/tmp/.mount_AnixAB/usr/bin/anix"));
+    assert_eq!(
+        autostart::exec_target(Some("/home/u/Apps/Anix.AppImage".into()), exe.clone()),
+        Some(PathBuf::from("/home/u/Apps/Anix.AppImage"))
+    );
+    assert_eq!(autostart::exec_target(Some("".into()), exe.clone()), exe);
+    assert_eq!(autostart::exec_target(None, exe.clone()), exe);
+}
+
+#[test]
+fn autostart_entry_is_written_replaced_and_removed() {
+    let dir = TempDir::new("autostart");
+    let path = autostart::entry_path(&dir.0);
+    assert!(!autostart::is_installed(&dir.0));
+
+    autostart::set_enabled(&dir.0, Some(Path::new("/opt/a/anix"))).unwrap();
+    assert!(autostart::is_installed(&dir.0));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Exec=/opt/a/anix --minimized"));
+
+    autostart::set_enabled(&dir.0, Some(Path::new("/opt/b/anix"))).unwrap();
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Exec=/opt/b/anix --minimized"));
+
+    autostart::set_enabled(&dir.0, None).unwrap();
+    assert!(!path.exists());
+    // Removing again is fine.
+    autostart::set_enabled(&dir.0, None).unwrap();
+}
+
+#[test]
+fn a_hand_made_autostart_file_is_left_alone() {
+    let dir = TempDir::new("autostart-foreign");
+    let path = autostart::entry_path(&dir.0);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "[Desktop Entry]\nExec=anix --something\n").unwrap();
+    assert!(autostart::set_enabled(&dir.0, Some(Path::new("/opt/anix"))).is_err());
+    autostart::set_enabled(&dir.0, None).unwrap();
+    assert!(path.exists(), "not removed");
+    assert!(!autostart::is_installed(&dir.0));
+}
+
+#[test]
+fn system_settings_default_to_off() {
+    assert_eq!(SystemSettings::from_json(&json!({})), SystemSettings::default());
+    let on = SystemSettings::from_json(&json!({ "minimize_to_tray": true, "start_with_desktop": true }));
+    assert!(on.minimize_to_tray && on.start_with_desktop);
+    let junk = SystemSettings::from_json(&json!({ "minimize_to_tray": "yes" }));
+    assert!(!junk.minimize_to_tray);
+}
+
+// ------------------------------------------------------------------ hardware report
+
+const VAINFO_INTEL: &str = "Trying display: wayland
+vainfo: VA-API version: 1.22 (libva 2.22.0)
+vainfo: Driver version: Intel iHD driver for Intel(R) Gen Graphics - 24.3.4 ()
+vainfo: Supported profile and entrypoints
+      VAProfileNone                   :\tVAEntrypointVideoProc
+      VAProfileMPEG2Simple            :\tVAEntrypointVLD
+      VAProfileH264Main               :\tVAEntrypointVLD
+      VAProfileH264Main               :\tVAEntrypointEncSliceLP
+      VAProfileH264High               :\tVAEntrypointVLD
+      VAProfileHEVCMain               :\tVAEntrypointVLD
+      VAProfileVP9Profile0            :\tVAEntrypointVLD
+      VAProfileAV1Profile0            :\tVAEntrypointVLD
+";
+
+const VAINFO_FAILED: &str = "libva info: VA-API version 1.23.0
+libva info: Trying to open /usr/lib64/dri/iHD_drv_video.so
+libva info: va_openDriver() returns -1
+libva error: /usr/lib64/dri/i965_drv_video.so init failed
+libva info: va_openDriver() returns -1
+vaInitialize failed with error code -1 (unknown libva error),exit
+Trying display: wayland
+";
+
+#[test]
+fn vainfo_output_is_read() {
+    let info = hwaccel::parse_vainfo(VAINFO_INTEL).expect("a driver");
+    assert_eq!(info.vaapi_version.as_deref(), Some("1.22 (libva 2.22.0)"));
+    assert!(info.driver.as_deref().unwrap().starts_with("Intel iHD driver"));
+    assert_eq!(info.decode, vec!["H.264", "HEVC", "VP9", "AV1", "MPEG-2"]);
+    assert!(info.profiles.contains(&"VAProfileH264Main: VAEntrypointEncSliceLP".to_string()));
+    assert_eq!(info.profiles.len(), 8);
+}
+
+#[test]
+fn a_failed_vainfo_run_reports_its_error_lines() {
+    assert_eq!(hwaccel::parse_vainfo(VAINFO_FAILED), None);
+    let reason = hwaccel::vainfo_failure(VAINFO_FAILED);
+    assert!(reason.contains("init failed"));
+    assert!(reason.contains("vaInitialize failed"));
+    assert!(!reason.contains("Trying display"));
+    assert_eq!(hwaccel::vainfo_failure(""), "vainfo did not answer");
+}
+
+#[test]
+fn session_kind_follows_the_environment() {
+    assert_eq!(hwaccel::session_kind(None, Some("wayland-0"), Some("wayland"), Some(":0")), "wayland");
+    assert_eq!(hwaccel::session_kind(None, None, Some("x11"), Some(":0")), "x11");
+    assert_eq!(hwaccel::session_kind(Some("x11"), Some("wayland-0"), Some("wayland"), Some(":0")), "x11");
+    assert_eq!(hwaccel::session_kind(None, None, None, None), "unknown");
+}
+
+#[test]
+fn gstreamer_folders_follow_the_environment() {
+    let defaults = ["/usr/lib64/gstreamer-1.0"];
+    assert_eq!(hwaccel::gst_plugin_dirs(None, None, &defaults), vec![PathBuf::from("/usr/lib64/gstreamer-1.0")]);
+    // The AppImage sets the system path, which replaces the defaults.
+    assert_eq!(
+        hwaccel::gst_plugin_dirs(Some("/x:/y"), Some("/app/gst:/x"), &defaults),
+        vec![PathBuf::from("/x"), PathBuf::from("/y"), PathBuf::from("/app/gst")]
+    );
+}
+
+fn report_with(vendor: &str, vaapi: hwaccel::VaapiCheck) -> hwaccel::HardwareReport {
+    hwaccel::HardwareReport {
+        session: "wayland".into(),
+        gpu_vendor: Some(vendor.into()),
+        render_node: Some("/dev/dri/renderD128".into()),
+        vaapi,
+        gstreamer: hwaccel::GstPlugins {
+            va: Some("/usr/lib64/gstreamer-1.0/libgstva.so".into()),
+            libav: Some("/usr/lib64/gstreamer-1.0/libgstlibav.so".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn tips_name_the_driver_package_for_the_gpu() {
+    let failed = hwaccel::VaapiCheck {
+        vainfo_installed: true,
+        ok: false,
+        info: None,
+        error: Some("init failed".into()),
+    };
+    let intel = hwaccel::tips(&report_with("intel", failed.clone()));
+    assert!(intel.iter().any(|t| t.contains("intel-media-driver")));
+    let amd = hwaccel::tips(&report_with("amd", failed));
+    assert!(amd.iter().any(|t| t.contains("mesa-va-drivers")));
+
+    let missing = hwaccel::tips(&report_with("intel", hwaccel::VaapiCheck::default()));
+    assert!(missing.iter().any(|t| t.contains("libva-utils")));
+
+    let working = hwaccel::VaapiCheck {
+        vainfo_installed: true,
+        ok: true,
+        info: hwaccel::parse_vainfo(VAINFO_INTEL),
+        error: None,
+    };
+    let ready = hwaccel::tips(&report_with("intel", working.clone()));
+    assert_eq!(ready.len(), 1);
+    assert!(ready[0].contains("looks ready"));
+
+    let mut no_h264 = working.clone();
+    no_h264.info.as_mut().unwrap().decode.retain(|c| c != "H.264");
+    assert!(hwaccel::tips(&report_with("amd", no_h264)).iter().any(|t| t.contains("cannot decode H.264")));
+
+    let mut dmabuf = report_with("intel", working);
+    dmabuf.dmabuf_disabled = true;
+    dmabuf.dmabuf_set_by_app = true;
+    assert!(hwaccel::tips(&dmabuf).iter().any(|t| t.contains("WEBKIT_DISABLE_DMABUF_RENDERER=0")));
+}
+
+#[test]
+fn tips_explain_a_bundled_gstreamer_without_va() {
+    let mut report = report_with("intel", hwaccel::VaapiCheck::default());
+    report.gstreamer.va = None;
+    report.running_from_appimage = true;
+    assert!(hwaccel::tips(&report).iter().any(|t| t.contains("come with the AppImage")));
+    report.running_from_appimage = false;
+    assert!(hwaccel::tips(&report).iter().any(|t| t.contains("gstreamer1-plugins-bad-free")));
+}
+
+// ------------------------------------------------------------------ tray
+
+fn bell(id: i64, title: &str) -> Bell {
+    Bell {
+        media_id: id,
+        media_title: title.into(),
+        cover_image: None,
+        enabled_at: 0,
+    }
+}
+
+#[test]
+fn airing_next_lists_future_episodes_of_belled_anime_soonest_first() {
+    let bells = vec![bell(1, "First"), bell(2, "Second")];
+    let airings = vec![
+        Airing { media_id: 2, episode: 5, airing_at: 3_000 },
+        Airing { media_id: 1, episode: 7, airing_at: 2_000 },
+        Airing { media_id: 1, episode: 6, airing_at: 500 },
+        Airing { media_id: 3, episode: 1, airing_at: 1_500 },
+        Airing { media_id: 1, episode: 7, airing_at: 2_000 },
+        Airing { media_id: 2, episode: 6, airing_at: 9_000 },
+    ];
+    let list = tray::pick_upcoming(&airings, &bells, 1_000, 2);
+    assert_eq!(
+        list.iter().map(|u| (u.media_id, u.episode)).collect::<Vec<_>>(),
+        vec![(1, 7), (2, 5)]
+    );
+    assert_eq!(list[0].title, "First");
+}
+
+#[test]
+fn airing_next_labels_are_short() {
+    let long = tray::Upcoming {
+        media_id: 1,
+        title: "A".repeat(80),
+        episode: 3,
+        airing_at: 1_000_000,
+    };
+    let label = tray::upcoming_label(&long, 1_000_000 - 60);
+    assert!(label.starts_with(&format!("{}…", "A".repeat(39))));
+    assert!(label.contains("· Ep 3 · "));
+}
+
+// ------------------------------------------------------------------ plugins
+
+#[test]
+fn directory_is_read_and_cleaned() {
+    let data = br#"{ "lists": [
+        { "name": "Anix extensions", "description": "Made for Anix.", "url": "https://anix-linux.vercel.app/extensions", "languages": ["en", "JA", "toolong", "1"] },
+        { "name": "No https", "url": "http://example.com/x.json" },
+        { "name": "", "url": "https://example.com/empty-name.json" },
+        { "name": "Twice", "url": "https://anix-linux.vercel.app/extensions" },
+        { "url": "https://example.com/no-name.json" },
+        "not an object",
+        { "name": "Minimal", "url": "https://example.com/list.json" }
+    ] }"#;
+    let lists = health::parse_directory(data).unwrap();
+    assert_eq!(lists.len(), 2);
+    assert_eq!(lists[0].name, "Anix extensions");
+    assert_eq!(lists[0].languages, vec!["en", "ja"]);
+    assert_eq!(lists[1].name, "Minimal");
+    assert_eq!(lists[1].description, "");
+    assert!(lists[1].languages.is_empty());
+
+    assert!(health::parse_directory(b"not json").is_err());
+    assert!(health::parse_directory(br#"{ "other": [] }"#).is_err());
+    assert_eq!(health::directory_url("https://anix-linux.vercel.app/"), "https://anix-linux.vercel.app/directory.json");
+}
+
+#[test]
+fn the_sites_own_directory_parses() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../website/directory.json");
+    let Ok(data) = std::fs::read(&path) else {
+        return;
+    };
+    let lists = health::parse_directory(&data).unwrap();
+    assert!(lists.iter().any(|l| l.url == "https://anix-linux.vercel.app/extensions" && l.name == "Anix extensions"));
+}
+
+#[test]
+fn health_results_are_classified() {
+    let ms = Duration::from_millis(420);
+    let ok = health::classify("p", Ok(json!([{ "id": "1" }, { "id": "2" }])), ms);
+    assert_eq!((ok.status.as_str(), ok.results, ok.latency_ms), ("ok", 2, 420));
+    assert_eq!(health::classify("p", Ok(json!([])), ms).status, "empty");
+    assert_eq!(health::classify("p", Ok(json!({})), ms).status, "error");
+    assert_eq!(health::classify("p", Err(AppError::CaptchaRequired), ms).status, "verification");
+    let timeout = health::classify("p", Err(AppError::provider("plugin", "search timed out")), ms);
+    assert_eq!(timeout.status, "timeout");
+    let down = health::classify("p", Err(AppError::Unreachable("site: dns".into())), ms);
+    assert_eq!(down.status, "error");
+    assert!(down.error.unwrap().contains("connection failed"));
+}
+
+#[test]
+fn the_test_title_is_a_complete_media_object() {
+    let media = health::test_media();
+    for key in ["id", "idMal", "englishTitle", "romajiTitle", "synonyms", "startDate", "isAdult", "format"] {
+        assert!(media.get(key).is_some(), "{} is set", key);
+    }
+}

@@ -7,14 +7,14 @@
 ### An anime catalogue, tracker, and local library player for Linux
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20(AppImage%20%7C%20RPM%20%7C%20DEB)-E95420?logo=linux&logoColor=white)](https://anix-linux.vercel.app)
-[![Version](https://img.shields.io/badge/Version-1.1.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <p align="center">
-  <b>Anix</b> is a native Linux desktop application for cataloguing and tracking anime. Browse the AniList catalogue, keep your AniList and MyAnimeList watchlists in sync, follow weekly airing schedules with desktop notifications, and organize and play your local anime media library using the built-in player or MPV / VLC. Zero telemetry.
+  <b>Anix</b> is a native Linux desktop application for cataloguing and tracking anime. Browse the AniList catalogue, keep your AniList, MyAnimeList, and Comick watchlists in sync, follow weekly airing schedules with desktop notifications, and organize and play your local anime media library using the built-in player or MPV / VLC. Zero telemetry.
 </p>
 
-**Website:** <https://anix-linux.vercel.app>
+**Website:** <https://anix-linux.vercel.app> • **Codeberg:** <https://codeberg.org/MaidLover69/Anix>
 
 </div>
 
@@ -49,28 +49,39 @@
 ### Catalogue & Discovery
 - **AniList Catalogue**: Comprehensive home, discover, and search views with detailed metadata, episode lists, character information, and recommendations.
 - **Theme Songs & Metadata**: Opening and ending theme listings and episode markers.
+- **Quick Peek**: Instant hover previews for anime titles across catalogue grids.
+- **Surprise Me**: One-click random title discovery.
 
 ### Tracker & Progress Sync
-- **AniList & MyAnimeList**: Connect your AniList or MyAnimeList accounts. Finished episodes update your watch progress automatically, and watchlist status is synchronized seamlessly.
-- **Watch History**: Local per-episode watch history with resume-playback support.
+- **AniList, MyAnimeList & Comick**: Seamless tracker authentication. Finished episodes update your watch progress automatically, and watchlist status is synchronized bidirectionally.
+- **Watch History & Resume**: Local per-episode watch history with timestamp resume and progress indicators.
+- **Stats Dashboard**: Library view with detailed anime watching statistics.
 
-### Local Media Library
-- **Local Folder Scanner**: Scan your local media directories (e.g. `~/Videos/Anime`). Anix parses filenames, maps series titles and episode numbers, and tracks watch progress for your local files.
-- **Player Integration**: Play your local media with the integrated player or hand off playback to external players like **mpv** or **VLC**.
-- **Playlists & Queues**: Create custom playlists, continuous playback, and export `.m3u` playlists for external media players.
+### Local Media Library & Linking
+- **Local Episode Linking**: "Load your own episodes" on any anime's page to link local media folders or video files directly to that title.
+- **Smart Folder Scanner**: Automatically scans local media directories (e.g. `~/Videos/Anime`), recognizes release filenames, maps series titles and episode numbers, fetches AniList posters, and tracks progress.
+- **Companion Subtitles**: Automatically detects and loads adjacent subtitle files for local episodes.
+- **Playlists & Queues**: Create custom playlists, continuous playback, and export `.m3u` playlists for external players.
 
-### Airing Schedule & Notifications
-- **Weekly Schedule**: Visual weekly calendar of upcoming broadcasts with countdown timers.
-- **Airing Alerts**: Optional desktop notifications when new episodes air.
-
-### Video Player
-- **Integrated Player**: Hardware-accelerated video playback with subtitle customisation (ASS, SRT, WebVTT font, size, and timing delay).
+### Video Player & Audio Controls
+- **Integrated Player**: Hardware-accelerated video playback with subtitle customisation (ASS, SRT, WebVTT font, size, styling, and timing delay).
+- **Secondary Subtitles**: Display two subtitle tracks simultaneously (e.g. learning languages) with secondary subtitles positioned at the top of the screen.
+- **Subtitle Drag & Drop**: Drop subtitle files directly onto the player window.
 - **AniSkip**: Automatic or one-click skip for opening and ending sequences.
-- **External Player Support**: Instant one-click launch with **mpv** or **VLC**.
+- **Dialogue Boost**: Intelligent audio speech enhancement for clearer dialogue.
+- **External Player Support (mpv & VLC)**: 1-click external player launch with active subtitle passthrough and bidirectional progress synchronization for mpv.
+- **Mini-Player**: Compact floating player mode for multitasking.
+
+### Desktop Integration & System
+- **MPRIS Media Controls**: Full desktop media keys and lockscreen playback control integration.
+- **System Tray**: Optional background tray icon with airing notifications when the main window is closed.
+- **Hardware Acceleration Check**: In-app diagnostic tool to verify system GPU video decoding.
+- **Offline Mode**: Automatic local caching for home, searches, and anime details when internet or AniList is unreachable.
+- **Airing Alerts**: Weekly broadcast schedule calendar with countdown timers and desktop notifications.
 
 ### Interface & Performance
-- **Built for Linux**: Lightweight native application powered by Tauri v2 and Rust. Low memory footprint and snappy performance.
-- **Customizable Themes**: Dark, Light, Mocha, Hacker, Dracula, Tokyo Night, Manga, and Comic themes.
+- **Built for Linux**: Lightweight native desktop client powered by Tauri v2 and Rust. Low memory footprint and snappy performance.
+- **Customizable Themes**: Dark, Light, Mocha, Hacker, Dracula, Tokyo Night, Manga, Comic, and pure OLED Black themes with system accent color matching and dynamic cover art ambient glow.
 - **Keyboard-Driven**: Quick search with <kbd>Ctrl</kbd> + <kbd>K</kbd> and comprehensive in-player hotkeys.
 - **Privacy First**: No analytics or telemetry.
 
@@ -82,35 +93,34 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 - **Sandboxed Execution**: Extensions execute within an isolated QuickJS JavaScript engine without direct access to system files or OS processes.
 - **Seanime Provider Compatibility**: Extensions follow the standard `onlinestream-provider` format.
-- **Easy Management**: Add, enable, or configure provider links directly in **Settings → Plugins**.
+- **Language Preferences**: Configurable priority for subtitle and audio dub languages (Settings › Sources).
+- **Easy Management**: Add, enable, test, or configure provider links directly in **Settings → Plugins**.
 
 ---
 
 ## Installation
 
-Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download> and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
-
-- **Direct AppImage Download:** [Anix_1.1.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
+Pre-built Linux packages for **v1.2.0** are available on [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases):
 
 ### AppImage (Universal, any distribution)
 
 ```bash
-chmod +x Anix_1.1.0_amd64.AppImage
-./Anix_1.1.0_amd64.AppImage
+chmod +x Anix_1.2.0_amd64.AppImage
+./Anix_1.2.0_amd64.AppImage
 ```
 
-*(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.1.0_amd64.AppImage`)*
+*(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.2.0_amd64.AppImage`)*
 
 ### RPM (Fedora, openSUSE, RHEL)
 
 ```bash
-sudo dnf install ./Anix-1.1.0-1.x86_64.rpm
+sudo dnf install ./Anix-1.2.0-1.x86_64.rpm
 ```
 
 ### DEB (Ubuntu, Debian, Linux Mint)
 
 ```bash
-sudo apt install ./Anix_1.1.0_amd64.deb
+sudo apt install ./Anix_1.2.0_amd64.deb
 ```
 
 ---

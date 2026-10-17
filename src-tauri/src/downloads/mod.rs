@@ -620,6 +620,17 @@ impl std::fmt::Display for FfmpegError {
 fn ffmpeg_command() -> tokio::process::Command {
     let mut cmd = tokio::process::Command::from(sanitized_command("ffmpeg"));
     cmd.stdin(Stdio::null()).kill_on_drop(true);
+    // kill_on_drop does not run when the app exits; the kernel then ends ffmpeg instead
+    // of leaving it writing a download nobody will finish.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     cmd
 }
 
@@ -943,6 +954,67 @@ async fn fetch_subtitles(
     fetched
 }
 
+/// What an HLS playlist says about the stream's length.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HlsPlaylist {
+    /// A media playlist: the sum of its segment durations, in seconds.
+    Media { duration_s: f64 },
+    /// A master playlist: the absolute URL of its first variant.
+    Master { first_variant: String },
+}
+
+/// Reads an HLS playlist. `None` when the text is not one, or a media playlist has no
+/// segment durations.
+pub fn parse_hls_playlist(text: &str, base: &str) -> Option<HlsPlaylist> {
+    let text = text.trim_start_matches('\u{feff}');
+    if !text.trim_start().starts_with("#EXTM3U") {
+        return None;
+    }
+    let mut lines = text.lines().map(str::trim);
+    let mut total = 0.0;
+    let mut segments = 0usize;
+    while let Some(line) = lines.next() {
+        if line.starts_with("#EXT-X-STREAM-INF") {
+            let uri = lines.by_ref().find(|l| !l.is_empty() && !l.starts_with('#'))?;
+            let url = reqwest::Url::parse(base).ok()?.join(uri).ok()?;
+            return Some(HlsPlaylist::Master { first_variant: url.to_string() });
+        }
+        if let Some(rest) = line.strip_prefix("#EXTINF:") {
+            let value = rest.split(',').next().unwrap_or("").trim();
+            if let Ok(seconds) = value.parse::<f64>() {
+                if seconds.is_finite() && seconds >= 0.0 {
+                    total += seconds;
+                    segments += 1;
+                }
+            }
+        }
+    }
+    (segments > 0 && total > 0.0).then_some(HlsPlaylist::Media { duration_s: total })
+}
+
+/// The length of an HLS stream from its playlist, following a master playlist to its
+/// first variant. `None` when it cannot be read; the download then runs without a
+/// percentage.
+async fn hls_duration(url: &str, headers: &RequestHeaders) -> Option<f64> {
+    let mut current = url.to_string();
+    for _ in 0..3 {
+        let response = apply_headers(stream_client().get(&current), headers)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let final_url = response.url().to_string();
+        let text = response.text().await.ok()?;
+        match parse_hls_playlist(&text, &final_url)? {
+            HlsPlaylist::Media { duration_s } => return Some(duration_s),
+            HlsPlaylist::Master { first_variant } => current = first_variant,
+        }
+    }
+    None
+}
+
 /// Muxes `input` into a working MKV with ffmpeg, embedding the first subtitle. If ffmpeg
 /// fails while a subtitle is attached it is run once more without it, so a subtitle ffmpeg
 /// cannot read does not cost the video. Returns the working file and whether the subtitle
@@ -952,6 +1024,7 @@ async fn mux_with_ffmpeg(
     input: &FfmpegInput,
     subtitle: Option<&SubtitleInput>,
     reporter: &mut ProgressReporter<'_>,
+    duration_s: Option<f64>,
     progress_range: (f64, f64),
 ) -> Result<(PathBuf, bool), FfmpegError> {
     let output = job.work_path("video");
@@ -959,7 +1032,7 @@ async fn mux_with_ffmpeg(
 
     loop {
         let args = build_ffmpeg_args(input, subtitle, &output);
-        match run_ffmpeg(args, reporter, job.record.duration_s, progress_range).await {
+        match run_ffmpeg(args, reporter, duration_s, progress_range).await {
             Ok(()) => return Ok((output, subtitle.is_some())),
             Err(FfmpegError::Failed { code, stderr_tail }) if subtitle.is_some() => {
                 warn!(
@@ -1072,8 +1145,17 @@ async fn download_stream_with_ffmpeg(
         hls: (kind == StreamKind::Hls).then_some(hls_options),
     };
 
+    // Without a length ffmpeg's progress cannot become a percentage, and the download
+    // would sit at its starting value until it finishes.
+    let duration_s = match job.record.duration_s {
+        Some(d) if d > 0.0 => Some(d),
+        _ if kind == StreamKind::Hls => hls_duration(url, headers).await,
+        _ => None,
+    };
+
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let (video, embedded) = mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, (0.05, 0.99))
+    let (video, embedded) =
+        mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, duration_s, (0.05, 0.99))
         .await
         .map_err(|e| e.to_string())?;
 
@@ -1171,7 +1253,7 @@ async fn download_file(
     // file exactly as it was served.
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
     let input = FfmpegInput::Local(temp.clone());
-    match mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, (0.95, 0.99)).await {
+    match mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, job.record.duration_s, (0.95, 0.99)).await {
         Ok((video, embedded)) => {
             let finished = finalize(job, &video, "mkv", subtitles, embedded.then_some(0)).await?;
             let _ = tokio::fs::remove_file(&temp).await;

@@ -1,15 +1,21 @@
 use crate::db;
+use crate::offline;
 use crate::models::{AiringEntry, NotificationPreference};
 use crate::state::AppState;
 use once_cell::sync::Lazy;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::sync::Notify;
 
 /// Signalled whenever a bell changes; the notifier waits on it.
 pub(crate) static BELLS_CHANGED: Lazy<Notify> = Lazy::new(Notify::new);
+/// The same signal for the tray's "Airing next" list.
+pub(crate) static BELLS_CHANGED_FOR_TRAY: Lazy<Notify> = Lazy::new(Notify::new);
 
+/// The airing schedule between two times. When AniList cannot be reached, the saved schedules
+/// that cover the window are served instead.
 #[tauri::command]
 pub async fn fetch_airing_schedule(
+    app: AppHandle,
     state: State<'_, AppState>,
     from_ts: i64,
     to_ts: i64,
@@ -18,14 +24,27 @@ pub async fn fetch_airing_schedule(
         return Ok(cached);
     }
 
-    let entries = state
-        .anilist_client
-        .fetch_airing_schedule(from_ts, to_ts)
-        .await
-        .map_err(|e| e.to_string())?;
+    let entries = match state.anilist_client.fetch_airing_schedule(from_ts, to_ts).await {
+        Ok(entries) => entries,
+        Err(e) if offline::is_offline_error(&e) => {
+            let saved = offline::load_all(&state.pool, offline::Kind::Schedule).await.unwrap_or_default();
+            let (entries, saved_at) = offline::saved_schedule(saved, from_ts, to_ts);
+            offline::mark_offline(&app, saved_at);
+            if saved_at.is_none() {
+                return Err(e.to_string());
+            }
+            return Ok(entries);
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    offline::mark_online(&app);
 
     if let Err(e) = db::cache_schedule(&state.pool, from_ts, to_ts, &entries).await {
         tracing::warn!("Could not cache the airing schedule: {}", e);
+    }
+    let key = format!("{}-{}", from_ts, to_ts);
+    if let Err(e) = offline::store(&state.pool, offline::Kind::Schedule, &key, &serde_json::json!(entries)).await {
+        tracing::warn!("Could not save the airing schedule for offline use: {}", e);
     }
     Ok(entries)
 }
@@ -43,6 +62,7 @@ pub async fn save_notification_preference(
         .await
         .map_err(|e| e.to_string())?;
     BELLS_CHANGED.notify_one();
+    BELLS_CHANGED_FOR_TRAY.notify_one();
     Ok(())
 }
 

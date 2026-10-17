@@ -29,6 +29,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: [['↑'], ['↓']], description: 'Volume up or down' },
       { keys: [['M']], description: 'Mute or unmute' },
       { keys: [['F']], description: 'Enter or leave fullscreen' },
+      { keys: [['I']], description: 'Mini-player: a small window that stays on top' },
       { keys: [['S']], description: 'Skip the intro or ending while its button is shown' },
       { keys: [['Shift', 'N']], description: 'Next episode' },
       { keys: [['Shift', 'P']], description: 'Previous episode' },

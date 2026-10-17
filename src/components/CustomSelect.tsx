@@ -5,6 +5,8 @@ import clsx from 'clsx';
 interface Option {
   value: string;
   label: string;
+  /** Options with a group get a heading above the first of a run of the same group. */
+  group?: string;
 }
 
 interface CustomSelectProps {
@@ -153,27 +155,38 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         >
           {normalizedOptions.map((opt, index) => {
             const isSelected = opt.value === value;
+            const heading =
+              opt.group && opt.group !== normalizedOptions[index - 1]?.group ? opt.group : null;
             return (
-              <div
-                key={opt.value}
-                role="option"
-                aria-selected={isSelected}
-                data-index={index}
-                onClick={() => choose(index)}
-                onMouseMove={() => setActiveIndex(index)}
-                className={clsx(
-                  'flex h-8 items-center justify-between gap-2 rounded-md px-3 text-[13px] cursor-pointer select-none',
-                  isSelected
-                    ? 'font-medium text-accent-300'
-                    : index === activeIndex
-                    ? 'text-text-primary'
-                    : 'text-text-secondary',
-                  index === activeIndex && 'bg-ink/10'
+              <React.Fragment key={opt.value}>
+                {heading && (
+                  <div
+                    role="presentation"
+                    className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted select-none"
+                  >
+                    {heading}
+                  </div>
                 )}
-              >
-                <span className="truncate">{opt.label}</span>
-                {isSelected && <Check aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}
-              </div>
+                <div
+                  role="option"
+                  aria-selected={isSelected}
+                  data-index={index}
+                  onClick={() => choose(index)}
+                  onMouseMove={() => setActiveIndex(index)}
+                  className={clsx(
+                    'flex h-8 items-center justify-between gap-2 rounded-md px-3 text-[13px] cursor-pointer select-none',
+                    isSelected
+                      ? 'font-medium text-accent-300'
+                      : index === activeIndex
+                      ? 'text-text-primary'
+                      : 'text-text-secondary',
+                    index === activeIndex && 'bg-ink/10'
+                  )}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {isSelected && <Check aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}
+                </div>
+              </React.Fragment>
             );
           })}
         </div>

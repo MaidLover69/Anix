@@ -19,6 +19,7 @@ use crate::models::{
 };
 use crate::plugins::engine::{PluginError, PluginRuntime};
 use crate::plugins::intern;
+use crate::providers::languages::Languages;
 use crate::providers::common::{fix_url, fmt_ep, is_hls_url, json_id, json_number, subtitle_format};
 use crate::providers::manager::{summarize_failures, verify_streams_in_order};
 use crate::providers::matching::{pick_best, Candidate};
@@ -359,6 +360,7 @@ pub struct PluginProvider {
     runtime: Arc<PluginRuntime>,
     settings: ProviderSettings,
     cache_key: String,
+    languages: Languages,
 }
 
 impl PluginProvider {
@@ -368,8 +370,26 @@ impl PluginProvider {
         Self {
             id: intern(id),
             runtime,
+            languages: Languages::effective(None, "", settings.supports_dub),
             settings,
             cache_key: format!("{}@{}", id, revision),
+        }
+    }
+
+    /// The provider with the languages the registry worked out for it.
+    pub fn with_languages(mut self, languages: Languages) -> Self {
+        self.languages = languages;
+        self
+    }
+
+    /// The same loaded plugin, with other languages.
+    pub fn relabelled(&self, languages: Languages) -> Self {
+        Self {
+            id: self.id,
+            runtime: self.runtime.clone(),
+            settings: self.settings.clone(),
+            cache_key: self.cache_key.clone(),
+            languages,
         }
     }
 
@@ -524,6 +544,10 @@ impl AnimeProvider for PluginProvider {
 
     fn supports_dub(&self) -> bool {
         self.settings.supports_dub
+    }
+
+    fn languages(&self) -> Option<Languages> {
+        Some(self.languages.clone())
     }
 
     fn cache_key(&self) -> String {
@@ -721,6 +745,7 @@ impl AnimeProvider for PluginProvider {
             subtitles: tracks,
             skip: won.skip,
             provider: Some(self.id.to_string()),
+            language: None,
         })
     }
 }

@@ -336,8 +336,8 @@ async fn test_account_queue_keeps_the_latest_episode_per_anime() {
     assert!(!sync::queue_watched_episode(&world.pool, 100, 0.0).await.unwrap());
     assert!(!sync::queue_watched_episode(&world.pool, 0, 1.0).await.unwrap());
 
-    // Both services get it, connected or not.
-    for service in Service::ALL {
+    // Every service this build can sign in to gets it, connected or not.
+    for service in Service::ALL.into_iter().filter(|service| service.available()) {
         let mut rows = queued(&world, service).await;
         rows.sort_by_key(|row| row.0);
         assert_eq!(

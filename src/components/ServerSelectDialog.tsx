@@ -4,7 +4,9 @@ import { Server } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { Spinner } from './ui/Spinner';
-import { useStreamingProviders } from '../hooks/usePlugins';
+import { usePlugins, useStreamingProviders } from '../hooks/usePlugins';
+import { useLanguagePrefs } from '../hooks/useLanguagePrefs';
+import { groupByLanguage, pluginLanguages } from '../lib/languages';
 import { NoPluginsNotice } from './NoPluginsNotice';
 import { watchPath } from '../hooks/watchProgress';
 import type { EpisodeItem as EpisodeItemType, EpisodesResult } from '../types';
@@ -56,6 +58,8 @@ const ServerList: React.FC<ServerListProps> = ({
 }) => {
   const [category, setCategory] = useState<Category>(initialCategory);
   const { label: providerLabel, none: noPlugins, installed: installedPlugins } = useStreamingProviders();
+  const plugins = usePlugins().data;
+  const prefs = useLanguagePrefs();
 
   const servers = useMemo(
     () =>
@@ -70,6 +74,13 @@ const ServerList: React.FC<ServerListProps> = ({
         ),
     [episodesData, category, episode.number, providerLabel]
   );
+
+  // Grouped by the language each server would play in, wanted languages first.
+  const groups = useMemo(() => {
+    const byId = new Map((plugins ?? []).map((plugin) => [plugin.id, plugin]));
+    const wanted = category === 'dub' ? prefs.dub : prefs.sub;
+    return groupByLanguage(servers, (name) => pluginLanguages(byId.get(name), category), wanted, category);
+  }, [servers, plugins, prefs, category]);
 
   if (noPlugins) {
     return (
@@ -122,34 +133,48 @@ const ServerList: React.FC<ServerListProps> = ({
                 : `No server lists this episode in ${category === 'dub' ? 'dub' : 'sub'}`}
             </p>
             <p className="max-w-sm break-words text-xs text-text-muted select-text">
-              {errorMessage || 'Try the other audio version.'}
+              {errorMessage ||
+                (prefs.strict
+                  ? 'Try the other audio version. Only plugins in your languages are listed; Settings › Sources can allow others.'
+                  : 'Try the other audio version.')}
             </p>
           </div>
         ) : (
-          servers.map((name, index) => {
-            const current = name === activeProvider;
-            return (
-              <button
-                key={name}
-                type="button"
-                data-autofocus={index === 0 ? '' : undefined}
-                onClick={() => onSelect(name, category)}
-                className="flex h-11 flex-shrink-0 items-center justify-between gap-3 rounded-md ui-inset bg-bg-surface px-3 text-left cursor-pointer transition-colors hover:bg-bg-input"
+          groups.map((group, groupIndex) => (
+            <div key={group.language ?? 'unstated'} role="group" aria-label={group.label} className="flex flex-col gap-1">
+              <p
+                className={`px-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted ${
+                  groupIndex === 0 ? '' : 'pt-2'
+                }`}
               >
-                <span className="flex min-w-0 items-center gap-3">
-                  <Server aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
-                  <span className="truncate text-[13px] font-medium text-text-primary">
-                    {providerLabel(name)}
-                  </span>
-                </span>
-                {current && (
-                  <span className="flex-shrink-0 rounded-sm bg-accent-tint px-2 py-0.5 text-[11px] font-semibold text-accent-300">
-                    Playing
-                  </span>
-                )}
-              </button>
-            );
-          })
+                {group.label}
+              </p>
+              {group.items.map((name, index) => {
+                const current = name === activeProvider;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    data-autofocus={groupIndex === 0 && index === 0 ? '' : undefined}
+                    onClick={() => onSelect(name, category)}
+                    className="flex h-11 flex-shrink-0 items-center justify-between gap-3 rounded-md ui-inset bg-bg-surface px-3 text-left cursor-pointer transition-colors hover:bg-bg-input"
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <Server aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+                      <span className="truncate text-[13px] font-medium text-text-primary">
+                        {providerLabel(name)}
+                      </span>
+                    </span>
+                    {current && (
+                      <span className="flex-shrink-0 rounded-sm bg-accent-tint px-2 py-0.5 text-[11px] font-semibold text-accent-300">
+                        Playing
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))
         )}
       </div>
     </div>

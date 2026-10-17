@@ -1,5 +1,5 @@
 use anix_lib::commands::{
-    build_external_playlist, common_referer, launch_external_player,
+    build_external_playlist, common_referer, launch_stream_player,
     launch_playlist_external_player, local_file_player_args, open_file_in_player,
     read_settings_file, remove_stale_playlist_files, resolve_local_media_file,
     resolve_player_bin, single_line, stream_player_args, strip_appdir_entries,
@@ -48,11 +48,11 @@ async fn test_open_file_in_player_rejects_arbitrary_program() {
 #[tokio::test]
 async fn test_stream_commands_reject_unknown_player_and_unsafe_urls() {
     let url = "https://cdn.example.com/master.m3u8".to_string();
-    assert!(launch_external_player("sh".to_string(), url.clone(), None, None).await.is_err());
-    assert!(launch_external_player("mpv".to_string(), "--script=/tmp/x.lua".to_string(), None, None)
+    assert!(launch_stream_player("sh".to_string(), url.clone(), None, None, None, None, None, None).await.is_err());
+    assert!(launch_stream_player("mpv".to_string(), "--script=/tmp/x.lua".to_string(), None, None, None, None, None, None)
         .await
         .is_err());
-    assert!(launch_external_player("vlc".to_string(), "file:///etc/passwd".to_string(), None, None)
+    assert!(launch_stream_player("vlc".to_string(), "file:///etc/passwd".to_string(), None, None, None, None, None, None)
         .await
         .is_err());
 
@@ -327,4 +327,21 @@ fn test_settings_file_is_private_and_survives_corruption() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&backup);
+}
+
+#[test]
+fn external_player_gets_the_subtitle_files() {
+    use anix_lib::commands::player::{subtitle_file_name, subtitle_player_args};
+    use std::path::PathBuf;
+    let files = vec![PathBuf::from("/run/user/1000/anix_sub_1_1_English.vtt"), PathBuf::from("/run/user/1000/anix_sub_1_2_Español.ass")];
+    let mpv: Vec<String> = subtitle_player_args("mpv", &files, true).iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert_eq!(mpv, ["--sub-file=/run/user/1000/anix_sub_1_1_English.vtt", "--sub-file=/run/user/1000/anix_sub_1_2_Español.ass", "--sid=1"]);
+    let off: Vec<String> = subtitle_player_args("mpv", &files, false).iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert_eq!(off.last().unwrap(), "--sid=no");
+    let vlc: Vec<String> = subtitle_player_args("vlc", &files, true).iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert_eq!(vlc, ["--sub-file=/run/user/1000/anix_sub_1_1_English.vtt"]);
+    assert!(subtitle_player_args("vlc", &files, false).is_empty());
+    assert!(subtitle_player_args("mpv", &[], true).is_empty());
+    assert_eq!(subtitle_file_name(7, 0, Some("pt-BR / Brasil"), "srt"), "anix_sub_7_1_pt_BR___Brasil.srt");
+    assert_eq!(subtitle_file_name(7, 2, None, "vtt"), "anix_sub_7_3_subtitle.vtt");
 }

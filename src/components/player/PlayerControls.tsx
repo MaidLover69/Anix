@@ -1,11 +1,14 @@
 import React from 'react';
 import type { RefObject } from 'react';
 import {
+  AudioLines,
   Captions,
   ListVideo,
   Maximize,
   Minimize,
   Pause,
+  PictureInPicture,
+  PictureInPicture2,
   Play,
   RotateCcw,
   RotateCw,
@@ -22,6 +25,14 @@ import { PlayerMenu } from './PlayerMenu';
 import type { PlayerMenuOption } from './PlayerMenu';
 import { PlayerTimeline } from './PlayerTimeline';
 import { Slider } from './Slider';
+
+export type AudioMode = 'normal' | 'boost';
+export const AUDIO_MODES: readonly AudioMode[] = ['normal', 'boost'];
+
+const AUDIO_OPTIONS: PlayerMenuOption[] = [
+  { value: 'normal', label: 'Normal audio' },
+  { value: 'boost', label: 'Dialogue boost (night mode)' },
+];
 
 const SPEED_OPTIONS: PlayerMenuOption[] = [
   { value: '0.5', label: '0.5×' },
@@ -76,6 +87,12 @@ interface PlayerControlsProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
 
+  audioMode: AudioMode;
+  onAudioModeChange: (mode: AudioMode) => void;
+  onToggleMiniPlayer: () => void;
+  /** Absent when the webview has no picture-in-picture. */
+  onPictureInPicture?: () => void;
+
   onMenuOpenChange: (open: boolean) => void;
 }
 
@@ -109,6 +126,10 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onOpenServers,
   isFullscreen,
   onToggleFullscreen,
+  audioMode,
+  onAudioModeChange,
+  onToggleMiniPlayer,
+  onPictureInPicture,
   onMenuOpenChange,
 }) => {
   const silent = muted || volume === 0;
@@ -220,6 +241,18 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
 
             <div className="flex items-center gap-1">
               <PlayerMenu
+                label="Audio"
+                value={audioMode}
+                options={AUDIO_OPTIONS}
+                onChange={(value) => onAudioModeChange(value === 'boost' ? 'boost' : 'normal')}
+                onOpenChange={onMenuOpenChange}
+              >
+                <AudioLines
+                  aria-hidden="true"
+                  className={`h-4 w-4 ${audioMode === 'boost' ? 'text-accent-300' : ''}`}
+                />
+              </PlayerMenu>
+              <PlayerMenu
                 label="Playback speed"
                 value={String(rate)}
                 options={SPEED_OPTIONS}
@@ -239,6 +272,18 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                   <Settings aria-hidden="true" className="h-4 w-4" />
                 </PlayerMenu>
               )}
+              {onPictureInPicture && (
+                <IconButton label="Picture in picture" onClick={onPictureInPicture}>
+                  <PictureInPicture2 aria-hidden="true" className="h-4 w-4" />
+                </IconButton>
+              )}
+              <IconButton
+                label="Mini-player"
+                title="Mini-player: a small window that stays on top (I)"
+                onClick={onToggleMiniPlayer}
+              >
+                <PictureInPicture aria-hidden="true" className="h-4 w-4" />
+              </IconButton>
               <IconButton
                 label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                 title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}

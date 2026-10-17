@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
-import { Search, List, Grid, Menu, ListPlus, X } from 'lucide-react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { Search, List, Grid, Menu, ListPlus, X, HardDrive } from 'lucide-react';
 import { EpisodeItem } from './EpisodeItem';
+import { EpisodeActionsMenu } from './EpisodeActionsMenu';
+import type { MenuAction } from './EpisodeActionsMenu';
 import { CustomSelect } from './CustomSelect';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { Button } from './ui/Button';
@@ -8,15 +10,22 @@ import { SegmentedControl } from './ui/SegmentedControl';
 import { EmptyState } from './ui/EmptyState';
 import { Spinner } from './ui/Spinner';
 import type { EpisodeItem as EpisodeItemType, EpisodesResult } from '../types';
-import { useWatchedEpisodes } from '../hooks/useLibrary';
+import { useSetEpisodesWatched, useWatchedEpisodes } from '../hooks/useLibrary';
+import { useUIStore } from '../stores/uiStore';
+import { errorMessage } from './ui/ErrorState';
 import { useFillerEpisodes } from '../hooks/useProviders';
 import { AUTO_PROVIDER } from '../hooks/useSettings';
-import { useStreamingProviders } from '../hooks/usePlugins';
+import { usePlugins, useStreamingProviders } from '../hooks/usePlugins';
+import { useLanguagePrefs } from '../hooks/useLanguagePrefs';
+import { groupByLanguage, pluginLanguages } from '../lib/languages';
 import { NoPluginsNotice } from './NoPluginsNotice';
 import { distinctEpisodeTitle } from '../hooks/watchProgress';
+import { useStoredChoice } from '../hooks/useStoredChoice';
+import { LOCAL_PROVIDER, LOCAL_PROVIDER_LABEL } from '../hooks/useLocalMedia';
 
 type Category = 'sub' | 'dub';
-type ViewMode = 'compact' | 'list' | 'grid';
+const VIEW_MODES = ['compact', 'list', 'grid'] as const;
+type ViewMode = (typeof VIEW_MODES)[number];
 
 interface EpisodeBrowserProps {
   anilistId: number;
@@ -35,7 +44,14 @@ interface EpisodeBrowserProps {
   defaultProvider?: string;
   /** Saved position per episode number, 0..100. */
   progressByEpisode?: Record<number, number>;
+  /** Episode numbers with a file of the user's ("Your files"); they play from the file. */
+  localEpisodes?: number[];
   onSelectEpisode: (ep: EpisodeItemType, category: Category, provider: string) => void;
+  /** The audio the user picked, when the parent keeps it (the detail page's sticky bar shares it). */
+  chosenCategory?: Category | null;
+  onChosenCategoryChange?: (category: Category) => void;
+  /** Told whether a dub can be picked, so a copy of the switch elsewhere matches. */
+  onDubAvailableChange?: (available: boolean) => void;
 }
 
 const CHUNK_SIZE = 100;
@@ -44,6 +60,19 @@ const CHUNK_SIZE = 100;
 const NO_EPISODES: EpisodeItemType[] = [];
 const NO_PROVIDERS: EpisodesResult = {};
 const NO_PROGRESS: Record<number, number> = {};
+const NO_LOCAL: number[] = [];
+
+/** `list` plus an entry for every local episode it lacks; only local ones when `onlyLocal`. */
+function withLocalEpisodes(list: EpisodeItemType[], local: number[], onlyLocal: boolean): EpisodeItemType[] {
+  if (local.length === 0) return list;
+  const isLocal = (n: number) => local.some((l) => Math.abs(l - n) < 0.01);
+  const missing = local
+    .filter((n) => !list.some((ep) => Math.abs(ep.number - n) < 0.01))
+    .map((n) => ({ number: n, pipe_id: `local-${n}`, title: null, image: null, filler: false }));
+  if (missing.length === 0 && !onlyLocal) return list;
+  const merged = [...(onlyLocal ? list.filter((ep) => isLocal(ep.number)) : list), ...missing];
+  return merged.sort((a, b) => a.number - b.number);
+}
 
 const VIEW_OPTIONS = [
   { value: 'compact' as const, icon: <Menu aria-hidden="true" className="h-4 w-4" />, 'aria-label': 'Compact rows', title: 'Compact rows' },
@@ -108,19 +137,30 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   defaultCategory = 'sub',
   defaultProvider = AUTO_PROVIDER,
   progressByEpisode = NO_PROGRESS,
+  localEpisodes = NO_LOCAL,
   onSelectEpisode,
+  chosenCategory: controlledCategory,
+  onChosenCategoryChange,
+  onDubAvailableChange,
 }) => {
   // null = the user has not chosen yet, so the default from settings applies.
-  const [chosenCategory, setChosenCategory] = useState<Category | null>(null);
+  const [ownCategory, setOwnCategory] = useState<Category | null>(null);
+  const chosenCategory = controlledCategory !== undefined ? controlledCategory : ownCategory;
+  const setChosenCategory = (next: Category) => {
+    setOwnCategory(next);
+    onChosenCategoryChange?.(next);
+  };
   const [chosenProvider, setChosenProvider] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChunkIndex, setSelectedChunkIndex] = useState(0);
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useStoredChoice<ViewMode>('episode-layout', VIEW_MODES, 'list');
   const [playlistTargetEpisodes, setPlaylistTargetEpisodes] = useState<EpisodeItemType[] | null>(null);
 
   const { data: watchedEpisodes = [] } = useWatchedEpisodes(anilistId);
   const { data: fillerEpisodes = [] } = useFillerEpisodes(malId);
   const { label: providerLabel, none: noPlugins, installed: installedPlugins } = useStreamingProviders();
+  const plugins = usePlugins().data;
+  const languagePrefs = useLanguagePrefs();
 
   // Every provider in the result is selectable. One that comes back with empty lists plays
   // from the catalog list.
@@ -168,9 +208,35 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
     return { subEpisodes: sub, dubEpisodes: someUnlisted ? sub : [], dubAvailable: someUnlisted };
   }, [episodesData, activeProvider, catalogEpisodes]);
 
+  useEffect(() => {
+    onDubAvailableChange?.(dubAvailable);
+  }, [dubAvailable, onDubAvailableChange]);
+
   const requestedCategory = chosenCategory ?? defaultCategory;
   const category: Category = requestedCategory === 'dub' && dubAvailable ? 'dub' : 'sub';
-  const allEpisodes = category === 'dub' ? dubEpisodes : subEpisodes;
+  const localActive = chosenProvider === LOCAL_PROVIDER && localEpisodes.length > 0;
+  const isLocalEpisode = (n: number) => localEpisodes.some((l) => Math.abs(l - n) < 0.01);
+  const allEpisodes = useMemo(
+    () => withLocalEpisodes(category === 'dub' ? dubEpisodes : subEpisodes, localEpisodes, localActive),
+    [category, dubEpisodes, subEpisodes, localEpisodes, localActive]
+  );
+
+  // Providers grouped by the language they play this audio version in; one without that
+  // version is listed under the language of its other one.
+  const providerOptions = useMemo(() => {
+    const byId = new Map((plugins ?? []).map((plugin) => [plugin.id, plugin]));
+    const other: Category = category === 'dub' ? 'sub' : 'dub';
+    const wanted = (c: Category) => (c === 'dub' ? languagePrefs.dub : languagePrefs.sub);
+    const own = providerNames.filter((name) => pluginLanguages(byId.get(name), category).length > 0);
+    const rest = providerNames.filter((name) => !own.includes(name));
+    const groups = [
+      ...groupByLanguage(own, (name) => pluginLanguages(byId.get(name), category), wanted(category), category),
+      ...groupByLanguage(rest, (name) => pluginLanguages(byId.get(name), other), wanted(other), other),
+    ];
+    return groups.flatMap((group) =>
+      group.items.map((name) => ({ value: name, label: providerLabel(name), group: group.label }))
+    );
+  }, [plugins, providerNames, category, languagePrefs, providerLabel]);
 
   const chunks = useMemo(() => {
     const list: { index: number; label: string }[] = [];
@@ -200,12 +266,69 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
 
   const isLoadingList = allEpisodes.length === 0 && (isCatalogLoading || isProvidersLoading);
 
+  // The episode action menu: mark everything up to an episode as watched, or take it back.
+  const showToast = useUIStore((s) => s.showToast);
+  const setWatched = useSetEpisodesWatched();
+  const [actionsFor, setActionsFor] = useState<{
+    episode: EpisodeItemType;
+    at: { x: number; y: number };
+    trigger: HTMLElement;
+  } | null>(null);
+  const closeActions = useCallback(() => setActionsFor(null), []);
+  const isWatched = (n: number) => watchedEpisodes.some((we) => Math.abs(we - n) < 0.01);
+
+  const markEpisodes = (numbers: number[], watched: boolean, what: string) => {
+    if (numbers.length === 0) return;
+    setWatched.mutate(
+      { anilistId, title: animeTitle, cover: animeCover, episodes: numbers, watched },
+      {
+        onSuccess: () =>
+          showToast({ type: 'success', title: watched ? `Marked ${what} as watched` : `Unmarked ${what}` }),
+        onError: (err) =>
+          showToast({ type: 'error', title: 'Could not update watch history', message: errorMessage(err) }),
+      }
+    );
+  };
+
+  const episodeActions = (ep: EpisodeItemType): MenuAction[] => {
+    const through = allEpisodes.filter((e) => e.number <= ep.number + 0.001).map((e) => e.number);
+    const first = through.length > 0 ? Math.min(...through) : ep.number;
+    const range = through.length > 1 ? `episodes ${first}–${ep.number}` : `episode ${ep.number}`;
+    const anyWatched = through.some(isWatched);
+    const allWatched = through.length > 0 && through.every(isWatched);
+    const actions: MenuAction[] = [
+      {
+        label: `Mark ${range} as watched`,
+        disabled: allWatched || setWatched.isPending,
+        onSelect: () => markEpisodes(through, true, range),
+      },
+      {
+        label: `Unmark ${range}`,
+        disabled: !anyWatched || setWatched.isPending,
+        onSelect: () => markEpisodes(through, false, range),
+      },
+    ];
+    if (through.length > 1) {
+      const single = `episode ${ep.number}`;
+      actions.push(
+        isWatched(ep.number)
+          ? { label: `Unmark only ${single}`, onSelect: () => markEpisodes([ep.number], false, single) }
+          : { label: `Mark only ${single} as watched`, onSelect: () => markEpisodes([ep.number], true, single) }
+      );
+    }
+    return actions;
+  };
+
   return (
     <div className="flex w-full flex-col gap-3">
       {noPlugins && (
         <NoPluginsNotice
           installed={installedPlugins}
-          detail="The episodes below come from the catalog. Playing them needs a streaming plugin, which you add in Settings."
+          detail={
+            localEpisodes.length > 0
+              ? 'Episodes marked Local play from your files. The others need a streaming plugin, which you add in Settings.'
+              : 'The episodes below come from the catalog. Playing them needs a streaming plugin, which you add in Settings.'
+          }
         />
       )}
 
@@ -233,10 +356,25 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
             }}
             options={[
               { value: AUTO_PROVIDER, label: 'Provider: Auto' },
-              ...providerNames.map((name) => ({ value: name, label: providerLabel(name) })),
+              ...providerOptions,
             ]}
             className="w-48"
           />
+        )}
+
+        {localEpisodes.length > 0 && (
+          <Button
+            variant={localActive ? 'secondary' : 'neutral'}
+            aria-pressed={localActive}
+            title={localActive ? 'Showing only episodes you have as files' : 'Show only episodes you have as files'}
+            onClick={() => {
+              setChosenProvider(localActive ? null : LOCAL_PROVIDER);
+              setSelectedChunkIndex(0);
+            }}
+          >
+            <HardDrive aria-hidden="true" className="h-4 w-4" />
+            {LOCAL_PROVIDER_LABEL}
+          </Button>
         )}
 
         {!noPlugins && isProvidersLoading && (
@@ -334,15 +472,36 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
             <EpisodeItem
               key={`${ep.pipe_id}-${ep.number}`}
               episode={ep}
-              isWatched={watchedEpisodes.some((we) => Math.abs(we - ep.number) < 0.01)}
+              isWatched={isWatched(ep.number)}
               progressPercent={progressByEpisode[ep.number]}
               isFiller={fillerEpisodes.includes(Math.round(ep.number))}
+              isLocal={isLocalEpisode(ep.number)}
               viewMode={viewMode}
-              onSelect={(selectedEp) => onSelectEpisode(selectedEp, category, activeProvider)}
+              onSelect={(selectedEp) =>
+                onSelectEpisode(
+                  selectedEp,
+                  category,
+                  // A file of the user's plays unless a streaming plugin was picked.
+                  isLocalEpisode(selectedEp.number) && (localActive || activeProvider === AUTO_PROVIDER || noPlugins)
+                    ? LOCAL_PROVIDER
+                    : activeProvider
+                )
+              }
               onAddToPlaylist={(targetEp) => setPlaylistTargetEpisodes([targetEp])}
+              onOpenActions={(targetEp, at, trigger) => setActionsFor({ episode: targetEp, at, trigger })}
             />
           ))}
         </div>
+      )}
+
+      {actionsFor && (
+        <EpisodeActionsMenu
+          label={`Episode ${actionsFor.episode.number} actions`}
+          at={actionsFor.at}
+          actions={episodeActions(actionsFor.episode)}
+          onClose={closeActions}
+          returnFocusTo={actionsFor.trigger}
+        />
       )}
 
       {playlistTargetEpisodes && (

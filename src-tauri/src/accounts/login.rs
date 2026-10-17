@@ -1,5 +1,6 @@
 //! The sign-in window: a separate webview that shows the service's own login page and is
-//! watched for the registered localhost redirect.
+//! watched for the registered localhost redirect. Comick does not allow its login page in an
+//! embedded webview; its sign-in runs in the system browser (see `loopback`).
 //!
 //! The window loads a remote site. It is not listed in any capability, and Tauri refuses IPC
 //! from remote origins that no capability allows, so the page cannot call the app's commands.
@@ -18,17 +19,18 @@ pub fn window_label(service: Service) -> &'static str {
     match service {
         Service::AniList => "login-anilist",
         Service::Mal => "login-mal",
+        Service::Comick => "login-comick",
     }
 }
 
 /// Payload of `account-login`: how a sign-in window ended.
 #[derive(Debug, Clone, Serialize)]
-struct LoginResult {
-    service: Service,
+pub(crate) struct LoginResult {
+    pub service: Service,
     /// `connected`, `cancelled` or `failed`.
-    outcome: &'static str,
-    name: Option<String>,
-    message: Option<String>,
+    pub outcome: &'static str,
+    pub name: Option<String>,
+    pub message: Option<String>,
 }
 
 struct Attempt {
@@ -126,7 +128,7 @@ impl Attempt {
     }
 }
 
-fn report(app: &AppHandle, service: Service, result: Result<Profile, String>) {
+pub(crate) fn report(app: &AppHandle, service: Service, result: Result<Profile, String>) {
     let payload = match result {
         Ok(profile) => {
             tracing::info!("{} connected", service.label());
@@ -164,6 +166,10 @@ fn focus_existing(app: &AppHandle, service: Service) -> bool {
 /// Opens the sign-in window of `service`, or brings it to the front when it is already open.
 /// The result of the sign-in arrives as an `account-login` event.
 pub fn open(app: &AppHandle, service: Service) -> Result<(), String> {
+    if service == Service::Comick {
+        return super::loopback::open(app);
+    }
+
     if focus_existing(app, service) {
         return Ok(());
     }
@@ -171,6 +177,7 @@ pub fn open(app: &AppHandle, service: Service) -> Result<(), String> {
     let state = oauth::new_state()?;
     let (authorize_url, code_verifier) = match service {
         Service::AniList => (oauth::anilist_authorize_url(&state), None),
+        Service::Comick => return Err("Comick signs in through the browser.".to_string()),
         Service::Mal => {
             let verifier = oauth::new_pkce_verifier()?;
             (oauth::mal_authorize_url(&state, &verifier), Some(verifier))
@@ -229,6 +236,10 @@ pub fn open(app: &AppHandle, service: Service) -> Result<(), String> {
 
 /// Closes the sign-in window of `service` if one is open.
 pub fn close(app: &AppHandle, service: Service) {
+    if service == Service::Comick {
+        super::loopback::cancel(app);
+        return;
+    }
     if let Some(window) = app.get_webview_window(window_label(service)) {
         let _ = window.destroy();
     }

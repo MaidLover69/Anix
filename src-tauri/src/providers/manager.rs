@@ -4,6 +4,7 @@ use crate::clients::http::{http_client, no_redirect_client};
 use crate::error::AppError;
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
+use crate::providers::languages::{plan_tiers, prefer_subtitles, served_language, LanguagePrefs, Languages, Tier};
 use crate::providers::AnimeProvider;
 use crate::web_session::{detect_barrier, SessionUse};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION, ORIGIN, RANGE, REFERER};
@@ -449,6 +450,61 @@ type Lineup = Arc<Vec<Arc<dyn AnimeProvider>>>;
 /// every lookup (installed plugins, which come and go while the app runs).
 pub type ProviderSource = Arc<dyn Fn() -> Vec<Arc<dyn AnimeProvider>> + Send + Sync>;
 
+/// The user's language preferences, read at the start of every lookup.
+pub type LanguageSource = Arc<dyn Fn() -> LanguagePrefs + Send + Sync>;
+
+/// What to ask a provider for to answer `category`, or `None` when it has no such version. A
+/// site whose only version is a dub serves it as its plain version.
+fn asked_category(provider: &dyn AnimeProvider, category: &Category) -> Option<Category> {
+    match category {
+        Category::Sub => Some(Category::Sub),
+        Category::Dub if provider.supports_dub() => Some(Category::Dub),
+        Category::Dub if provider.languages().map_or(false, |l| l.dub_only(false)) => Some(Category::Sub),
+        Category::Dub => None,
+    }
+}
+
+/// Whether the provider's `category` list is offered under the preferences: always when
+/// other languages are allowed, for the provider picked in settings and for providers that do
+/// not say their languages; otherwise only when it serves a preferred language.
+fn offers_preferred(provider: &dyn AnimeProvider, category: &Category, prefs: &LanguagePrefs) -> bool {
+    if !prefs.strict || prefs.pinned.as_deref().map_or(false, |p| p.eq_ignore_ascii_case(provider.name())) {
+        return true;
+    }
+    let Some(langs) = provider.languages() else {
+        return true;
+    };
+    asked_category(provider, category).is_some()
+        && langs
+            .for_category(category)
+            .iter()
+            .any(|code| prefs.for_category(category).contains(code))
+}
+
+/// A provider's listing as it is offered: a dub-only site's episodes are its dub, and with
+/// preferences, lists in languages the user did not ask for are left out.
+fn shape_listing(provider: &dyn AnimeProvider, mut data: ProviderData, prefs: Option<&LanguagePrefs>) -> ProviderData {
+    if provider.languages().map_or(false, |l| l.dub_only(provider.supports_dub())) && data.dub.is_empty() {
+        data.dub = std::mem::take(&mut data.sub);
+    }
+    if let Some(prefs) = prefs {
+        if !offers_preferred(provider, &Category::Sub, prefs) {
+            data.sub.clear();
+        }
+        if !offers_preferred(provider, &Category::Dub, prefs) {
+            data.dub.clear();
+        }
+    }
+    data
+}
+
+fn no_language_error(prefs: &LanguagePrefs, category: &Category) -> AppError {
+    AppError::SourcesUnavailable(format!(
+        "No enabled plugin offers {}. Choose other languages, or allow plugins in other languages, in Settings › Sources.",
+        prefs.describe(category)
+    ))
+}
+
 /// What a lookup fails with when there is no provider at all.
 pub const NO_PLUGIN_MESSAGE: &str =
     "No streaming plugin is installed or enabled. Add or enable one in Settings → Plugins.";
@@ -461,9 +517,15 @@ struct Inner {
     cooldowns: Mutex<HashMap<&'static str, Cooldown>>,
     /// Whether titles, year and episode count are looked up on AniList for title matching.
     resolve_hints: bool,
+    /// Without it, every provider is asked whatever its languages.
+    languages: Option<LanguageSource>,
 }
 
 impl Inner {
+    fn prefs(&self) -> Option<LanguagePrefs> {
+        self.languages.as_ref().map(|source| source())
+    }
+
     fn lineup(&self) -> Lineup {
         Arc::new((self.source)())
     }
@@ -616,15 +678,15 @@ impl Inner {
         access: SessionUse,
     ) -> Result<SourcesResult, AppError> {
         let name = provider.name();
-        if category == Category::Dub && !provider.supports_dub() {
+        let Some(asked) = asked_category(provider.as_ref(), &category) else {
             return Err(AppError::provider(name, "no dub"));
-        }
+        };
 
         let episode = match provider.episode_by_number(&base, number) {
             Some(episode) => episode,
             None => {
                 let query = self.full_query(&base, &cell).await;
-                let found = self.find_episode(&provider, &query, number, &category, access).await;
+                let found = self.find_episode(&provider, &query, number, &asked, access).await;
                 if matches!(&found, Err(e) if e.is_connection_failure()) {
                     self.note_unreachable(provider.site());
                 }
@@ -632,11 +694,16 @@ impl Inner {
             }
         };
 
-        let sources = provider.get_sources_with(&episode, category, access).await;
+        let sources = provider.get_sources_with(&episode, asked.clone(), access).await;
         self.note_outcome(provider.site(), &sources);
         let mut sources = sources?;
         if sources.streams.is_empty() {
             return Err(AppError::NoSourcesFound);
+        }
+        if asked != category {
+            for stream in &mut sources.streams {
+                stream.audio = Some(category.as_str().to_string());
+            }
         }
 
         if !provider.verifies_streams() {
@@ -755,7 +822,25 @@ impl ProviderManager {
         Self::build(source, false)
     }
 
+    /// `with_source`, picking providers by the user's languages: see `get_sources_for_episode`.
+    pub fn with_source_and_languages(source: ProviderSource, languages: LanguageSource) -> Self {
+        Self::build_with(source, true, Some(languages))
+    }
+
+    /// `with_providers` under fixed language preferences, for tests.
+    pub fn with_providers_and_languages(providers: Vec<Arc<dyn AnimeProvider>>, prefs: LanguagePrefs) -> Self {
+        Self::build_with(
+            Arc::new(move || providers.clone()),
+            false,
+            Some(Arc::new(move || prefs.clone())),
+        )
+    }
+
     fn build(source: ProviderSource, resolve_hints: bool) -> Self {
+        Self::build_with(source, resolve_hints, None)
+    }
+
+    fn build_with(source: ProviderSource, resolve_hints: bool, languages: Option<LanguageSource>) -> Self {
         Self {
             inner: Arc::new(Inner {
                 source,
@@ -763,6 +848,7 @@ impl ProviderManager {
                 hints: L1Cache::new(500, 3600),
                 cooldowns: Mutex::new(HashMap::new()),
                 resolve_hints,
+                languages,
             }),
         }
     }
@@ -796,6 +882,10 @@ impl ProviderManager {
     /// out are left out and logged. Listing never loads a site in the in-app browser that was not
     /// reached through it before, and a session that is slow to start is not waited for beyond
     /// the provider's limit (it keeps starting and answers the next listing).
+    ///
+    /// Under language preferences only providers that serve a preferred language are asked
+    /// (unless other languages are allowed), and each listing keeps only the versions (sub,
+    /// dub) in the preferred languages.
     pub async fn get_all_episodes(
         &self,
         anilist_id: i64,
@@ -806,10 +896,18 @@ impl ProviderManager {
         let lineup = inner.lineup();
         let base = Arc::new(AnimeQuery::new(anilist_id, mal_id, title_romaji.as_deref()));
         let cell: SharedQuery = Arc::new(OnceCell::new());
+        let prefs = inner.prefs();
 
         let mut results: Vec<(usize, ProviderData)> = Vec::new();
         let mut listings = JoinSet::new();
         for (idx, provider) in lineup.iter().enumerate() {
+            if let Some(prefs) = &prefs {
+                let wanted = offers_preferred(provider.as_ref(), &Category::Sub, prefs)
+                    || offers_preferred(provider.as_ref(), &Category::Dub, prefs);
+                if !wanted {
+                    continue;
+                }
+            }
             if provider.episode_by_number(&base, 1.0).is_some() {
                 results.push((idx, ProviderData::empty(provider.name())));
                 continue;
@@ -848,7 +946,10 @@ impl ProviderManager {
 
         while let Some(joined) = listings.join_next().await {
             match joined {
-                Ok((idx, Ok(cached))) => results.push((idx, (*cached.data).clone())),
+                Ok((idx, Ok(cached))) => {
+                    let data = shape_listing(lineup[idx].as_ref(), (*cached.data).clone(), prefs.as_ref());
+                    results.push((idx, data));
+                }
                 Ok((idx, Err(reason))) => tracing::warn!(
                     "provider {} returned no episode list: {}",
                     lineup[idx].name(),
@@ -866,6 +967,12 @@ impl ProviderManager {
     /// first to produce a verified stream wins, wherever it sits in the list; the rest are
     /// cancelled. `preferred_provider` (anything but `None`, `""` or `"auto"`) restricts the
     /// attempt to that provider. On failure the error names the reason per provider.
+    ///
+    /// Under language preferences, an automatic lookup races only the providers serving the
+    /// most wanted language, then those serving the next one, and so on (see `plan_tiers`);
+    /// providers in other languages come last, and only when the preferences allow them. The
+    /// result says which language it is in, and its subtitle tracks in the preferred languages
+    /// come first.
     ///
     /// A provider whose site refuses the plain client may load that site in a hidden in-app
     /// browser only when it was asked for by name, or as a last resort once every provider has
@@ -892,11 +999,12 @@ impl ProviderManager {
         let preferred = preferred_provider
             .map(str::trim)
             .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("auto"));
+        let prefs = inner.prefs();
 
-        // Sites that just proved unreachable go last, but are still tried when nothing else
-        // delivers, so a retry never runs out of providers.
-        let (first_wave, second_wave): (Vec<usize>, Vec<usize>) = match preferred {
-            Some(wanted) => {
+        // A provider asked for by name is asked whatever its languages. Otherwise the
+        // preferred languages are tried in order, each in a race of its own.
+        let tiers: Vec<Tier> = match (preferred, &prefs) {
+            (Some(wanted), _) => {
                 let idx = lineup
                     .iter()
                     .position(|p| p.name() == wanted)
@@ -907,9 +1015,36 @@ impl ProviderManager {
                             wanted
                         ))
                     })?;
-                (vec![idx], Vec::new())
+                vec![Tier { language: None, members: vec![idx] }]
             }
-            None => (0..lineup.len()).partition(|&idx| !inner.is_cooling_down(lineup[idx].site())),
+            (None, None) => vec![Tier { language: None, members: (0..lineup.len()).collect() }],
+            (None, Some(prefs)) => {
+                let described: Vec<(Option<Languages>, bool)> = lineup
+                    .iter()
+                    .map(|p| (p.languages(), asked_category(p.as_ref(), &category).is_some()))
+                    .collect();
+                let tiers = plan_tiers(&described, &category, prefs);
+                if tiers.is_empty() {
+                    return Err(no_language_error(prefs, &category));
+                }
+                tiers
+            }
+        };
+        let left_out = tiers.iter().map(|t| t.members.len()).sum::<usize>() < lineup.len();
+
+        let finish = |mut sources: SourcesResult| -> SourcesResult {
+            let Some(prefs) = &prefs else {
+                return sources;
+            };
+            let langs = sources
+                .provider
+                .as_deref()
+                .and_then(|name| lineup.iter().find(|p| p.name() == name))
+                .and_then(|p| p.languages());
+            sources.language = served_language(langs.as_ref(), &category, prefs.for_category(&category));
+            // Subtitle files, also offered with a dub, follow the subtitle preference.
+            prefer_subtitles(&mut sources.subtitles, &prefs.sub);
+            sources
         };
 
         let access = match preferred {
@@ -917,33 +1052,44 @@ impl ProviderManager {
             None => SessionUse::Existing,
         };
         let mut failures: Vec<ProviderFailure> = Vec::new();
-        for wave in [first_wave, second_wave] {
-            if wave.is_empty() {
-                continue;
-            }
-            if let Some(sources) = inner
-                .race(&lineup, &wave, &base, &cell, episode_number, &category, access, &mut failures)
-                .await
-            {
-                return Ok(sources);
+        for tier in &tiers {
+            // Sites that just proved unreachable go last within their tier, but are still
+            // tried when nothing else in it delivers, so a retry never runs out of providers.
+            let (first_wave, second_wave): (Vec<usize>, Vec<usize>) = match preferred {
+                Some(_) => (tier.members.clone(), Vec::new()),
+                None => tier
+                    .members
+                    .iter()
+                    .partition(|&&idx| !inner.is_cooling_down(lineup[idx].site())),
+            };
+            for wave in [first_wave, second_wave] {
+                if wave.is_empty() {
+                    continue;
+                }
+                if let Some(sources) = inner
+                    .race(&lineup, &wave, &base, &cell, episode_number, &category, access, &mut failures)
+                    .await
+                {
+                    return Ok(finish(sources));
+                }
             }
         }
 
         // Nothing delivered: the providers that were only held back from their site's in-app
-        // browser session get to use it now.
-        let last_resort: Vec<usize> = failures
-            .iter()
-            .filter(|f| f.session_could_help)
-            .map(|f| f.index)
-            .collect();
-        if !last_resort.is_empty() {
-            failures.retain(|f| !f.session_could_help);
+        // browser session get to use it now, tier by tier.
+        for tier in &tiers {
+            let held_back = |f: &ProviderFailure| f.session_could_help && tier.members.contains(&f.index);
+            let last_resort: Vec<usize> = failures.iter().filter(|f| held_back(f)).map(|f| f.index).collect();
+            if last_resort.is_empty() {
+                continue;
+            }
+            failures.retain(|f| !held_back(f));
             let allowed = SessionUse::Create;
             if let Some(sources) = inner
                 .race(&lineup, &last_resort, &base, &cell, episode_number, &category, allowed, &mut failures)
                 .await
             {
-                return Ok(sources);
+                return Ok(finish(sources));
             }
         }
 
@@ -952,7 +1098,13 @@ impl ProviderManager {
             .into_iter()
             .map(|f| (f.name.to_string(), f.reason))
             .collect();
-        let message = format!("No source found. {}", summarize_failures(&listed));
+        let mut message = format!("No source found. {}", summarize_failures(&listed));
+        if let (None, Some(prefs), true) = (preferred, &prefs, left_out) {
+            message.push_str(&format!(
+                ". Only plugins with {} were asked; Settings › Sources can allow other languages.",
+                prefs.describe(&category)
+            ));
+        }
         tracing::warn!(
             "no source for anime {} episode {} ({}): {}",
             anilist_id,

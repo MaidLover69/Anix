@@ -63,7 +63,7 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({ value, onChange, ...ar
       role="radiogroup"
       aria-labelledby={aria['aria-labelledby']}
       aria-describedby={aria['aria-describedby']}
-      className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4"
+      className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3"
     >
       {THEMES.map((theme, index) => {
         const selected = theme.id === value;

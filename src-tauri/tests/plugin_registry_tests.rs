@@ -121,6 +121,7 @@ async fn fixture() -> Fixture {
             })),
             "/repo/one.json" => Resp::json(json!({
                 "id": "single", "name": "Single", "version": "3.1.0", "type": "onlinestream-provider", "language": "javascript",
+                "lang": "ru", "languages": { "dub": ["RU"] },
                 "payload": "class Provider { getSettings() { return { episodeServers: ['only'], supportsDub: false }; } }"
             })),
             "/repo/empty.json" => Resp::json(json!([{ "id": "m", "type": "manga-provider" }])),
@@ -283,6 +284,9 @@ async fn a_repository_is_added_refreshed_and_removed() {
     assert!(fixture.enabled && fixture.supports_dub);
     assert_eq!(fixture.servers, ["alpha", "beta"]);
     assert_eq!(fixture.icon.as_deref(), Some("https://example.org/icon.png"));
+    // No `languages` in the manifest: its `lang` covers the sub, and the dub it has.
+    assert_eq!((fixture.sub_languages.clone(), fixture.dub_languages.clone()), (vec!["en".to_string()], vec!["en".to_string()]));
+    assert!(by_id("typed").sub_languages.is_empty() && by_id("typed").dub_languages.is_empty());
     // A plugin that cannot run is listed with its reason and does not disturb the others.
     let broken = by_id("broken");
     assert_eq!(broken.status, "error");
@@ -325,6 +329,14 @@ async fn a_repository_is_added_refreshed_and_removed() {
     assert_eq!(single.plugin_count, 1);
     assert_eq!(single.error, None);
     assert_eq!(manager(&registry).provider_names(), ["fixture", "typed", "single"]);
+    // Declared languages win over `lang`; a dub-only site without `supportsDub` keeps its dub.
+    let listed = registry.list_plugins();
+    let declared = listed.iter().find(|p| p.id == "single").unwrap();
+    assert!(!declared.supports_dub);
+    assert!(declared.sub_languages.is_empty());
+    assert_eq!(declared.dub_languages, ["ru"]);
+    let as_provider = registry.providers().into_iter().find(|p| p.name() == "single").unwrap();
+    assert_eq!(as_provider.languages().map(|l| l.dub), Some(vec!["ru".to_string()]));
 
     assert!(changes.load(Ordering::SeqCst) >= 5);
     registry.remove_repo(&fx.index()).await.unwrap();

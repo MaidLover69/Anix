@@ -12,6 +12,7 @@ export interface PlayerShortcutActions {
   nextEpisode: () => void;
   previousEpisode: () => void;
   skipSegment: () => void;
+  toggleMiniPlayer: () => void;
 }
 
 const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'password', 'number', 'tel', 'url']);
@@ -79,6 +80,10 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
         case 's':
           if (e.shiftKey) handled = false;
           else if (!e.repeat) a.skipSegment();
+          break;
+        case 'i':
+          if (e.shiftKey) handled = false;
+          else if (!e.repeat) a.toggleMiniPlayer();
           break;
         case 'j':
           a.seekBy(-10);

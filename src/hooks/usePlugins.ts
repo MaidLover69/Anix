@@ -76,7 +76,7 @@ export function useStreamingProviders(): StreamingProviders {
       label: (key) => (key === AUTO_PROVIDER ? 'Auto' : names.get(key) ?? key),
       accepts: (key) => !!key && key !== AUTO_PROVIDER && (!listed || usableIds.has(key)),
       options: [
-        { value: AUTO_PROVIDER, label: 'Auto (first that works)' },
+        { value: AUTO_PROVIDER, label: 'Auto (your languages first)' },
         ...usable.map((plugin) => ({ value: plugin.id, label: names.get(plugin.id) ?? plugin.id })),
       ],
     };

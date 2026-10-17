@@ -3,6 +3,7 @@
 
 pub mod dom;
 pub mod engine;
+pub mod health;
 pub mod net;
 pub mod transpile;
 pub mod provider;

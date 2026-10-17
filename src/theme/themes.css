@@ -718,3 +718,135 @@
   border: 2px solid rgb(var(--border-rgb));
   box-shadow: none;
 }
+
+/* ------------------------------------------------------------- OLED black */
+/* The dark theme on true black: page, panels and the title bar are #000. Hairlines carry the
+   structure that lighter panels give the other dark themes. */
+
+:root[data-theme="oled"],
+[data-theme-scope="oled"] {
+  --bg-deepest:     0 0 0;
+  --bg-page:        0 0 0;
+  --bg-card:        0 0 0;
+  --bg-elevated:    14 14 17;
+  --bg-surface:     18 18 22;
+  --bg-input:       22 22 27;
+  --border-alpha:   0.12;
+  --border-strong-alpha: 0.2;
+  --shadow-pop:     0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 24px rgb(0 0 0 / 0.9);
+  color-scheme: dark;
+}
+
+:root[data-theme="oled"] :is(.ui-card, .ui-hero, .ui-inset) {
+  border: 1px solid rgb(var(--border-rgb) / var(--border-alpha));
+}
+
+:root[data-theme="oled"] .ui-sidebar {
+  border-right: 1px solid rgb(var(--border-rgb) / var(--border-alpha));
+}
+
+/* -------------------------------------------- Ambient colour, peek, sticky bar */
+/* .ui-ambient is a soft glow in a title's cover colour (--ambient-rgb, set inline) behind
+   the hero and the detail header. Light papers get less of it; Manga has no colour at all. */
+
+:root,
+[data-theme-scope] {
+  --ambient-strength: 0.34;
+}
+
+:root[data-theme="light"] { --ambient-strength: 0.2; }
+:root[data-theme="comic"] { --ambient-strength: 0.22; }
+:root[data-theme="hacker"] { --ambient-strength: 0.12; }
+:root[data-theme="oled"] { --ambient-strength: 0.3; }
+
+.ui-ambient {
+  pointer-events: none;
+  background-color: rgb(var(--ambient-rgb, 0 0 0) / var(--ambient-strength));
+  -webkit-mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%);
+  transition: background-color 700ms ease, opacity 700ms ease;
+}
+
+.ui-ambient[data-empty="true"] {
+  opacity: 0;
+}
+
+:root[data-theme="manga"] .ui-ambient {
+  display: none;
+}
+
+/* Frosted bars (the detail page's sticky header). The paper themes are solid instead. */
+.ui-frost {
+  background-color: rgb(var(--bg-page) / 0.78);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+}
+
+:root:is([data-theme="manga"], [data-theme="comic"], [data-theme="hacker"]) .ui-frost {
+  background-color: rgb(var(--bg-page));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:root[data-theme="manga"] .ui-frost {
+  border: 2px solid rgb(var(--border-rgb));
+}
+
+:root[data-theme="comic"] .ui-frost {
+  border: 2px solid rgb(var(--border-rgb));
+  box-shadow: 4px 4px 0 rgb(var(--border-rgb));
+}
+
+:root[data-theme="hacker"] .ui-frost {
+  border: 1px solid rgb(var(--border-rgb) / var(--border-strong-alpha));
+}
+
+@keyframes ui-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ui-bar-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ui-pop-in {
+  animation: ui-pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ui-bar-in {
+  animation: ui-bar-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-ambient {
+    transition: none;
+  }
+  .ui-pop-in,
+  .ui-bar-in {
+    animation: none;
+  }
+}
+
+/* Charts (Library › Stats): bars in the accent, gridlines in hairline ink. */
+.ui-chart-bar {
+  fill: rgb(var(--accent-500));
+}
+
+.ui-chart-bar-muted {
+  fill: rgb(var(--accent-500) / 0.35);
+}
+
+.ui-chart-grid {
+  stroke: rgb(var(--border-rgb) / var(--border-alpha));
+}
+
+:root[data-theme="manga"] .ui-chart-bar-muted {
+  fill: rgb(0 0 0 / 0.25);
+}
+
+:root[data-theme="comic"] :is(.ui-chart-bar, .ui-chart-bar-muted) {
+  stroke: rgb(var(--border-rgb));
+  stroke-width: 1.5;
+}

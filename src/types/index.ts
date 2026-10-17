@@ -212,6 +212,8 @@ export interface SourcesResult {
   skip: SkipTimes | null;
   /** Key of the provider that served `streams` (a key of the `get_all_episodes` result). */
   provider: string | null;
+  /** ISO 639-1 code of the subtitle language (sub) or audio language (dub), when known. */
+  language?: string | null;
 }
 
 export interface EpisodeItem {
@@ -364,9 +366,74 @@ export interface AppSettings {
   download_dir: string;
   /** A built-in theme id (see `theme/themes.ts`). */
   theme: ThemeId;
+  /** Closing the window hides it in the tray instead of quitting. */
+  minimize_to_tray: boolean;
+  /** An autostart entry starts the app hidden in the tray at login. */
+  start_with_desktop: boolean;
+  /** ISO 639-1 codes of the subtitle languages wanted with Japanese audio, most wanted first. */
+  preferred_sub_languages: string[];
+  /** ISO 639-1 codes of the dub audio languages wanted, most wanted first. */
+  preferred_dub_languages: string[];
+  /** Auto only asks plugins in the languages above. */
+  only_preferred_languages: boolean;
+  /** Where the title bar puts the window buttons: as the desktop does, or always left/right. */
+  window_buttons: WindowButtonsSetting;
+  /** The desktop's accent colour replaces the theme's (not in Manga, which has no colour). */
+  use_system_accent: boolean;
 }
 
-export type AccountService = 'anilist' | 'mal';
+export type WindowButtonsSetting = 'desktop' | 'left' | 'right';
+
+export type WindowButtonKind = 'minimize' | 'maximize' | 'close';
+
+/** `get_desktop_appearance` result. */
+export interface DesktopAppearance {
+  button_layout: { left: WindowButtonKind[]; right: WindowButtonKind[] };
+  button_layout_source: 'gnome' | 'kde' | 'default';
+  /** `#rrggbb` */
+  accent_color: string | null;
+  accent_source: 'portal' | 'gnome' | 'kde' | null;
+}
+
+/** `get_watched_history` row: one watched episode. */
+export interface WatchedEpisodeRow {
+  anilist_id: number;
+  title: string;
+  cover: string | null;
+  episode_number: number;
+  /** 0 or 1 when the length is not known. */
+  duration_ms: number;
+  updated_at: number;
+}
+
+/** `fetch_anilist_stats` result. */
+export interface AniListStatsEntry {
+  media_id: number;
+  title: string;
+  cover: string | null;
+  status: string;
+  /** 0..100; 0 = not scored. */
+  score: number;
+  progress: number;
+  repeat: number;
+  episodes: number | null;
+  /** Minutes per episode. */
+  duration: number | null;
+  format: string | null;
+  genres: string[];
+  studios: string[];
+  completed_year: number | null;
+  /** Unix seconds. */
+  updated_at: number;
+}
+
+export interface AniListStats {
+  entries: AniListStatsEntry[];
+  voice_actors: { id: number; name: string; image: string | null; count: number }[];
+  voice_actor_titles: number;
+}
+
+export type AccountService = 'anilist' | 'mal' | 'comick';
 
 /** What the frontend knows about one account. Tokens stay in the backend. */
 export interface AccountStatus {
@@ -379,6 +446,23 @@ export interface AccountStatus {
 export interface AccountsStatus {
   anilist: AccountStatus;
   mal: AccountStatus;
+  comick: AccountStatus;
+  /** False when this build has no Comick client id: Comick cannot be connected. */
+  comick_available: boolean;
+}
+
+/** One anime of the connected Comick library (`get_comick_library`). */
+export interface ComickLibraryEntry {
+  hid: string;
+  title: string;
+  /** 1 watching, 2 completed, 3 on hold, 4 dropped, 5 plan to watch. */
+  status: number;
+  /** Saved episode as text ("12", "12.5"), or null. */
+  progress: { number: string | null } | null;
+  rating: number | null;
+  cover_url: string | null;
+  total_units: number | null;
+  url: string | null;
 }
 
 /** `account-login` event: how a sign-in window ended. */
@@ -492,5 +576,11 @@ export interface PluginInfo {
   status: PluginStatus;
   error: string | null;
   supports_dub: boolean;
+  /** ISO 639-1 codes of the subtitle languages it serves (with Japanese audio). */
+  sub_languages: string[];
+  /** ISO 639-1 codes of the audio languages it serves dubs in. */
+  dub_languages: string[];
   servers: string[];
 }
+
+export * from './system';

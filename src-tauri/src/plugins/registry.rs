@@ -10,6 +10,7 @@ use crate::clients::http::http_client;
 use crate::plugins::engine::{EngineLimits, EngineSpec, PluginRuntime};
 use crate::plugins::provider::{read_settings, PluginProvider, ProviderSettings};
 use crate::plugins::userconfig::{self, ConfigOption, SavedConfig, UserConfig};
+use crate::providers::languages::Languages;
 use crate::providers::AnimeProvider;
 use crate::web_session::{app_session, SiteSession};
 use reqwest::Url;
@@ -186,6 +187,12 @@ pub struct PluginInfo {
     pub status: String,
     pub error: Option<String>,
     pub supports_dub: bool,
+    /// ISO 639-1 codes of the subtitle languages it serves (with Japanese audio): the
+    /// manifest's `languages.sub`, or its `lang`.
+    pub sub_languages: Vec<String>,
+    /// ISO 639-1 codes of the audio languages it serves dubs in: the manifest's
+    /// `languages.dub`, or its `lang` when it has a dub.
+    pub dub_languages: Vec<String>,
     pub servers: Vec<String>,
     /// The plugin has settings of its own; see `get_plugin_config`.
     pub configurable: bool,
@@ -241,6 +248,9 @@ struct StoredPlugin {
     icon: Option<String>,
     #[serde(default)]
     lang: String,
+    /// The manifest's `languages`, normalised; `None` when it declares none.
+    #[serde(default)]
+    languages: Option<Languages>,
     #[serde(default)]
     typescript: bool,
     repo_url: String,
@@ -261,6 +271,12 @@ struct StoredPlugin {
     /// Changes whenever the payload on disk changes.
     #[serde(default)]
     revision: u64,
+}
+
+impl StoredPlugin {
+    fn effective_languages(&self) -> Languages {
+        Languages::effective(self.languages.as_ref(), &self.lang, self.supports_dub)
+    }
 }
 
 fn enabled_by_default() -> bool {
@@ -577,6 +593,8 @@ impl PluginRegistry {
                 .to_string(),
                 error: plugin.error.clone(),
                 supports_dub: plugin.supports_dub,
+                sub_languages: plugin.effective_languages().sub,
+                dub_languages: plugin.effective_languages().dub,
                 servers: plugin.servers.clone(),
                 configurable: plugin.user_config.as_ref().map_or(false, |config| !config.fields.is_empty()),
             })
@@ -628,12 +646,11 @@ impl PluginRegistry {
             .await
             .map_err(|e| format!("the plugin could not be started: {}", e))??;
         let settings = read_settings(&runtime).await?;
-        let provider = Arc::new(PluginProvider::new(
-            &plugin.id,
-            runtime.clone(),
-            settings.clone(),
-            &plugin.revision.to_string(),
-        ));
+        let languages = Languages::effective(plugin.languages.as_ref(), &plugin.lang, settings.supports_dub);
+        let provider = Arc::new(
+            PluginProvider::new(&plugin.id, runtime.clone(), settings.clone(), &plugin.revision.to_string())
+                .with_languages(languages),
+        );
         self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner()).insert(
             plugin.id.clone(),
             Loaded {
@@ -698,7 +715,12 @@ impl PluginRegistry {
         let mut loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
         let mut providers: Vec<Arc<dyn AnimeProvider>> = Vec::new();
         for plugin in state.plugins.iter().filter(|p| p.enabled && p.error.is_none()) {
-            if let Some(known) = loaded.get(&plugin.id).filter(|l| l.revision == plugin.revision) {
+            let languages = plugin.effective_languages();
+            if let Some(known) = loaded.get_mut(&plugin.id).filter(|l| l.revision == plugin.revision) {
+                // A refreshed manifest can change the languages without changing the code.
+                if known.provider.languages().as_ref() != Some(&languages) {
+                    known.provider = Arc::new(known.provider.relabelled(languages));
+                }
                 providers.push(known.provider.clone());
                 continue;
             }
@@ -710,12 +732,10 @@ impl PluginRegistry {
                 episode_servers: plugin.servers.clone(),
                 supports_dub: plugin.supports_dub,
             };
-            let provider = Arc::new(PluginProvider::new(
-                &plugin.id,
-                runtime.clone(),
-                settings,
-                &plugin.revision.to_string(),
-            ));
+            let provider = Arc::new(
+                PluginProvider::new(&plugin.id, runtime.clone(), settings, &plugin.revision.to_string())
+                    .with_languages(languages),
+            );
             loaded.insert(
                 plugin.id.clone(),
                 Loaded {
@@ -991,6 +1011,7 @@ impl PluginRegistry {
         stored.author = text_field(manifest, "author");
         stored.description = text_field(manifest, "description");
         stored.lang = text_field(manifest, "lang");
+        stored.languages = Languages::from_manifest(manifest);
         stored.icon = manifest
             .get("icon")
             .and_then(Value::as_str)
@@ -1292,5 +1313,42 @@ impl PluginRegistry {
         drop(_changing);
         self.notify();
         Ok(())
+    }
+}
+
+/// An installed plugin whose repository now lists another version of it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PluginUpdate {
+    pub id: String,
+    pub installed: String,
+    pub available: String,
+}
+
+impl PluginRegistry {
+    /// What `refresh_repos` would move to another version, found the same way but without
+    /// installing anything. Repositories that cannot be read are left out.
+    pub async fn available_updates(&self) -> Vec<PluginUpdate> {
+        let state = self.state();
+        let mut updates = Vec::new();
+        for repo in &state.repos {
+            let Ok(index) = self.fetch_index(&repo.url).await else {
+                continue;
+            };
+            let (wanted, _) = self.wanted_from(&index.url, index.entries).await;
+            for want in wanted {
+                let Some(plugin) = state.plugins.iter().find(|p| p.id == want.id && p.repo_url == repo.url) else {
+                    continue;
+                };
+                let available = text_field(&want.manifest, "version");
+                if plugin.version != available {
+                    updates.push(PluginUpdate {
+                        id: plugin.id.clone(),
+                        installed: plugin.version.clone(),
+                        available,
+                    });
+                }
+            }
+        }
+        updates
     }
 }

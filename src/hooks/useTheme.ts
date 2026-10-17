@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { useSettings, useSaveSettings } from './useSettings';
+import { useDesktopAppearance } from './useDesktopAppearance';
 import { applyTheme, currentTheme, isThemeId, DEFAULT_THEME } from '../theme/themes';
+import { applyAccentOverride } from '../theme/accent';
 import type { ThemeId } from '../theme/themes';
 
 /**
@@ -16,6 +18,16 @@ export function useThemeSync(): void {
     const theme = isThemeId(saved) ? saved : DEFAULT_THEME;
     if (theme !== currentTheme()) applyTheme(theme);
   }, [saved]);
+
+  // The system accent is derived per theme, so it is worked out again on every theme change.
+  const useSystemAccent = settings?.use_system_accent === true;
+  const desktop = useDesktopAppearance();
+  const systemAccent = useSystemAccent ? desktop.data?.accent_color ?? null : null;
+  const accentKnown = settings !== undefined && (!useSystemAccent || !desktop.isPending);
+  useEffect(() => {
+    if (!accentKnown) return;
+    applyAccentOverride(systemAccent);
+  }, [accentKnown, systemAccent, saved]);
 }
 
 /** The selected theme and a setter that applies it at once and saves it. */

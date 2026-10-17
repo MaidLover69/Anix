@@ -1,4 +1,5 @@
-use crate::plugins::registry::{PluginConfig, PluginInfo, PluginRepo};
+use crate::plugins::health::{self, DirectoryList, PluginHealth};
+use crate::plugins::registry::{PluginConfig, PluginInfo, PluginRepo, PluginUpdate};
 use serde_json::Value;
 use std::collections::HashMap;
 use crate::state::AppState;
@@ -49,4 +50,47 @@ pub async fn set_plugin_config(
     values: HashMap<String, Value>,
 ) -> Result<(), String> {
     state.plugins.set_plugin_config(&id, &values).await
+}
+
+/// Runs a quick test search through one plugin; nothing is played.
+#[tauri::command]
+pub async fn test_plugin(state: State<'_, AppState>, id: String) -> Result<PluginHealth, String> {
+    Ok(health::test_plugin(&state.plugins, &id).await)
+}
+
+/// The test search through every enabled plugin at once.
+#[tauri::command]
+pub async fn test_all_plugins(state: State<'_, AppState>) -> Result<Vec<PluginHealth>, String> {
+    let ids: Vec<String> = state
+        .plugins
+        .list_plugins()
+        .into_iter()
+        .filter(|p| p.enabled)
+        .map(|p| p.id)
+        .collect();
+    let mut tasks = tokio::task::JoinSet::new();
+    for (order, id) in ids.into_iter().enumerate() {
+        let registry = state.plugins.clone();
+        tasks.spawn(async move { (order, health::test_plugin(&registry, &id).await) });
+    }
+    let mut results = Vec::new();
+    while let Some(done) = tasks.join_next().await {
+        if let Ok(result) = done {
+            results.push(result);
+        }
+    }
+    results.sort_by_key(|(order, _)| *order);
+    Ok(results.into_iter().map(|(_, health)| health).collect())
+}
+
+/// Installed plugins whose repository lists another version; nothing is installed.
+#[tauri::command]
+pub async fn check_plugin_updates(state: State<'_, AppState>) -> Result<Vec<PluginUpdate>, String> {
+    Ok(state.plugins.available_updates().await)
+}
+
+/// The extension lists the project site recommends; empty when it publishes none.
+#[tauri::command]
+pub async fn get_plugin_directory(state: State<'_, AppState>) -> Result<Vec<DirectoryList>, String> {
+    Ok(health::fetch_directory(&state.client, crate::clients::update::SITE_URL).await)
 }

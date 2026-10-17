@@ -14,12 +14,21 @@ import { sameEpisode } from '../components/player/format';
 import { errorMessage } from '../components/ui/ErrorState';
 import { useAnimeDetails } from '../hooks/useAniList';
 import { useFullscreen } from '../hooks/useFullscreen';
+import { useMiniPlayerSession } from '../hooks/useMiniPlayer';
 import { useAnimeCatalogEpisodes, useEpisodes, useEpisodeSources } from '../hooks/useProviders';
 import { useSiteVerification } from '../hooks/useSiteVerification';
 import { PLUGIN_SETTINGS_PATH, useStreamingProviders } from '../hooks/usePlugins';
 import { AUTO_PROVIDER, DEFAULT_SETTINGS, useSettings } from '../hooks/useSettings';
 import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
+import { versionLabel } from '../lib/languages';
+import { invoke } from '@tauri-apps/api/core';
+import {
+  LOCAL_PROVIDER,
+  LOCAL_PROVIDER_LABEL,
+  useLocalEpisodeSource,
+  useLocalMedia,
+} from '../hooks/useLocalMedia';
 import { usePlayerStore } from '../stores/playerStore';
 import type { CustomPlaylistItem, EpisodeItem } from '../types';
 
@@ -110,6 +119,8 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(container);
+  // The mini-player shows only the video, over the rest of the app's window.
+  const miniPlayer = useMiniPlayerSession();
 
   const feedbackRef = useRef<PlayerFeedbackHandle>(null);
   const notify = useCallback((message: FeedbackMessage) => feedbackRef.current?.show(message), []);
@@ -156,6 +167,12 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const explicitProvider = knownProvider(searchParams.get('prov'));
   const preferredProvider = knownProvider(settings.preferred_provider);
   const requestedProvider = explicitProvider ?? preferredProvider;
+  // "Your files": the episode plays from a file linked to the title, through the proxy.
+  const localRequested = searchParams.get('prov') === LOCAL_PROVIDER;
+  const localQuery = useLocalEpisodeSource(anilistId, episodeNumber, localRequested);
+  const localEpisodes = useLocalMedia(anilistId).episodes;
+  // What the URL keeps when only the audio or the episode changes.
+  const routeProvider = localRequested ? LOCAL_PROVIDER : explicitProvider;
 
   const sourcesQuery = useEpisodeSources({
     anilistId,
@@ -168,9 +185,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     fallbackToAny: explicitProvider === null && preferredProvider !== null,
     // Which provider to ask is not known before the plugin list is, and with no usable
     // plugin there is nobody to ask.
-    enabled: !!details && settingsReady && providers.settled && !noPlugins,
+    enabled: !!details && settingsReady && providers.settled && !noPlugins && !localRequested,
   });
-  const sources = sourcesQuery.data;
+  const sources = localRequested ? localQuery.data?.sources : sourcesQuery.data;
   const servingProvider = sources?.provider || null;
 
   const proxyQuery = useStreamProxyBase();
@@ -204,8 +221,24 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         filler: false,
       }));
     }
+    if (localRequested) {
+      const missing = localEpisodes
+        .filter((n) => !list.some((ep) => sameEpisode(ep.number, n)))
+        .map((n) => ({ number: n, pipe_id: `local-${n}`, title: null, image: null, filler: false }));
+      list = [...list, ...missing];
+    }
     return [...list].sort((a, b) => a.number - b.number);
-  }, [servingProvider, explicitProvider, episodesData, category, catalogEpisodes, details, anilistId]);
+  }, [
+    servingProvider,
+    explicitProvider,
+    episodesData,
+    category,
+    catalogEpisodes,
+    details,
+    anilistId,
+    localRequested,
+    localEpisodes,
+  ]);
 
   const currentEpisode = useMemo(
     () => episodes.find((ep) => sameEpisode(ep.number, episodeNumber)) ?? null,
@@ -291,12 +324,12 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           ),
         }));
       }
-      const provider = target.anilistId === anilistId ? explicitProvider : null;
+      const provider = target.anilistId === anilistId ? routeProvider : null;
       navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider), {
         replace: true,
       });
     },
-    [anilistId, category, explicitProvider, navigate]
+    [anilistId, category, routeProvider, navigate]
   );
 
   const handleBack = useCallback(() => {
@@ -322,9 +355,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const handleToggleCategory = useCallback(
     (nextCategory: Category) => {
-      if (nextCategory !== category) setRouteChoice(nextCategory, explicitProvider ?? AUTO_PROVIDER);
+      if (nextCategory !== category) setRouteChoice(nextCategory, routeProvider ?? AUTO_PROVIDER);
     },
-    [category, explicitProvider, setRouteChoice]
+    [category, routeProvider, setRouteChoice]
   );
 
   const handleSelectServer = useCallback(
@@ -336,9 +369,11 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   );
 
   const { refetch: refetchSources } = sourcesQuery;
+  const { refetch: refetchLocal } = localQuery;
   const handleReload = useCallback(() => {
-    refetchSources();
-  }, [refetchSources]);
+    if (localRequested) refetchLocal();
+    else refetchSources();
+  }, [localRequested, refetchLocal, refetchSources]);
   // A site that wants the user to pass its check is offered for verification next to Retry;
   // the lookup is repeated by itself once the site answers.
   const verification = useSiteVerification({
@@ -347,9 +382,28 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     provider: explicitProvider,
     onVerified: handleReload,
   });
-  const handleTryOtherServers = explicitProvider
-    ? () => setRouteChoice(category, AUTO_PROVIDER)
-    : undefined;
+  const handleTryOtherServers =
+    explicitProvider && !localRequested ? () => setRouteChoice(category, AUTO_PROVIDER) : undefined;
+  const streamInstead = !noPlugins ? () => setRouteChoice(category, AUTO_PROVIDER) : undefined;
+  const localFile = localQuery.data?.file_path ?? null;
+  const externalPlayerName = settings.external_player === 'vlc' ? 'VLC' : 'mpv';
+  const openLocalExternally = useCallback(() => {
+    if (!localFile) return;
+    invoke('open_file_in_player', {
+      filePath: localFile,
+      player: settings.external_player === 'vlc' ? 'vlc' : 'mpv',
+    })
+      .then(() => notify({ text: `Opened in ${externalPlayerName}` }))
+      .catch((err) =>
+        notify({ text: `Could not open the external player: ${errorMessage(err)}`, tone: 'error' })
+      );
+  }, [localFile, settings.external_player, externalPlayerName, notify]);
+  const localErrorActions: PlayerStatusAction[] = localRequested
+    ? [
+        ...(localFile ? [{ label: `Open in ${externalPlayerName}`, onClick: openLocalExternally }] : []),
+        ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead }] : []),
+      ]
+    : [];
   const openServers = useCallback(() => setServersOpen(true), []);
   const openEpisodes = useCallback(() => setEpisodesOpen(true), []);
 
@@ -372,8 +426,14 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const shownProvider = servingProvider ?? (sourcesQuery.isFetching ? explicitProvider : null);
   const metaLine = [
     `Episode ${episodeNumber}`,
-    category === 'dub' ? 'Dub' : 'Sub',
-    shownProvider ? providerLabel(shownProvider) : null,
+    localRequested
+      ? null
+      : sources?.language
+      ? `${category === 'dub' ? 'Dub' : 'Sub'}: ${versionLabel(sources.language, category)}`
+      : category === 'dub'
+      ? 'Dub'
+      : 'Sub',
+    localRequested ? LOCAL_PROVIDER_LABEL : shownProvider ? providerLabel(shownProvider) : null,
     inPlaylist
       ? `${activePlaylistName ?? 'Playlist'} ${queuePosition + 1}/${customQueue.length}`
       : null,
@@ -405,6 +465,33 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     );
   } else if (!details || !settingsReady || !providers.settled) {
     status = <PlayerStatus kind="loading" title="Loading…" />;
+  } else if (localRequested && localQuery.isPending) {
+    status = <PlayerStatus kind="loading" title={`Opening your file of Episode ${episodeNumber}…`} />;
+  } else if (localRequested && localQuery.isError) {
+    status = (
+      <PlayerStatus
+        kind="error"
+        title={`Your file of Episode ${episodeNumber} could not be opened`}
+        detail={errorMessage(localQuery.error)}
+        actions={[
+          { label: 'Retry', onClick: handleReload, primary: true },
+          ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead }] : []),
+          { label: 'Back', onClick: handleBack },
+        ]}
+      />
+    );
+  } else if (localRequested && !localQuery.data) {
+    status = (
+      <PlayerStatus
+        kind="error"
+        title={`Episode ${episodeNumber} is not in your files`}
+        detail="No linked file or finished download has this episode number. Link more files on the title's page, or stream it."
+        actions={[
+          ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead, primary: true }] : []),
+          { label: 'Back', onClick: handleBack, primary: !streamInstead },
+        ]}
+      />
+    );
   } else if (noPlugins && !sources) {
     // A stream that is already playing is left alone if the plugins go away under it.
     status = (
@@ -418,7 +505,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         ]}
       />
     );
-  } else if (sourcesQuery.isFetching || sourcesQuery.isPending) {
+  } else if (!localRequested && (sourcesQuery.isFetching || sourcesQuery.isPending)) {
     status = (
       <PlayerStatus
         kind="loading"
@@ -432,7 +519,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         }
       />
     );
-  } else if (sourcesQuery.isError) {
+  } else if (!localRequested && sourcesQuery.isError) {
     status = (
       <PlayerStatus
         kind="error"
@@ -466,10 +553,15 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   }
 
   return (
-    <div ref={setContainer} className="dark-scope relative h-full w-full overflow-hidden bg-black">
+    <div
+      ref={setContainer}
+      className={`dark-scope overflow-hidden bg-black ${miniPlayer ? 'fixed inset-0 z-[1000]' : 'relative h-full w-full'}`}
+    >
       {playable && sources && proxyQuery.data ? (
         <VideoPlayer
-          key={`${anilistId}:${episodeNumber}:${category}:${requestedProvider ?? AUTO_PROVIDER}:${sourcesQuery.dataUpdatedAt}`}
+          key={`${anilistId}:${episodeNumber}:${category}:${
+            localRequested ? LOCAL_PROVIDER : requestedProvider ?? AUTO_PROVIDER
+          }:${localRequested ? localQuery.dataUpdatedAt : sourcesQuery.dataUpdatedAt}`}
           anilistId={anilistId}
           malId={malId}
           animeTitle={animeTitle || `Anime ${anilistId}`}
@@ -479,10 +571,12 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           category={category}
           metaLine={metaLine}
           sources={sources}
-          provider={servingProvider ?? requestedProvider ?? AUTO_PROVIDER}
-          providerName={servingProvider ? providerLabel(servingProvider) : null}
+          provider={localRequested ? LOCAL_PROVIDER : servingProvider ?? requestedProvider ?? AUTO_PROVIDER}
+          providerName={
+            localRequested ? LOCAL_PROVIDER_LABEL : servingProvider ? providerLabel(servingProvider) : null
+          }
           proxyBase={proxyQuery.data}
-          loadKey={sourcesQuery.dataUpdatedAt}
+          loadKey={localRequested ? localQuery.dataUpdatedAt : sourcesQuery.dataUpdatedAt}
           autoplay={settings.autoplay || continuingRef.current}
           autoSkip={settings.auto_skip_intro_outro}
           externalPlayer={settings.external_player === 'vlc' ? 'vlc' : 'mpv'}
@@ -495,6 +589,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           onOpenServers={openServers}
           onReload={handleReload}
           onTryOtherServers={handleTryOtherServers}
+          extraErrorActions={localErrorActions}
           onToggleCategory={handleToggleCategory}
           isFullscreen={isFullscreen}
           onToggleFullscreen={toggleFullscreen}

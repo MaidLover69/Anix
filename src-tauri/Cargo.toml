@@ -1,6 +1,6 @@
 [package]
 name = "anix"
-version = "1.1.0"
+version = "1.2.0"
 description = "Anix - anime catalogue, tracker, library and player for Linux"
 authors = ["Anix"]
 license = "MIT"
@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.2", features = ["devtools"] }
+tauri = { version = "2.2", features = ["devtools", "tray-icon"] }
 tauri-plugin-shell = "2.2"
 tauri-plugin-dialog = "2.2"
 tauri-plugin-deep-link = "2"
@@ -55,6 +55,11 @@ md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
+zbus = "5"
+anitomy-ng = "1.0.10"
+
+[dev-dependencies]
+futures-util = "0.3"
 
 [profile.release]
 strip = true

@@ -10,12 +10,18 @@ interface PlayerState {
   volume: number;
   muted: boolean;
   subtitleFontSize: number;
+  /** How far subtitles are raised from the bottom of the picture, in percent of its height. */
+  subtitleRaise: number;
   subtitleColor: string;
   subtitleBackground: string;
+  /** Text size of the second subtitle, shown at the top of the picture. */
+  secondarySubtitleFontSize: number;
 
   // Kept for the running session only.
   playbackRate: number;
   subtitleDelayMs: number;
+  /** The window is the compact always-on-top mini-player. */
+  miniPlayer: boolean;
 
   // Playlist queue started from the Library; it may span several anime.
   customQueue: CustomPlaylistItem[];
@@ -26,9 +32,12 @@ interface PlayerState {
   setVolume: (volume: number, muted: boolean) => void;
   setPlaybackRate: (rate: number) => void;
   setSubtitleFontSize: (size: number) => void;
+  setSubtitleRaise: (percent: number) => void;
   setSubtitleColor: (color: string) => void;
   setSubtitleBackground: (background: string) => void;
   setSubtitleDelayMs: (delay: number) => void;
+  setSecondarySubtitleFontSize: (size: number) => void;
+  setMiniPlayer: (mini: boolean) => void;
   setCustomQueue: (items: CustomPlaylistItem[], startIndex?: number, playlistName?: string) => void;
   clearCustomQueue: () => void;
   jumpToCustomQueueIndex: (index: number) => CustomPlaylistItem | null;
@@ -41,11 +50,14 @@ export const usePlayerStore = create<PlayerState>()(
       volume: 1,
       muted: false,
       subtitleFontSize: 20,
+      subtitleRaise: 0,
       subtitleColor: '#ffffff',
       subtitleBackground: DEFAULT_SUBTITLE_BACKGROUND,
+      secondarySubtitleFontSize: 18,
 
       playbackRate: 1,
       subtitleDelayMs: 0,
+      miniPlayer: false,
 
       customQueue: [],
       customQueueIndex: 0,
@@ -58,9 +70,12 @@ export const usePlayerStore = create<PlayerState>()(
       },
       setPlaybackRate: (playbackRate) => set({ playbackRate }),
       setSubtitleFontSize: (subtitleFontSize) => set({ subtitleFontSize }),
+      setSubtitleRaise: (subtitleRaise) => set({ subtitleRaise: Math.min(40, Math.max(0, subtitleRaise)) }),
       setSubtitleColor: (subtitleColor) => set({ subtitleColor }),
       setSubtitleBackground: (subtitleBackground) => set({ subtitleBackground }),
       setSubtitleDelayMs: (subtitleDelayMs) => set({ subtitleDelayMs }),
+      setSecondarySubtitleFontSize: (secondarySubtitleFontSize) => set({ secondarySubtitleFontSize }),
+      setMiniPlayer: (miniPlayer) => set({ miniPlayer }),
 
       setCustomQueue: (items, startIndex = 0, playlistName) => {
         set({
@@ -90,8 +105,10 @@ export const usePlayerStore = create<PlayerState>()(
         volume: state.volume,
         muted: state.muted,
         subtitleFontSize: state.subtitleFontSize,
+        subtitleRaise: state.subtitleRaise,
         subtitleColor: state.subtitleColor,
         subtitleBackground: state.subtitleBackground,
+        secondarySubtitleFontSize: state.secondarySubtitleFontSize,
       }),
     }
   )

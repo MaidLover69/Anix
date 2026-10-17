@@ -162,3 +162,53 @@ pub async fn get_library_entries(
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Marks `episodes` of one anime as watched (or unmarks them) in the local history. Marking
+/// queues the list progress once, for the highest whole episode among them, instead of once
+/// per episode. Unmarking changes nothing on the connected lists.
+#[tauri::command]
+pub async fn set_episodes_watched(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    anilist_id: i32,
+    title: String,
+    cover: Option<String>,
+    episodes: Vec<f64>,
+    watched: bool,
+) -> Result<u64, String> {
+    let written = db::set_episodes_watched(
+        &state.pool,
+        anilist_id,
+        &title,
+        cover.as_deref(),
+        &episodes,
+        watched,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if watched {
+        if let Some(highest) = highest_whole_episode(&episodes) {
+            accounts::episode_watched(&app, &state, anilist_id, highest).await;
+        }
+    }
+    Ok(written)
+}
+
+/// The highest whole episode number in `episodes` (specials such as 12.5 do not count).
+pub fn highest_whole_episode(episodes: &[f64]) -> Option<f64> {
+    episodes
+        .iter()
+        .copied()
+        .filter(|n| n.is_finite() && *n >= 1.0 && n.fract() == 0.0)
+        .reduce(f64::max)
+}
+
+/// Every watched episode, for the statistics in the Library.
+#[tauri::command]
+pub async fn get_watched_history(
+    state: State<'_, AppState>,
+) -> Result<Vec<db::WatchedEpisodeRow>, String> {
+    db::get_watched_history(&state.pool)
+        .await
+        .map_err(|e| e.to_string())
+}

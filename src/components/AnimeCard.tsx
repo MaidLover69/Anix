@@ -1,16 +1,19 @@
-import React from 'react';
+import React, { useId, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Bookmark } from 'lucide-react';
 import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
 import type { Media } from '../types';
 import { useWatchlist, useToggleWatchlist } from '../hooks/useLibrary';
+import { QuickPeekCard, useQuickPeek } from './QuickPeek';
 
 interface AnimeCardProps {
   media: Media;
   className?: string;
   showProgress?: number; // 0..100
   style?: React.CSSProperties;
+  /** The quick look on hover and keyboard focus (on by default). */
+  peek?: boolean;
 }
 
 const BADGE_CLASS =
@@ -21,7 +24,13 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   className = '',
   showProgress,
   style,
+  peek = true,
 }) => {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const peekId = useId();
+  const quickPeek = useQuickPeek();
+  const peekOpen = peek && quickPeek.isOpen;
   // One shared query for every card on screen instead of a lookup per card.
   const { data: watchlist = [] } = useWatchlist();
   const inWatchlist = watchlist.some((entry) => entry.anilist_id === media.id);
@@ -53,8 +62,54 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   const format = media.format && media.format !== 'TV' ? media.format.replace(/_/g, ' ') : null;
 
   return (
-    <div className={`group relative flex flex-col flex-shrink-0 select-none ${className}`} style={style}>
-      <Link to={`/detail/${media.id}`} draggable={false} className="flex flex-col rounded-xl">
+    <div
+      ref={rootRef}
+      className={`group relative flex flex-col flex-shrink-0 select-none ${className}`}
+      style={style}
+      onPointerEnter={peek ? (e) => e.pointerType !== 'touch' && quickPeek.requestOpen() : undefined}
+      onPointerLeave={peek ? quickPeek.requestClose : undefined}
+      onPointerDown={
+        peek
+          ? (e) => {
+              // Opening the card closes its quick look; a press inside the quick look does not.
+              if (linkRef.current?.contains(e.target as Node)) quickPeek.closeNow();
+            }
+          : undefined
+      }
+      onFocus={
+        peek
+          ? (e) => {
+              // Keyboard focus only; a click focuses the link too and must not open it.
+              if (e.target instanceof HTMLElement && e.target.matches(':focus-visible')) quickPeek.requestOpen();
+            }
+          : undefined
+      }
+      onBlur={
+        peek
+          ? (e) => {
+              if (!rootRef.current?.contains(e.relatedTarget as Node | null)) quickPeek.closeNow();
+            }
+          : undefined
+      }
+      onKeyDown={
+        peekOpen
+          ? (e) => {
+              if (e.key !== 'Escape') return;
+              e.stopPropagation();
+              const inside = document.activeElement !== linkRef.current;
+              quickPeek.closeNow();
+              if (inside) linkRef.current?.focus();
+            }
+          : undefined
+      }
+    >
+      <Link
+        ref={linkRef}
+        to={`/detail/${media.id}`}
+        draggable={false}
+        aria-describedby={peekOpen ? peekId : undefined}
+        className="flex flex-col rounded-xl"
+      >
         <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card">
           <ShimmerImage
             src={coverUrl}
@@ -102,6 +157,18 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
       >
         <Bookmark aria-hidden="true" className={clsx('h-4 w-4', inWatchlist && 'fill-current')} />
       </button>
+
+      {peekOpen && (
+        <QuickPeekCard
+          id={peekId}
+          media={media}
+          title={title}
+          anchorRef={rootRef}
+          onPointerEnter={quickPeek.requestOpen}
+          onPointerLeave={quickPeek.requestClose}
+          onDismiss={quickPeek.closeNow}
+        />
+      )}
     </div>
   );
 };

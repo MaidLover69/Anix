@@ -5,8 +5,11 @@ import { useUIStore } from '../stores/uiStore';
 import {
   ACCOUNT_LABELS,
   ACCOUNT_SERVICES,
+  BROWSER_LOGIN_SERVICES,
+  isAccountAvailable,
   useAccountEvents,
   useAccountStatus,
+  useCancelAccountLogin,
   useDisconnectAccount,
   useLoginPending,
   useStartAccountLogin,
@@ -14,22 +17,30 @@ import {
 import type { AccountService, AccountStatus } from '../types';
 
 /** The line under an account's name: who is connected, or that nobody is. */
-export function accountSummary(status: AccountStatus | undefined, failed = false): string {
+export function accountSummary(
+  status: AccountStatus | undefined,
+  failed = false,
+  available = true,
+): string {
   if (!status) return failed ? 'The account could not be read.' : 'Checking…';
+  if (!status.connected && !available) return 'Not available in this build.';
   if (!status.connected) return 'Not connected.';
   return status.name ? `Connected as ${status.name}.` : 'Connected.';
 }
 
 /**
  * Connect or Disconnect for one service. Connect opens the service's own sign-in page in a
- * separate window; while that window is open the button brings it back to the front.
+ * separate window (Comick: in the system browser); while it is waiting the button brings it
+ * back to the front.
  */
 export const AccountAction: React.FC<{ service: AccountService }> = ({ service }) => {
   const { data: accounts, isError, refetch } = useAccountStatus();
   const startLogin = useStartAccountLogin();
   const disconnect = useDisconnectAccount();
+  const cancelLogin = useCancelAccountLogin();
   const loginPending = useLoginPending(service);
   const label = ACCOUNT_LABELS[service];
+  const inBrowser = BROWSER_LOGIN_SERVICES.includes(service);
 
   if (!accounts) {
     return isError ? (
@@ -56,17 +67,39 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
     );
   }
 
-  return (
+  if (!isAccountAvailable(service, accounts)) {
+    return <span className="text-xs text-text-muted">Not available in this build</span>;
+  }
+
+  const connectButton = (
     <Button
       variant={loginPending ? 'secondary' : 'primary'}
       size="sm"
       aria-label={loginPending ? undefined : `Connect ${label}`}
-      title={loginPending ? `Show the ${label} sign-in window` : undefined}
+      title={
+        loginPending
+          ? inBrowser
+            ? `Open the ${label} sign-in page in your browser again`
+            : `Show the ${label} sign-in window`
+          : inBrowser
+            ? `Opens ${label} in your browser`
+            : undefined
+      }
       onClick={() => startLogin(service)}
     >
       {loginPending && <Spinner size="sm" label={`Waiting for the ${label} sign-in`} />}
-      {loginPending ? 'Waiting for sign-in…' : 'Connect'}
+      {loginPending ? (inBrowser ? 'Waiting for the browser…' : 'Waiting for sign-in…') : 'Connect'}
     </Button>
+  );
+
+  if (!(loginPending && inBrowser)) return connectButton;
+  return (
+    <div className="flex items-center gap-2">
+      {connectButton}
+      <Button variant="ghost" size="sm" onClick={() => cancelLogin(service)}>
+        Cancel
+      </Button>
+    </div>
   );
 };
 
@@ -74,7 +107,8 @@ const AccountRow: React.FC<{
   service: AccountService;
   status: AccountStatus | undefined;
   failed: boolean;
-}> = ({ service, status, failed }) => {
+  available: boolean;
+}> = ({ service, status, failed, available }) => {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const avatar = status?.connected ? status.avatar_url : null;
 
@@ -98,7 +132,7 @@ const AccountRow: React.FC<{
             }`}
           >
             {status?.connected && <Check aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0" />}
-            <span className="truncate select-text">{accountSummary(status, failed)}</span>
+            <span className="truncate select-text">{accountSummary(status, failed, available)}</span>
           </span>
         </div>
       </div>
@@ -123,7 +157,13 @@ export const AuthDialog: React.FC = () => {
       </p>
       <div className="mt-2 divide-y divide-border">
         {ACCOUNT_SERVICES.map((service) => (
-          <AccountRow key={service} service={service} status={accounts?.[service]} failed={isError} />
+          <AccountRow
+            key={service}
+            service={service}
+            status={accounts?.[service]}
+            failed={isError}
+            available={isAccountAvailable(service, accounts)}
+          />
         ))}
       </div>
     </Modal>

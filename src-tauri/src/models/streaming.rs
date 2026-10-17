@@ -190,6 +190,10 @@ pub struct SourcesResult {
     /// Name of the provider that served the streams; filled in by the provider manager.
     #[serde(default)]
     pub provider: Option<String>,
+    /// ISO 639-1 code of what the result is in: the subtitle language of a sub, the audio
+    /// language of a dub. Filled in by the provider manager when the provider says.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 impl SourcesResult {
@@ -199,6 +203,7 @@ impl SourcesResult {
             subtitles: Vec::new(),
             skip: None,
             provider: None,
+            language: None,
         }
     }
 }

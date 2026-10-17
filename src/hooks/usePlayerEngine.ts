@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import Hls from 'hls.js';
 import type { ErrorData, Level, MediaPlaylist } from 'hls.js';
+import { normalizeLanguage } from '../lib/languages';
 import { buildProxyUrl } from '../lib/streamProxy';
 import type { StreamItem } from '../types';
 
@@ -30,6 +31,11 @@ export interface PlayerEngineOptions {
   /** False when `startAt` could not be checked against a known duration. */
   startVerified: boolean;
   autoplay: boolean;
+  /**
+   * Audio languages to start on when the stream carries several (ISO 639-1, most wanted
+   * first); the stream's own default is kept when none of them is offered.
+   */
+  preferredAudioLanguages?: string[];
 }
 
 export interface PlayerEngine {
@@ -55,9 +61,17 @@ export interface PlayerEngine {
   play: () => void;
   pause: () => void;
   togglePlay: () => void;
+  /** Playback is held after a stall until enough video is buffered. */
+  rebuffering: boolean;
 }
 
 const MAX_NETWORK_RECOVERIES = 2;
+/** Seconds of video (at 1x) to have ahead before playback continues after a stall. */
+const REBUFFER_SECONDS = 4;
+const REBUFFER_MAX_SECONDS = 20;
+/** How far hls.js reads ahead at 1x; scaled up with the playback speed. */
+const HLS_BUFFER_SECONDS = 30;
+const HLS_BUFFER_BYTES = 60 * 1024 * 1024;
 const MAX_MEDIA_RECOVERIES = 2;
 /** A saved position this close to the end means the episode was finished. */
 const RESUME_END_FRACTION = 0.95;
@@ -79,6 +93,16 @@ function toTrackOptions(tracks: MediaPlaylist[]): MediaTrackOption[] {
     id: track.id,
     label: track.name || track.lang || `Track ${track.id + 1}`,
   }));
+}
+
+/** Index of the first track in a wanted language, trying the languages in order. */
+export function preferredAudioTrack(tracks: Pick<MediaPlaylist, 'lang' | 'name'>[], wanted: string[]): number {
+  const codes = tracks.map((track) => normalizeLanguage(track.lang) ?? normalizeLanguage(track.name));
+  for (const language of wanted) {
+    const index = codes.indexOf(language.toLowerCase());
+    if (index !== -1) return index;
+  }
+  return -1;
 }
 
 function describeHlsError(data: ErrorData): string {
@@ -138,7 +162,10 @@ export function usePlayerEngine({
   startAt,
   startVerified,
   autoplay,
+  preferredAudioLanguages = [],
 }: PlayerEngineOptions): PlayerEngine {
+  const preferredAudioRef = useRef(preferredAudioLanguages);
+  preferredAudioRef.current = preferredAudioLanguages;
   const [streamIndex, setStreamIndex] = useState(0);
   const [phase, setPhase] = useState<EnginePhase>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -150,8 +177,11 @@ export function usePlayerEngine({
   const [audioTrack, setAudioTrack] = useState(-1);
   const [textTracks, setTextTracks] = useState<MediaTrackOption[]>([]);
   const [textTrack, setTextTrack] = useState(-1);
+  const [rebuffering, setRebuffering] = useState(false);
 
   const hlsRef = useRef<Hls | null>(null);
+  // Set while playback is held after running out of data; see the rebuffer effect.
+  const holdingRef = useRef(false);
   // Where the next load starts: the saved position at first, the failure point after that.
   const resumeRef = useRef<{ time: number; verified: boolean } | null>(null);
   // Whether the user (or autoplay) wants playback, independent of what the element is doing.
@@ -264,8 +294,8 @@ export function usePlayerEngine({
       const instance = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        maxBufferLength: 30,
-        maxBufferSize: 60 * 1024 * 1024,
+        maxBufferLength: HLS_BUFFER_SECONDS,
+        maxBufferSize: HLS_BUFFER_BYTES,
         backBufferLength: 90,
         enableCEA708Captions: false,
         startPosition: start.verified && start.time > 0 ? start.time : -1,
@@ -278,8 +308,15 @@ export function usePlayerEngine({
         setLevels(toLevels(data.levels));
       });
       instance.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => setActiveLevel(data.level));
+      let audioChosen = false;
       instance.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
         setAudioTracks(toTrackOptions(data.audioTracks));
+        // Several audio languages, often none marked default: start on the wanted one, once.
+        if (!audioChosen && data.audioTracks.length > 1) {
+          audioChosen = true;
+          const index = preferredAudioTrack(data.audioTracks, preferredAudioRef.current);
+          if (index !== -1 && index !== instance.audioTrack) instance.audioTrack = index;
+        }
         setAudioTrack(instance.audioTrack);
       });
       instance.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => setAudioTrack(data.id));
@@ -324,6 +361,80 @@ export function usePlayerEngine({
     // `startAt`, `startVerified` and `autoplay` are read once, when loading first begins.
   }, [enabled, proxyBase, streams, streamIndex, videoRef]);
 
+  // After a stall, wait for a cushion of video before going on, instead of playing each
+  // second as it arrives. The cushion and how far hls.js reads ahead grow with the speed.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!enabled || !video) return;
+    let timer: number | undefined;
+
+    const bufferedAhead = () => {
+      const t = video.currentTime;
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= t + 0.25 && video.buffered.end(i) > t) return video.buffered.end(i) - t;
+      }
+      return 0;
+    };
+    const goal = () => {
+      const rate = Math.max(1, video.playbackRate || 1);
+      const remaining = Number.isFinite(video.duration) ? video.duration - video.currentTime - 0.5 : Infinity;
+      return Math.max(0, Math.min(REBUFFER_SECONDS * rate, REBUFFER_MAX_SECONDS, remaining));
+    };
+    const release = (resume: boolean) => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (!holdingRef.current) return;
+      holdingRef.current = false;
+      setRebuffering(false);
+      if (resume && wantPlayRef.current) video.play().catch((reason) => playRejectedRef.current(reason));
+    };
+    const check = () => {
+      if (!holdingRef.current) {
+        window.clearInterval(timer);
+        timer = undefined;
+        return;
+      }
+      if (bufferedAhead() >= goal()) release(true);
+    };
+    const onWaiting = () => {
+      // Seeks and the first start keep the element's own behaviour.
+      if (holdingRef.current || video.seeking || video.currentTime < 1 || !wantPlayRef.current) return;
+      if (bufferedAhead() >= goal()) return;
+      holdingRef.current = true;
+      setRebuffering(true);
+      video.pause();
+      timer = window.setInterval(check, 250);
+    };
+    const onSeeking = () => release(false);
+    const onPlay = () => {
+      // Played by the user (or the element) while held: stop holding.
+      if (holdingRef.current) release(false);
+    };
+    const tuneHls = () => {
+      const hls = hlsRef.current;
+      if (!hls) return;
+      const rate = Math.max(1, video.playbackRate || 1);
+      hls.config.maxBufferLength = HLS_BUFFER_SECONDS * rate;
+      hls.config.maxBufferSize = HLS_BUFFER_BYTES * rate;
+    };
+
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('progress', check);
+    video.addEventListener('seeking', onSeeking);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('ratechange', tuneHls);
+    video.addEventListener('loadedmetadata', tuneHls);
+    return () => {
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('progress', check);
+      video.removeEventListener('seeking', onSeeking);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('ratechange', tuneHls);
+      video.removeEventListener('loadedmetadata', tuneHls);
+      release(false);
+    };
+  }, [enabled, streamIndex, videoRef]);
+
   const selectLevel = useCallback((id: number) => {
     const hls = hlsRef.current;
     if (!hls) return;
@@ -356,13 +467,17 @@ export function usePlayerEngine({
     const video = videoRef.current;
     if (!video) return;
     wantPlayRef.current = false;
+    if (holdingRef.current) {
+      holdingRef.current = false;
+      setRebuffering(false);
+    }
     video.pause();
   }, [videoRef]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused || video.ended) play();
+    if ((video.paused || video.ended) && !holdingRef.current) play();
     else pause();
   }, [videoRef, play, pause]);
 
@@ -381,6 +496,7 @@ export function usePlayerEngine({
     textTracks,
     textTrack,
     selectTextTrack,
+    rebuffering,
     play,
     pause,
     togglePlay,

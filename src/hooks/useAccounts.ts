@@ -13,12 +13,21 @@ import type {
   AccountSyncedEvent,
 } from '../types';
 
-export const ACCOUNT_SERVICES: AccountService[] = ['anilist', 'mal'];
+export const ACCOUNT_SERVICES: AccountService[] = ['anilist', 'mal', 'comick'];
 
 export const ACCOUNT_LABELS: Record<AccountService, string> = {
   anilist: 'AniList',
   mal: 'MyAnimeList',
+  comick: 'Comick',
 };
+
+/** Services whose sign-in page opens in the system browser instead of an app window. */
+export const BROWSER_LOGIN_SERVICES: AccountService[] = ['comick'];
+
+/** Whether this build can connect `service` at all. */
+export function isAccountAvailable(service: AccountService, status: AccountsStatus | undefined): boolean {
+  return service !== 'comick' || (status?.comick_available ?? false);
+}
 
 const ACCOUNT_STATUS_KEY = ['accountStatus'] as const;
 
@@ -33,12 +42,12 @@ export function useAccountStatus() {
   });
 }
 
-/** Services whose sign-in window is open. */
+/** Services whose sign-in window (or browser sign-in) is waiting. */
 const usePendingLogins = create<{
   pending: Record<AccountService, boolean>;
   setPending: (service: AccountService, pending: boolean) => void;
 }>((set) => ({
-  pending: { anilist: false, mal: false },
+  pending: { anilist: false, mal: false, comick: false },
   setPending: (service, pending) =>
     set((state) => ({ pending: { ...state.pending, [service]: pending } })),
 }));
@@ -66,6 +75,19 @@ export function useStartAccountLogin() {
         message: errorMessage(err),
       });
     }
+  };
+}
+
+/** Stops a sign-in that is still waiting; it ends with a `cancelled` login event. */
+export function useCancelAccountLogin() {
+  const setPending = usePendingLogins((s) => s.setPending);
+  return async (service: AccountService) => {
+    try {
+      await invoke('cancel_account_login', { service });
+    } catch (err) {
+      console.warn(`[Accounts] could not cancel the ${service} sign-in:`, err);
+    }
+    setPending(service, false);
   };
 }
 
@@ -138,12 +160,19 @@ export function useAccountEvents() {
           queryClient.removeQueries({ queryKey: ['aniListLibrary'] });
         }
       }
+      if (service === 'comick') {
+        if (connected) queryClient.invalidateQueries({ queryKey: ['comickLibrary'] });
+        else queryClient.removeQueries({ queryKey: ['comickLibrary'] });
+      }
       if (!connected && message) {
         showToast({ type: 'error', title: `Signed out of ${ACCOUNT_LABELS[service]}`, message });
       }
     });
 
     subscribe<AccountSyncedEvent>('account-synced', ({ service }) => {
+      if (service === 'comick') {
+        queryClient.invalidateQueries({ queryKey: ['comickLibrary'] });
+      }
       if (service === 'anilist') {
         queryClient.invalidateQueries({ queryKey: ['aniListLibrary'] });
         queryClient.invalidateQueries({ queryKey: ['aniListViewer'] });

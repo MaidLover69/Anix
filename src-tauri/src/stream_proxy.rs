@@ -554,6 +554,107 @@ fn handle_subtitle(request: Request, target: Url, params: UpstreamParams) {
     }
 }
 
+/// Serves a file of "Your files" (see `local_media`): only a key on the allow-list is
+/// accepted, with byte ranges so the player can seek.
+fn handle_local_video(request: Request, key: &str) {
+    use crate::local_media::{parse_byte_range, playable_path, video_content_type, PlayableKind};
+    use std::io::{Seek, SeekFrom};
+
+    let Some(path) = playable_path(PlayableKind::Video, key) else {
+        return respond_text(request, 404, "Not found");
+    };
+    let mut file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(e) => {
+            tracing::warn!("stream proxy: local file could not be opened ({})", e);
+            return respond_text(request, 404, "Not found");
+        }
+    };
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+    let mut headers = cors_headers();
+    headers.extend(header("Content-Type", video_content_type(&path)));
+    headers.extend(header("Accept-Ranges", "bytes"));
+    headers.extend(header("Cache-Control", "no-store"));
+
+    let range = request_header(&request, "Range");
+    let (status, start, length) = match parse_byte_range(range.as_deref(), size) {
+        Ok(Some((start, end))) => {
+            headers.extend(header("Content-Range", &format!("bytes {}-{}/{}", start, end, size)));
+            (206, start, end - start + 1)
+        }
+        Ok(None) => (200, 0, size),
+        Err(()) => {
+            headers.extend(header("Content-Range", &format!("bytes */{}", size)));
+            let _ = request.respond(Response::new(
+                StatusCode(416),
+                headers,
+                std::io::empty(),
+                Some(0),
+                None,
+            ));
+            return;
+        }
+    };
+
+    if *request.method() == Method::Head {
+        let _ = request.respond(sized(Response::new(
+            StatusCode(status),
+            headers,
+            std::io::empty(),
+            Some(length as usize),
+            None,
+        )));
+        return;
+    }
+    if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
+        return respond_text(request, 500, "The file could not be read");
+    }
+    // A dropped connection (seek, episode change) ends the copy; that is not an error.
+    let _ = request.respond(sized(Response::new(
+        StatusCode(status),
+        headers,
+        file.take(length),
+        Some(length as usize),
+        None,
+    )));
+}
+
+/// A sidecar subtitle of a local file, as WebVTT.
+fn handle_local_subtitle(request: Request, key: &str) {
+    use crate::local_media::{playable_path, PlayableKind};
+
+    let Some(path) = playable_path(PlayableKind::Subtitle, key) else {
+        return respond_text(request, 404, "Not found");
+    };
+    let too_big = std::fs::metadata(&path)
+        .map(|m| m.len() > MAX_SUBTITLE_BYTES as u64)
+        .unwrap_or(true);
+    if too_big {
+        return respond_text(request, 413, "Subtitle file is too large");
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let vtt = subtitle_to_vtt(&String::from_utf8_lossy(&bytes));
+            respond_bytes(request, 200, "text/vtt; charset=utf-8", vtt.into_bytes())
+        }
+        Err(_) => respond_text(request, 404, "Not found"),
+    }
+}
+
+/// `local/<key>` or `localsub/<key>` routed to its handler; any other endpoint is given back.
+fn route_local(request: Request, endpoint: &str) -> Option<Request> {
+    if let Some(key) = endpoint.strip_prefix("local/") {
+        handle_local_video(request, key);
+        None
+    } else if let Some(key) = endpoint.strip_prefix("localsub/") {
+        handle_local_subtitle(request, key);
+        None
+    } else {
+        Some(request)
+    }
+}
+
 fn handle_request(request: Request, token: &str, proxy_base: &str) {
     if *request.method() == Method::Options {
         let _ = request.respond(Response::new(
@@ -579,6 +680,10 @@ fn handle_request(request: Request, token: &str, proxy_base: &str) {
         return respond_text(request, 403, "Forbidden");
     }
 
+    let Some(request) = route_local(request, endpoint) else {
+        return;
+    };
+
     let query: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
     let target = match query.get("url").map(|raw| parse_target_url(raw)) {
         Some(Ok(target)) => target,
@@ -586,6 +691,24 @@ fn handle_request(request: Request, token: &str, proxy_base: &str) {
         None => return respond_text(request, 400, "Missing url parameter"),
     };
     let params = UpstreamParams::from_query(&query);
+
+    // The player sends every URL through `proxy` or `subtitle`. One of this proxy's own local
+    // routes is answered here instead of being fetched over loopback.
+    if let Some(own) = target.as_str().strip_prefix(proxy_base).and_then(|r| r.strip_prefix('/')) {
+        let own = own.split(['?', '#']).next().unwrap_or("");
+        let allowed = match endpoint {
+            "proxy" => own.starts_with("local/"),
+            "subtitle" => own.starts_with("localsub/"),
+            _ => false,
+        };
+        if !allowed {
+            return respond_text(request, 404, "Not found");
+        }
+        if let Some(request) = route_local(request, own) {
+            respond_text(request, 404, "Not found");
+        }
+        return;
+    }
 
     match endpoint {
         "proxy" => handle_proxy(request, target, params, proxy_base),

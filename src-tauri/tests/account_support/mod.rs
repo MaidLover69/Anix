@@ -1,10 +1,11 @@
-//! Shared by the `account_*_tests`: a loopback server standing in for AniList and
-//! MyAnimeList, a settings file in a temp directory and a notifier that records.
+//! Shared by the `account_*_tests`: a loopback server standing in for AniList, MyAnimeList
+//! and Comick, a settings file in a temp directory and a notifier that records.
 
 #![allow(dead_code)]
 
 use anix_lib::accounts;
 
+use accounts::comick::ComickClient;
 use accounts::session::{Context, Notice, Notifier};
 use accounts::store::AccountStore;
 use anix_lib::clients::anilist::AniListClient;
@@ -129,12 +130,15 @@ pub struct World {
     pub store: AccountStore,
     pub anilist: AniListClient,
     pub mal: MalClient,
+    pub comick: ComickClient,
     pub pool: SqlitePool,
     pub recorder: Recorder,
 }
 
 impl World {
-    /// AniList at `<base>/graphql`, the MAL API at `<base>/v2`, its token endpoint at `<base>/token`.
+    /// AniList at `<base>/graphql`, the MAL API at `<base>/v2`, its token endpoint at
+    /// `<base>/token`; the Comick API at `<base>/comick/v1`, its token and revoke endpoints at
+    /// `<base>/comick/oauth2/token` and `/revoke`, with the client id `test-comick-client`.
     pub async fn new(base: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "anix-account-test-{}-{}",
@@ -148,7 +152,14 @@ impl World {
         Self {
             store: AccountStore::at(dir.join("settings.json")),
             anilist: AniListClient::with_base_url(client.clone(), &format!("{}/graphql", base)),
-            mal: MalClient::with_base_urls(client, &format!("{}/v2", base), &format!("{}/token", base)),
+            mal: MalClient::with_base_urls(client.clone(), &format!("{}/v2", base), &format!("{}/token", base)),
+            comick: ComickClient::with_urls(
+                client,
+                &format!("{}/comick/v1", base),
+                &format!("{}/comick/oauth2/token", base),
+                &format!("{}/comick/oauth2/revoke", base),
+                Some("test-comick-client"),
+            ),
             pool: anix_lib::db::init_db_in_memory().await.expect("in-memory database"),
             recorder: Recorder::default(),
             dir,
@@ -160,6 +171,7 @@ impl World {
             store: &self.store,
             anilist: &self.anilist,
             mal: &self.mal,
+            comick: &self.comick,
             pool: &self.pool,
             notifier: &self.recorder,
         }

@@ -1,15 +1,19 @@
-//! AniList and MyAnimeList accounts: sign-in windows, token storage and list sync.
+//! AniList, MyAnimeList and Comick accounts: sign-in, token storage and list sync.
 //!
-//! `oauth`, `store`, `session` and `sync` do not depend on the running app and are tested on
-//! their own; this file and `login` connect them to it.
+//! `oauth`, `comick`, `store`, `session` and `sync` do not depend on the running app and are
+//! tested on their own; this file, `login` and `loopback` connect them to it.
 
+pub mod comick;
 pub mod login;
+pub mod loopback;
 pub mod oauth;
 pub mod session;
 pub mod store;
 pub mod sync;
 
 use crate::state::AppState;
+use comick::ComickClient;
+use once_cell::sync::Lazy;
 use oauth::{Redirect, Service};
 use serde::Serialize;
 use session::{Context, Notice, Notifier};
@@ -78,6 +82,9 @@ pub fn parts(app: &AppHandle) -> Result<(AccountStore, AppNotifier), String> {
     Ok((AccountStore::open_default()?, AppNotifier(app.clone())))
 }
 
+static COMICK_CLIENT: Lazy<ComickClient> =
+    Lazy::new(|| ComickClient::new(crate::clients::http::build_http_client()));
+
 pub fn context<'a>(
     state: &'a AppState,
     store: &'a AccountStore,
@@ -87,9 +94,17 @@ pub fn context<'a>(
         store,
         anilist: &state.anilist_client,
         mal: &state.mal_client,
+        comick: &COMICK_CLIENT,
         pool: &state.pool,
         notifier,
     }
+}
+
+/// The account status for the frontend, with what this build offers.
+pub fn status(store: &AccountStore) -> AccountsStatus {
+    let mut status = store.status();
+    status.comick_available = Service::Comick.available();
+    status
 }
 
 /// Completes a sign-in after its window reached the redirect, then pushes what was waiting
@@ -113,13 +128,37 @@ pub(crate) async fn finish_login(
     Ok(profile)
 }
 
-/// Removes the stored session of `service`. Nothing is revoked or deleted remotely.
+/// Removes the stored session of `service`. AniList and MyAnimeList tokens are only
+/// forgotten; Comick tokens are also revoked, in the background. No list is changed.
 pub fn disconnect(app: &AppHandle, service: Service) -> Result<AccountsStatus, String> {
     login::close(app, service);
     let store = AccountStore::open_default()?;
+    let comick_session = match service {
+        Service::Comick => store.comick(),
+        _ => None,
+    };
     store.clear(service)?;
     emit_changed(app, service, false, None);
-    Ok(store.status())
+    if let Some(session) = comick_session {
+        tauri::async_runtime::spawn(async move {
+            revoke_comick(&COMICK_CLIENT, &session).await;
+        });
+    }
+    Ok(status(&store))
+}
+
+/// Revokes both tokens of a Comick session that is being forgotten. Failures are logged only:
+/// the local copy is already gone.
+pub async fn revoke_comick(client: &ComickClient, session: &store::ComickSession) {
+    let mut tokens = vec![(session.access_token.as_str(), "access_token")];
+    if let Some(refresh) = session.refresh_token.as_deref() {
+        tokens.insert(0, (refresh, "refresh_token"));
+    }
+    for (token, hint) in tokens {
+        if let Err(e) = client.revoke(token, hint).await {
+            tracing::warn!("could not revoke the Comick {}: {}", hint, e);
+        }
+    }
 }
 
 /// Sends everything queued for the connected services, in the background. Called after a

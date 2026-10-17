@@ -1,4 +1,5 @@
 pub mod common;
+pub mod languages;
 pub mod manager;
 pub mod matching;
 
@@ -16,6 +17,12 @@ pub trait AnimeProvider: Send + Sync {
     /// Whether a dub request can ever be answered with dubbed audio.
     fn supports_dub(&self) -> bool {
         false
+    }
+
+    /// The subtitle and dub languages this provider serves. `None` (the default) means it does
+    /// not say, and it is taken to serve whatever language is asked for.
+    fn languages(&self) -> Option<languages::Languages> {
+        None
     }
 
     /// Providers served from the same site share this key, so one unreachable site is cooled

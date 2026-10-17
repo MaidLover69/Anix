@@ -3,11 +3,23 @@ import type { RefObject } from 'react';
 import { buildSubtitleUrl } from '../lib/streamProxy';
 import type { StreamItem, SubtitleItem } from '../types';
 import type { MediaTrackOption } from './usePlayerEngine';
+import { useLanguagePrefs } from './useLanguagePrefs';
+import { normalizeLanguage } from '../lib/languages';
 
 export const SUBTITLES_OFF = 'off';
 
+/** A subtitle file the user dropped on the player, already converted to WebVTT. */
+export interface LocalSubtitle {
+  label: string;
+  /** A blob URL. */
+  url: string;
+}
+
 export interface SubtitleOption {
-  /** `ext:<index>` for a provider subtitle file, `hls:<id>` for a rendition in the manifest. */
+  /**
+   * `ext:<index>` for a provider subtitle file, `file:<index>` for a dropped file,
+   * `hls:<id>` for a rendition in the manifest.
+   */
   id: string;
   label: string;
   format: string;
@@ -30,12 +42,20 @@ interface SubtitleTracksOptions {
   delayMs: number;
   /** Dubbed audio: subtitle files stay available but are not switched on by default. */
   startOff?: boolean;
+  /** Files dropped on the player. */
+  localFiles?: LocalSubtitle[];
 }
 
-function defaultSelection(subtitles: SubtitleItem[]): string {
+/** The first track in the most wanted subtitle language, else the provider's default. */
+function defaultSelection(subtitles: SubtitleItem[], wanted: string[]): string {
   if (subtitles.length === 0) return SUBTITLES_OFF;
-  let index = subtitles.findIndex((sub) => sub.is_default);
-  if (index === -1) index = subtitles.findIndex((sub) => /^en(g|glish)?\b/i.test(sub.language));
+  const codes = subtitles.map((sub) => normalizeLanguage(sub.language));
+  let index = -1;
+  for (const code of wanted) {
+    index = codes.indexOf(code);
+    if (index !== -1) break;
+  }
+  if (index === -1) index = subtitles.findIndex((sub) => sub.is_default);
   return `ext:${index === -1 ? 0 : index}`;
 }
 
@@ -55,9 +75,11 @@ export function useSubtitleTracks({
   selectEmbeddedTrack,
   delayMs,
   startOff = false,
+  localFiles = [],
 }: SubtitleTracksOptions) {
+  const wantedLanguages = useLanguagePrefs().sub;
   const [selectedId, setSelectedId] = useState(() =>
-    startOff ? SUBTITLES_OFF : defaultSelection(subtitles)
+    startOff ? SUBTITLES_OFF : defaultSelection(subtitles, wantedLanguages)
   );
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
@@ -70,6 +92,12 @@ export function useSubtitleTracks({
         format: sub.format || 'vtt',
         isDefault: !!sub.is_default,
       })),
+      ...localFiles.map((file, index) => ({
+        id: `file:${index}`,
+        label: file.label,
+        format: 'file',
+        isDefault: false,
+      })),
       ...embeddedTracks.map((track) => ({
         id: `hls:${track.id}`,
         label: track.label,
@@ -77,7 +105,7 @@ export function useSubtitleTracks({
         isDefault: false,
       })),
     ],
-    [subtitles, embeddedTracks]
+    [subtitles, localFiles, embeddedTracks]
   );
 
   // hls.js may switch a manifest rendition on by itself (a DEFAULT track). Follow it, unless
@@ -85,7 +113,7 @@ export function useSubtitleTracks({
   useEffect(() => {
     const current = selectedRef.current;
     if (embeddedTrack >= 0) {
-      if (current.startsWith('ext:')) selectEmbeddedTrack(-1);
+      if (current.startsWith('ext:') || current.startsWith('file:')) selectEmbeddedTrack(-1);
       else setSelectedId(`hls:${embeddedTrack}`);
     } else if (current.startsWith('hls:')) {
       setSelectedId(SUBTITLES_OFF);
@@ -108,7 +136,8 @@ export function useSubtitleTracks({
     if (!video || usesHls) return;
     const tracks = video.textTracks;
     const enforce = () => {
-      const own = video.querySelector('track')?.track ?? null;
+      // The second subtitle is a `metadata` track and never rendered by the webview.
+      const own = video.querySelector<HTMLTrackElement>('track[kind="subtitles"]')?.track ?? null;
       for (let i = 0; i < tracks.length; i++) {
         const track = tracks[i];
         const visible = track.kind === 'subtitles' || track.kind === 'captions';
@@ -124,8 +153,16 @@ export function useSubtitleTracks({
     };
   }, [videoRef, usesHls]);
 
-  const external = selectedId.startsWith('ext:') ? subtitles[Number(selectedId.slice(4))] : undefined;
-  const trackSrc = external ? buildSubtitleUrl(proxyBase, external, stream) : null;
+  /** The WebVTT URL of a provider file or a dropped file; null for anything else. */
+  const fileSrc = useCallback(
+    (id: string): string | null => {
+      if (id.startsWith('file:')) return localFiles[Number(id.slice(5))]?.url ?? null;
+      const external = id.startsWith('ext:') ? subtitles[Number(id.slice(4))] : undefined;
+      return external ? buildSubtitleUrl(proxyBase, external, stream) : null;
+    },
+    [localFiles, subtitles, proxyBase, stream]
+  );
+  const trackSrc = fileSrc(selectedId);
 
   // Subtitle delay: shift the cues of whichever track is showing. Cues can arrive late
   // (a file still loading, HLS subtitle segments), so the shift is re-checked as time moves.
@@ -182,5 +219,5 @@ export function useSubtitleTracks({
     return () => video.removeEventListener('timeupdate', apply);
   }, [videoRef, delayMs]);
 
-  return { options, selectedId, select, trackSrc };
+  return { options, selectedId, select, trackSrc, fileSrc };
 }

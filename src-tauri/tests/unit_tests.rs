@@ -109,6 +109,7 @@ fn test_stream_item_and_sources() {
         subtitles: vec![],
         skip: None,
         provider: Some("kaa".to_string()),
+        language: None,
     };
     assert_eq!(sources.streams.len(), 1);
     assert_eq!(sources.streams[0].url, "https://example.com/master.m3u8");

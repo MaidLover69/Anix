@@ -59,10 +59,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "anitomy-ng"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55bc3830b578d5d8c5c119b101f0b6a19210c0904e8a5bb936aad495b0f953e9"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "anix"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "aes",
+ "anitomy-ng",
  "async-trait",
  "base64 0.22.1",
  "cbc",
@@ -70,6 +80,7 @@ dependencies = [
  "ego-tree",
  "encoding_rs",
  "flate2",
+ "futures-util",
  "hmac",
  "libc",
  "md-5",
@@ -104,6 +115,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "zbus",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, List, Grid, Menu } from 'lucide-react';
+import { Bookmark, Calendar, List, Grid, Menu } from 'lucide-react';
 import clsx from 'clsx';
 import { useAiringSchedule } from '../hooks/useSchedule';
 import { ShimmerImage } from '../components/ShimmerImage';
@@ -8,11 +8,19 @@ import { NotifyBell } from '../components/NotifyBell';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
+import { Button } from '../components/ui/Button';
 import type { AiringEntry } from '../types';
+import { useStoredChoice } from '../hooks/useStoredChoice';
+import { useWatchlist } from '../hooks/useLibrary';
+import { Chip } from '../components/ui/Chip';
 
-type ViewMode = 'compact' | 'list' | 'grid';
+const VIEW_MODES = ['compact', 'list', 'grid'] as const;
+type ViewMode = (typeof VIEW_MODES)[number];
 
 const DAY_COUNT = 7;
+
+const SCOPES = ['all', 'watchlist'] as const;
+type Scope = (typeof SCOPES)[number];
 
 const VIEW_OPTIONS = [
   { value: 'compact' as const, icon: <Menu aria-hidden="true" className="h-4 w-4" />, 'aria-label': 'Compact rows', title: 'Compact rows' },
@@ -154,7 +162,11 @@ const ScheduleEntry: React.FC<{ entry: AiringEntry; now: number; variant: ViewMo
 export const Schedule: React.FC = () => {
   const [selectedDayOffset, setSelectedDayOffset] = useState(0); // 0 = today
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useStoredChoice<ViewMode>('schedule-layout', VIEW_MODES, 'list');
+  const [scope, setScope] = useStoredChoice<Scope>('schedule-scope', SCOPES, 'all');
+  const onlyWatchlist = scope === 'watchlist';
+  const { data: watchlist = [] } = useWatchlist();
+  const watchlistIds = useMemo(() => new Set(watchlist.map((entry) => entry.anilist_id)), [watchlist]);
 
   // Drives the countdowns and, because "today" is derived from it, the day rollover.
   useEffect(() => {
@@ -192,8 +204,9 @@ export const Schedule: React.FC = () => {
     () =>
       schedule
         .filter((entry) => entry.airing_at >= activeDay.start && entry.airing_at < activeDay.end)
+        .filter((entry) => !onlyWatchlist || watchlistIds.has(entry.media_id))
         .sort((a, b) => a.airing_at - b.airing_at),
-    [schedule, activeDay.start, activeDay.end]
+    [schedule, activeDay.start, activeDay.end, onlyWatchlist, watchlistIds]
   );
 
   return (
@@ -220,6 +233,10 @@ export const Schedule: React.FC = () => {
               ),
             }))}
           />
+          <Chip selected={onlyWatchlist} onClick={() => setScope(onlyWatchlist ? 'all' : 'watchlist')} className="h-9 gap-1.5">
+            <Bookmark aria-hidden="true" className={clsx('h-3.5 w-3.5', onlyWatchlist && 'fill-current')} />
+            Only my watchlist
+          </Chip>
           <SegmentedControl aria-label="Layout" value={viewMode} onChange={setViewMode} options={VIEW_OPTIONS} />
         </div>
       </div>
@@ -240,8 +257,21 @@ export const Schedule: React.FC = () => {
       ) : entries.length === 0 ? (
         <EmptyState
           icon={<Calendar aria-hidden="true" className="h-8 w-8" />}
-          title="Nothing scheduled"
-          description={`No episodes air on ${activeDay.longLabel}.`}
+          title={onlyWatchlist ? 'Nothing from your watchlist' : 'Nothing scheduled'}
+          description={
+            onlyWatchlist
+              ? watchlist.length === 0
+                ? 'Your watchlist is empty. Add anime to it with the bookmark on any card.'
+                : `None of your watchlist airs on ${activeDay.longLabel}.`
+              : `No episodes air on ${activeDay.longLabel}.`
+          }
+          action={
+            onlyWatchlist ? (
+              <Button variant="ghost" onClick={() => setScope('all')}>
+                Show everything
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <div className={CONTAINER_CLASS[viewMode]}>

@@ -1,5 +1,6 @@
 use crate::accounts;
 use crate::db;
+use crate::offline;
 use crate::models::{Media, MediaListEntry, Viewer};
 use crate::state::AppState;
 use accounts::oauth::Service;
@@ -36,10 +37,11 @@ pub async fn fetch_top_rated(state: State<'_, AppState>) -> Result<Vec<Media>, S
 }
 
 /// Home screen data. `continue_watching` comes from the local database and is always present.
-/// When AniList cannot be reached its lists are empty and `error` says why; if there is no local
-/// history to show either, the command fails with that reason instead.
+/// When AniList cannot be reached its lists come from the last saved copy (`stale` is then
+/// true and `saved_at` says when it was saved) or are empty, and `error` says why; if there is
+/// nothing to show at all, the command fails with that reason instead.
 #[tauri::command]
-pub async fn fetch_home_data(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn fetch_home_data(app: AppHandle, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let trending_fut = state.anilist_client.fetch_media_list("TRENDING_DESC", 10);
     let popular_fut = state.anilist_client.fetch_media_list("POPULARITY_DESC", 10);
     let top_rated_fut = state.anilist_client.fetch_media_list("SCORE_DESC", 10);
@@ -59,22 +61,57 @@ pub async fn fetch_home_data(state: State<'_, AppState>) -> Result<serde_json::V
         Default::default()
     });
 
-    let mut error: Option<String> = None;
+    let mut error: Option<crate::error::AppError> = None;
     let mut list_or_empty = |name: &str, result: Result<Vec<Media>, crate::error::AppError>| match result {
-        Ok(list) => list,
+        Ok(list) => Some(list),
         Err(e) => {
             tracing::warn!("AniList {} list failed: {}", name, e);
-            error.get_or_insert_with(|| e.to_string());
-            Vec::new()
+            error.get_or_insert(e);
+            None
         }
     };
-    let trending = list_or_empty("trending", trending);
-    let popular = list_or_empty("popular", popular);
-    let top_rated = list_or_empty("top rated", top_rated);
-    let newest = list_or_empty("newest", newest);
+    let mut lists = [
+        list_or_empty("trending", trending),
+        list_or_empty("popular", popular),
+        list_or_empty("top rated", top_rated),
+        list_or_empty("newest", newest),
+    ];
+    const NAMES: [&str; 4] = ["trending", "popular", "top_rated", "newest"];
+    let home_key = home_cache_key();
 
+    let mut stale = false;
+    let mut saved_at: Option<i64> = None;
+    match &error {
+        None => {
+            let saved: serde_json::Map<String, serde_json::Value> = NAMES
+                .iter()
+                .zip(lists.iter())
+                .map(|(name, list)| (name.to_string(), json!(list.as_deref().unwrap_or_default())))
+                .collect();
+            if let Err(e) = offline::store(&state.pool, offline::Kind::Home, &home_key, &saved.into()).await {
+                tracing::warn!("Could not save the home lists for offline use: {}", e);
+            }
+            offline::mark_online(&app);
+        }
+        Some(e) if offline::is_offline_error(e) => {
+            if let Ok(Some((saved, at))) = offline::load(&state.pool, offline::Kind::Home, &home_key).await {
+                for (name, list) in NAMES.iter().zip(lists.iter_mut()) {
+                    if list.is_none() {
+                        *list = serde_json::from_value::<Vec<Media>>(saved[*name].clone()).ok();
+                    }
+                }
+                stale = true;
+                saved_at = Some(at);
+            }
+            offline::mark_offline(&app, saved_at);
+        }
+        Some(_) => {}
+    }
+
+    let [trending, popular, top_rated, newest] = lists.map(Option::unwrap_or_default);
     let nothing_from_anilist =
         trending.is_empty() && popular.is_empty() && top_rated.is_empty() && newest.is_empty();
+    let error = error.map(|e| e.to_string());
     if let Some(reason) = &error {
         if nothing_from_anilist && history.is_empty() {
             return Err(reason.clone());
@@ -88,11 +125,25 @@ pub async fn fetch_home_data(state: State<'_, AppState>) -> Result<serde_json::V
         "newest": newest,
         "continue_watching": history,
         "error": error,
+        "stale": stale,
+        "saved_at": saved_at,
     }))
 }
 
+/// The home lists depend on the adult-content setting, so each setting has its own copy.
+fn home_cache_key() -> String {
+    if crate::clients::app_settings::current().hide_adult_content {
+        "home".to_string()
+    } else {
+        "home+adult".to_string()
+    }
+}
+
+/// AniList search. Results are saved for offline use; when AniList cannot be reached, the
+/// saved results of the same search are returned.
 #[tauri::command]
 pub async fn search_anime(
+    app: AppHandle,
     state: State<'_, AppState>,
     query: Option<String>,
     genres: Option<Vec<String>>,
@@ -102,31 +153,88 @@ pub async fn search_anime(
     page: Option<i32>,
     per_page: Option<i32>,
 ) -> Result<Vec<Media>, String> {
-    state
+    let genres = genres.unwrap_or_default();
+    let page = page.unwrap_or(1);
+    let per_page = per_page.unwrap_or(20);
+    let key = offline::search_key(
+        query.as_deref(),
+        &genres,
+        format.as_deref(),
+        status.as_deref(),
+        sort.as_deref(),
+        page,
+        per_page,
+        crate::clients::app_settings::current().hide_adult_content,
+    );
+    let result = state
         .anilist_client
-        .search(
-            query,
-            genres.unwrap_or_default(),
-            format,
-            status,
-            sort,
-            page.unwrap_or(1),
-            per_page.unwrap_or(20),
-        )
-        .await
-        .map_err(|e| e.to_string())
+        .search(query, genres, format, status, sort, page, per_page)
+        .await;
+    match result {
+        Ok(list) => {
+            if let Err(e) = offline::store(&state.pool, offline::Kind::Search, &key, &json!(list)).await {
+                tracing::warn!("Could not save search results for offline use: {}", e);
+            }
+            offline::mark_online(&app);
+            Ok(list)
+        }
+        Err(e) if offline::is_offline_error(&e) => {
+            let saved = offline::load(&state.pool, offline::Kind::Search, &key).await.ok().flatten();
+            let parsed = saved.and_then(|(value, at)| {
+                serde_json::from_value::<Vec<Media>>(value).ok().map(|list| (list, at))
+            });
+            match parsed {
+                Some((list, at)) => {
+                    offline::mark_offline(&app, Some(at));
+                    Ok(list)
+                }
+                None => {
+                    offline::mark_offline(&app, None);
+                    Err(e.to_string())
+                }
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
+/// One anime's details. Saved for offline use; when AniList cannot be reached, the saved copy
+/// is returned.
 #[tauri::command]
 pub async fn fetch_anime_details(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<serde_json::Value, String> {
-    state
-        .anilist_client
-        .fetch_details(id)
-        .await
-        .map_err(|e| e.to_string())
+    let key = id.to_string();
+    match state.anilist_client.fetch_details(id).await {
+        Ok(details) => {
+            if let Err(e) = offline::store(&state.pool, offline::Kind::Details, &key, &details).await {
+                tracing::warn!("Could not save anime {} for offline use: {}", id, e);
+            }
+            offline::mark_online(&app);
+            Ok(details)
+        }
+        Err(e) if offline::is_offline_error(&e) => {
+            match offline::load(&state.pool, offline::Kind::Details, &key).await.ok().flatten() {
+                Some((details, at)) => {
+                    offline::mark_offline(&app, Some(at));
+                    Ok(details)
+                }
+                None => {
+                    offline::mark_offline(&app, None);
+                    Err(e.to_string())
+                }
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Whether AniList data is currently served from the saved copy.
+#[tauri::command]
+pub async fn get_offline_status() -> Result<offline::OfflineStatus, String> {
+    Ok(offline::status())
 }
 
 /// The connected AniList account. Fails with a sentence for the user when no account is

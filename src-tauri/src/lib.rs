@@ -5,13 +5,20 @@ pub mod commands;
 pub mod db;
 pub mod downloads;
 pub mod error;
+pub mod local_library;
+pub mod local_media;
 pub mod migration;
 pub mod models;
+pub mod mpris;
+pub mod mpv_ipc;
 pub mod notifier;
+pub mod offline;
 pub mod plugins;
 pub mod providers;
+pub mod release_parser;
 pub mod state;
 pub mod stream_proxy;
+pub mod system;
 pub mod web_session;
 
 use state::AppState;
@@ -67,11 +74,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second launch (for example from an anix:// link) focuses the running window.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            // A second launch (for example from an anix:// link) brings the running window
+            // forward, also when it is hidden in the tray.
+            system::tray::show_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -95,6 +100,15 @@ pub fn run() {
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
                     notifier::start(app.handle().clone());
+                    system::apply(app.handle(), system::SystemSettings::read());
+                    let args: Vec<String> = std::env::args().collect();
+                    system::tray::hide_if_started_minimised(app.handle(), &args);
+                    let pool = app.state::<AppState>().pool.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = offline::prune(&pool, db::current_unix_timestamp()).await {
+                            tracing::warn!("Saved AniList data could not be pruned: {}", e);
+                        }
+                    });
                     if let Err(e) = stream_proxy::start() {
                         tracing::error!("{}", e);
                     }
@@ -114,6 +128,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(system::tray::on_window_event)
         // Only commands the frontend calls are exposed over IPC.
         .invoke_handler(tauri::generate_handler![
             // AniList
@@ -123,6 +138,7 @@ pub fn run() {
             commands::get_anilist_viewer,
             commands::fetch_anilist_library,
             commands::save_anilist_entry,
+            commands::get_offline_status,
             // Providers & Streams
             commands::get_all_episodes,
             commands::get_anime_catalog_episodes,
@@ -141,6 +157,10 @@ pub fn run() {
             commands::set_plugin_enabled,
             commands::get_plugin_config,
             commands::set_plugin_config,
+            commands::test_plugin,
+            commands::test_all_plugins,
+            commands::check_plugin_updates,
+            commands::get_plugin_directory,
             // Library & History
             commands::get_watched_episodes,
             commands::get_episode_progress,
@@ -150,6 +170,9 @@ pub fn run() {
             commands::remove_from_watchlist,
             commands::is_in_watchlist,
             commands::get_watchlist,
+            commands::set_episodes_watched,
+            commands::get_watched_history,
+            commands::fetch_anilist_stats,
             // Downloads
             commands::create_download,
             commands::start_episode_download,
@@ -165,12 +188,35 @@ pub fn run() {
             // Settings
             commands::get_settings,
             commands::save_settings,
+            // System
+            commands::get_desktop_status,
+            commands::get_hardware_report,
+            commands::get_desktop_appearance,
             // Player
             commands::launch_external_player,
+            commands::read_subtitle_file,
+            mpris::mpris_update,
+            mpris::mpris_clear,
             // AnimeThemes & Local Media
             commands::fetch_anime_themes,
             commands::scan_local_anime_directory,
             commands::open_file_in_player,
+            // Your files (local episodes linked to a title)
+            commands::get_local_media,
+            commands::pick_local_media,
+            commands::link_local_folder,
+            commands::rescan_local_media,
+            commands::add_local_files,
+            commands::set_local_file_episode,
+            commands::remove_local_file,
+            commands::unlink_local_media,
+            commands::get_local_episode_source,
+            // Library › Local files (series matched to AniList)
+            commands::scan_local_library,
+            commands::match_local_series,
+            commands::search_local_match,
+            commands::set_local_series_match,
+            commands::clear_local_series_match,
             // Updates
             commands::check_for_update,
             commands::get_site_url,
@@ -188,6 +234,8 @@ pub fn run() {
             commands::start_account_login,
             commands::get_account_status,
             commands::disconnect_account,
+            commands::cancel_account_login,
+            commands::get_comick_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

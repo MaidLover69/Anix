@@ -11,9 +11,12 @@ import { WatchlistTab } from '../components/library/WatchlistTab';
 import { HistoryTab } from '../components/library/HistoryTab';
 import { DownloadsTab } from '../components/library/DownloadsTab';
 import { AniListTab } from '../components/library/AniListTab';
+import { ComickTab } from '../components/library/ComickTab';
+import { useAccountStatus } from '../hooks/useAccounts';
 import { LocalFilesTab } from '../components/library/LocalFilesTab';
+import { StatsTab } from '../components/library/StatsTab';
 
-const TAB_VALUES = ['watchlist', 'history', 'playlists', 'downloads', 'anilist', 'local'] as const;
+const TAB_VALUES = ['watchlist', 'history', 'playlists', 'downloads', 'anilist', 'comick', 'local', 'stats'] as const;
 type LibraryTab = (typeof TAB_VALUES)[number];
 
 function parseTab(value: string | null): LibraryTab {
@@ -34,6 +37,8 @@ export const Library: React.FC = () => {
   const downloadsQuery = useAllDownloads({ watch: activeTab === 'downloads' });
   // Kept here so a scan and its results survive switching tabs.
   const localScan = useLocalScan({ active: activeTab === 'local' });
+  const accounts = useAccountStatus().data;
+  const showComick = Boolean(accounts?.comick_available || accounts?.comick.connected);
 
   const tabs: TabItem<LibraryTab>[] = [
     { value: 'watchlist', label: 'Watchlist', count: watchlistQuery.data?.length },
@@ -41,11 +46,13 @@ export const Library: React.FC = () => {
     { value: 'playlists', label: 'Playlists', count: playlistsQuery.data?.length },
     { value: 'downloads', label: 'Downloads', count: downloadsQuery.data?.length },
     { value: 'anilist', label: 'AniList' },
+    ...(showComick ? [{ value: 'comick' as const, label: 'Comick' }] : []),
     {
       value: 'local',
       label: 'Local files',
       count: localScan.status === 'done' ? localScan.files.length : undefined,
     },
+    { value: 'stats', label: 'Stats' },
   ];
 
   return (
@@ -57,7 +64,9 @@ export const Library: React.FC = () => {
       {activeTab === 'playlists' && <PlaylistsTab />}
       {activeTab === 'downloads' && <DownloadsTab query={downloadsQuery} />}
       {activeTab === 'anilist' && <AniListTab />}
+      {activeTab === 'comick' && <ComickTab />}
       {activeTab === 'local' && <LocalFilesTab scan={localScan} />}
+      {activeTab === 'stats' && <StatsTab />}
     </div>
   );
 };

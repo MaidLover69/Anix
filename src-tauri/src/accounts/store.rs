@@ -28,8 +28,25 @@ pub const MAL_USER_ID: &str = "mal_user_id";
 pub const MAL_USER_NAME: &str = "mal_user_name";
 pub const MAL_USER_PICTURE: &str = "mal_user_picture";
 
+pub const COMICK_ACCESS_TOKEN: &str = "comick_access_token";
+pub const COMICK_REFRESH_TOKEN: &str = "comick_refresh_token";
+/// Unix seconds.
+pub const COMICK_TOKEN_EXPIRES_AT: &str = "comick_token_expires_at";
+/// The granted scopes, space-separated.
+pub const COMICK_SCOPE: &str = "comick_scope";
+/// The account's public UUID.
+pub const COMICK_USER_ID: &str = "comick_user_id";
+pub const COMICK_USER_NAME: &str = "comick_user_name";
+pub const COMICK_USER_AVATAR: &str = "comick_user_avatar";
+
 /// The keys that must never be handed to the frontend.
-pub const SECRET_KEYS: [&str; 3] = [ANILIST_TOKEN, MAL_ACCESS_TOKEN, MAL_REFRESH_TOKEN];
+pub const SECRET_KEYS: [&str; 5] = [
+    ANILIST_TOKEN,
+    MAL_ACCESS_TOKEN,
+    MAL_REFRESH_TOKEN,
+    COMICK_ACCESS_TOKEN,
+    COMICK_REFRESH_TOKEN,
+];
 
 const ANILIST_KEYS: [&str; 5] = [
     ANILIST_TOKEN,
@@ -48,9 +65,19 @@ const MAL_KEYS: [&str; 6] = [
     MAL_USER_PICTURE,
 ];
 
+const COMICK_KEYS: [&str; 7] = [
+    COMICK_ACCESS_TOKEN,
+    COMICK_REFRESH_TOKEN,
+    COMICK_TOKEN_EXPIRES_AT,
+    COMICK_SCOPE,
+    COMICK_USER_ID,
+    COMICK_USER_NAME,
+    COMICK_USER_AVATAR,
+];
+
 /// Every key owned by this module.
 pub fn account_keys() -> impl Iterator<Item = &'static str> {
-    ANILIST_KEYS.into_iter().chain(MAL_KEYS)
+    ANILIST_KEYS.into_iter().chain(MAL_KEYS).chain(COMICK_KEYS)
 }
 
 static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
@@ -108,6 +135,28 @@ pub struct MalSession {
     pub profile: Option<Profile>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComickSession {
+    pub access_token: String,
+    /// `None` when the user did not allow offline access: the session ends with the token.
+    pub refresh_token: Option<String>,
+    /// Unix seconds.
+    pub expires_at: i64,
+    pub scope: Option<String>,
+    /// `id` is 0: Comick identifies accounts by UUID, stored as `user_id`.
+    pub profile: Option<Profile>,
+    pub user_id: Option<String>,
+}
+
+/// One successful Comick token response, stored in a single write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComickTokenSet<'a> {
+    pub access_token: &'a str,
+    pub refresh_token: Option<&'a str>,
+    pub expires_at: i64,
+    pub scope: Option<&'a str>,
+}
+
 /// What the frontend is told about one account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct AccountStatus {
@@ -120,6 +169,9 @@ pub struct AccountStatus {
 pub struct AccountsStatus {
     pub anilist: AccountStatus,
     pub mal: AccountStatus,
+    pub comick: AccountStatus,
+    /// Whether this build can sign in to Comick (it was built with a Comick client id).
+    pub comick_available: bool,
 }
 
 fn status_of(profile: Option<Profile>) -> AccountStatus {
@@ -234,10 +286,33 @@ impl AccountStore {
         })
     }
 
+    pub fn comick(&self) -> Option<ComickSession> {
+        let settings = self.read();
+        let name = text(&settings, COMICK_USER_NAME);
+        let avatar_url = text(&settings, COMICK_USER_AVATAR);
+        let user_id = text(&settings, COMICK_USER_ID);
+        Some(ComickSession {
+            access_token: text(&settings, COMICK_ACCESS_TOKEN)?,
+            refresh_token: text(&settings, COMICK_REFRESH_TOKEN),
+            expires_at: settings
+                .get(COMICK_TOKEN_EXPIRES_AT)
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            scope: text(&settings, COMICK_SCOPE),
+            profile: user_id.as_ref().map(|_| Profile {
+                id: 0,
+                name: name.unwrap_or_default(),
+                avatar_url,
+            }),
+            user_id,
+        })
+    }
+
     pub fn is_connected(&self, service: Service) -> bool {
         match service {
             Service::AniList => self.anilist().is_some(),
             Service::Mal => self.mal().is_some(),
+            Service::Comick => self.comick().is_some(),
         }
     }
 
@@ -251,6 +326,11 @@ impl AccountStore {
                 .mal()
                 .map(|session| status_of(session.profile))
                 .unwrap_or_default(),
+            comick: self
+                .comick()
+                .map(|session| status_of(session.profile))
+                .unwrap_or_default(),
+            comick_available: false,
         }
     }
 
@@ -315,6 +395,51 @@ impl AccountStore {
         })
     }
 
+    fn put_comick_tokens(settings: &mut Map<String, Value>, tokens: &ComickTokenSet<'_>) {
+        settings.insert(COMICK_ACCESS_TOKEN.to_string(), json!(tokens.access_token));
+        match tokens.refresh_token {
+            Some(refresh) => settings.insert(COMICK_REFRESH_TOKEN.to_string(), json!(refresh)),
+            None => settings.remove(COMICK_REFRESH_TOKEN),
+        };
+        settings.insert(COMICK_TOKEN_EXPIRES_AT.to_string(), json!(tokens.expires_at));
+        if let Some(scope) = tokens.scope {
+            settings.insert(COMICK_SCOPE.to_string(), json!(scope));
+        }
+    }
+
+    /// Replaces the tokens after a refresh, all in one write, while `previous_access_token` is
+    /// still the stored one. Returns false when the session changed meanwhile.
+    pub fn save_comick_tokens(
+        &self,
+        previous_access_token: &str,
+        tokens: &ComickTokenSet<'_>,
+    ) -> Result<bool, String> {
+        let mut saved = false;
+        self.update(|settings| {
+            if settings.get(COMICK_ACCESS_TOKEN).and_then(Value::as_str) == Some(previous_access_token) {
+                Self::put_comick_tokens(settings, tokens);
+                saved = true;
+            }
+        })?;
+        Ok(saved)
+    }
+
+    pub fn save_comick(
+        &self,
+        tokens: &ComickTokenSet<'_>,
+        user_id: &str,
+        name: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<(), String> {
+        self.update(|settings| {
+            remove_keys(settings, Service::Comick);
+            Self::put_comick_tokens(settings, tokens);
+            settings.insert(COMICK_USER_ID.to_string(), json!(user_id));
+            settings.insert(COMICK_USER_NAME.to_string(), json!(name));
+            settings.insert(COMICK_USER_AVATAR.to_string(), json!(avatar_url));
+        })
+    }
+
     /// Removes every stored key of one account.
     pub fn clear(&self, service: Service) -> Result<(), String> {
         self.update(|settings| remove_keys(settings, service))
@@ -326,6 +451,7 @@ impl AccountStore {
         let token_key = match service {
             Service::AniList => ANILIST_TOKEN,
             Service::Mal => MAL_ACCESS_TOKEN,
+            Service::Comick => COMICK_ACCESS_TOKEN,
         };
         let mut cleared = false;
         self.update(|settings| {
@@ -342,6 +468,7 @@ fn remove_keys(settings: &mut Map<String, Value>, service: Service) {
     let keys: &[&str] = match service {
         Service::AniList => &ANILIST_KEYS,
         Service::Mal => &MAL_KEYS,
+        Service::Comick => &COMICK_KEYS,
     };
     for key in keys {
         settings.remove(*key);

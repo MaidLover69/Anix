@@ -1,13 +1,17 @@
 import { NotifyBell } from '../components/NotifyBell';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Bookmark, DownloadCloud, Video, SearchX } from 'lucide-react';
+import { ArrowLeft, Play, Bookmark, DownloadCloud, Video, SearchX, HardDrive } from 'lucide-react';
 import { ShimmerImage } from '../components/ShimmerImage';
 import { EpisodeBrowser } from '../components/EpisodeBrowser';
+import { AmbientGlow } from '../components/AmbientGlow';
+import { DetailStickyBar } from '../components/DetailStickyBar';
 import { TrailerModal, isPlayableTrailer } from '../components/TrailerModal';
 import { CharacterRail } from '../components/CharacterRail';
 import { RelationsRail } from '../components/RelationsRail';
 import { AnimeThemesPlayer } from '../components/AnimeThemesPlayer';
+import { LocalMediaDialog } from '../components/LocalMediaDialog';
+import { LOCAL_PROVIDER, useLocalMedia } from '../hooks/useLocalMedia';
 import { Button } from '../components/ui/Button';
 import { Chip } from '../components/ui/Chip';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -118,6 +122,12 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [isTrailerOpen, setIsTrailerOpen] = useState(false);
   const [bannerFailed, setBannerFailed] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  // The audio picked in the episode list or the sticky bar; null until the user picks one.
+  const [chosenCategory, setChosenCategory] = useState<'sub' | 'dub' | null>(null);
+  const [dubAvailable, setDubAvailable] = useState(true);
+  const heroRef = useRef<HTMLElement>(null);
+  const local = useLocalMedia(anilistId);
 
   // Episode lookups wait for the details: they need the MAL id and title, and running
   // them early would fan out to every provider twice. The arguments match the player's,
@@ -269,12 +279,18 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       : null;
 
   const handlePlay = () => {
+    const episode = continueTarget?.episode ?? firstEpisode;
+    const provider = continueTarget ? historyProvider ?? AUTO_PROVIDER : defaultProvider;
+    // An episode with a file of the user's plays from it unless a streaming plugin was chosen.
+    const fromFile =
+      local.hasEpisode(episode) &&
+      (provider === AUTO_PROVIDER || continueTarget?.provider === LOCAL_PROVIDER || providers.none);
     navigate(
       watchPath(
         anilistId,
-        continueTarget?.episode ?? firstEpisode,
-        continueTarget?.category ?? defaultCategory,
-        continueTarget ? historyProvider ?? AUTO_PROVIDER : defaultProvider
+        episode,
+        chosenCategory ?? continueTarget?.category ?? defaultCategory,
+        fromFile ? LOCAL_PROVIDER : provider
       )
     );
   };
@@ -335,12 +351,45 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
 
   const isLongDescription = cleanDescription.length > 320;
 
+  const playLabel = !hasReleasedEpisodes
+    ? 'Not yet aired'
+    : continueTarget
+    ? `Continue Episode ${continueTarget.episode}`
+    : `Watch Episode ${firstEpisode}`;
+  // The same audio the episode list shows; playing follows it once the user has picked one.
+  const requestedCategory = chosenCategory ?? defaultCategory;
+  const barCategory: 'sub' | 'dub' = requestedCategory === 'dub' && dubAvailable ? 'dub' : 'sub';
+  const coverColor = details.coverImage?.color ?? null;
+
   return (
-    <div className="flex flex-col gap-8 pb-16 animate-fade-in">
-      <div className="flex flex-col gap-3">
+    // isolate: the ambient glow sits behind the page's content but above the app background.
+    <div className="relative isolate flex flex-col gap-8 pb-16 animate-fade-in">
+      <DetailStickyBar
+        anchorRef={heroRef}
+        title={title}
+        cover={coverImage}
+        inWatchlist={inWatchlist}
+        watchlistPending={toggleWatchlistMutation.isPending}
+        onToggleWatchlist={handleWatchlistToggle}
+        playLabel={
+          !hasReleasedEpisodes
+            ? 'Not yet aired'
+            : continueTarget
+            ? `Continue Ep ${continueTarget.episode}`
+            : `Play Ep ${firstEpisode}`
+        }
+        playDisabled={!hasReleasedEpisodes}
+        onPlay={handlePlay}
+        category={barCategory}
+        dubAvailable={dubAvailable}
+        onCategoryChange={setChosenCategory}
+      />
+
+      <div className="relative flex flex-col gap-3">
+        <AmbientGlow color={coverColor} className="-inset-x-4 top-0 -bottom-24 -z-10" />
         <BackButton />
 
-        <header className="relative overflow-hidden rounded-2xl ui-card bg-bg-card">
+        <header ref={heroRef} className="relative overflow-hidden rounded-2xl ui-card bg-bg-card">
           {bannerImage && (
             <div aria-hidden="true" className="absolute inset-x-0 top-0 h-56">
               <img
@@ -354,6 +403,9 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
               <div className="absolute inset-0 bg-gradient-to-b from-bg-card/10 via-bg-card/75 to-bg-card" />
             </div>
           )}
+
+          {/* Behind the poster: the cover colour, softly, over the banner's fade. */}
+          <AmbientGlow color={coverColor} intensity={0.8} className="-left-40 -top-24 h-[620px] w-[640px]" />
 
           <div className={`relative flex gap-6 p-6 ${bannerImage ? 'pt-28' : ''}`}>
             <ShimmerImage
@@ -410,11 +462,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
               <div className="mt-6 flex flex-wrap items-center gap-2">
                 <Button variant="primary" onClick={handlePlay} disabled={!hasReleasedEpisodes}>
                   <Play aria-hidden="true" className="h-4 w-4 fill-current" />
-                  {!hasReleasedEpisodes
-                    ? 'Not yet aired'
-                    : continueTarget
-                    ? `Continue Episode ${continueTarget.episode}`
-                    : `Watch Episode ${firstEpisode}`}
+                  {playLabel}
                 </Button>
 
                 {/* A toggle: neutral while off, accent once the anime is saved. */}
@@ -441,6 +489,17 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                       Trailer
                     </Button>
                   )}
+
+                  <Button
+                    variant="neutral"
+                    onClick={() => setLocalOpen(true)}
+                    title="Watch episodes from a folder on this computer"
+                  >
+                    <HardDrive aria-hidden="true" className="h-4 w-4" />
+                    {local.data?.linked || local.episodes.length > 0
+                      ? `Your files · ${local.episodes.length}`
+                      : 'Load your own episodes'}
+                  </Button>
 
                   <Button
                     variant="neutral"
@@ -472,7 +531,11 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
           defaultCategory={defaultCategory}
           defaultProvider={defaultProvider}
           progressByEpisode={progressByEpisode}
+          localEpisodes={local.episodes}
           onSelectEpisode={handleSelectEpisode}
+          chosenCategory={chosenCategory}
+          onChosenCategoryChange={setChosenCategory}
+          onDubAvailableChange={setDubAvailable}
         />
       </section>
 
@@ -485,6 +548,13 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       )}
 
       <AnimeThemesPlayer malId={malId} animeTitle={title} />
+
+      <LocalMediaDialog
+        isOpen={localOpen}
+        onClose={() => setLocalOpen(false)}
+        anilistId={anilistId}
+        animeTitle={title}
+      />
 
       <TrailerModal
         isOpen={isTrailerOpen}

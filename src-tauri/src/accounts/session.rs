@@ -1,7 +1,8 @@
 //! Signing in, keeping tokens usable and signing out.
 
+use super::comick::{ComickClient, RefreshError};
 use super::oauth::{self, Redirect, Service};
-use super::store::{AccountStore, Profile};
+use super::store::{AccountStore, ComickTokenSet, Profile};
 use crate::clients::anilist::AniListClient;
 use crate::clients::mal::{MalClient, MalTokenResponse};
 use crate::commands::mal::MAL_CLIENT_ID;
@@ -13,6 +14,8 @@ use std::future::Future;
 /// MAL tokens are refreshed this long before they expire, so a request never races the expiry.
 const MAL_EXPIRY_MARGIN_S: i64 = 5 * 60;
 const ANILIST_EXPIRY_MARGIN_S: i64 = 60;
+/// Comick access tokens last 15 minutes.
+const COMICK_EXPIRY_MARGIN_S: i64 = 60;
 
 /// Something the frontend should hear about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +36,7 @@ pub struct Context<'a> {
     pub store: &'a AccountStore,
     pub anilist: &'a AniListClient,
     pub mal: &'a MalClient,
+    pub comick: &'a ComickClient,
     pub pool: &'a SqlitePool,
     pub notifier: &'a dyn Notifier,
 }
@@ -176,6 +180,101 @@ where
     result
 }
 
+static COMICK_REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// A usable Comick access token, or `None` when not connected. Works like [`mal_token`], with
+/// Comick's rules: one refresh at a time, both rotated tokens stored in one write, and no
+/// second use of a refresh token whose refresh may have gone through, since Comick can revoke
+/// the whole grant for that; such a session is signed out instead.
+pub async fn comick_token(ctx: &Context<'_>, rejected: Option<&str>) -> Result<Option<String>, AppError> {
+    let needs_refresh = |access_token: &str, expires_at: i64| match rejected {
+        Some(rejected) => access_token == rejected,
+        None => expires_at - COMICK_EXPIRY_MARGIN_S <= current_unix_timestamp(),
+    };
+
+    let Some(session) = ctx.store.comick() else {
+        return Ok(None);
+    };
+    if !needs_refresh(&session.access_token, session.expires_at) {
+        return Ok(Some(session.access_token));
+    }
+
+    let _guard = COMICK_REFRESH.lock().await;
+    let Some(session) = ctx.store.comick() else {
+        return Ok(None);
+    };
+    if !needs_refresh(&session.access_token, session.expires_at) {
+        return Ok(Some(session.access_token));
+    }
+
+    let Some(refresh_token) = session.refresh_token.as_deref() else {
+        // Connected without offline access: nothing to renew the token with.
+        sign_out(ctx, Service::Comick, &session.access_token);
+        return Err(AppError::AuthRequired);
+    };
+
+    match ctx.comick.refresh(refresh_token).await {
+        Ok(tokens) => {
+            let saved = ctx
+                .store
+                .save_comick_tokens(
+                    &session.access_token,
+                    &ComickTokenSet {
+                        access_token: &tokens.access_token,
+                        refresh_token: tokens.refresh_token.as_deref(),
+                        expires_at: current_unix_timestamp() + tokens.expires_in.max(0),
+                        scope: tokens.scope.as_deref(),
+                    },
+                )
+                .map_err(AppError::Other)?;
+            if !saved {
+                // A new sign-in replaced the session while this refresh ran.
+                return Ok(ctx.store.comick().map(|session| session.access_token));
+            }
+            Ok(Some(tokens.access_token))
+        }
+        Err(RefreshError::Refused) => {
+            sign_out(ctx, Service::Comick, &session.access_token);
+            Err(AppError::AuthRequired)
+        }
+        Err(RefreshError::Lost(e)) => {
+            tracing::warn!("Comick token refresh got no usable answer: {}", e);
+            sign_out(ctx, Service::Comick, &session.access_token);
+            Err(AppError::AuthRequired)
+        }
+        Err(RefreshError::NotProcessed(e)) => {
+            tracing::warn!("Comick token refresh failed: {}", e);
+            let still_valid = rejected.is_none() && session.expires_at > current_unix_timestamp();
+            if still_valid {
+                Ok(Some(session.access_token))
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Runs `call` with a Comick access token, refreshing it first when it has expired and once
+/// more when Comick answers 401. `AuthRequired` means not connected or signed out.
+pub async fn with_comick<T, F, Fut>(ctx: &Context<'_>, call: F) -> Result<T, AppError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let token = comick_token(ctx, None).await?.ok_or(AppError::AuthRequired)?;
+    match call(token.clone()).await {
+        Err(AppError::AuthRequired) => {}
+        other => return other,
+    }
+
+    let fresh = comick_token(ctx, Some(&token)).await?.ok_or(AppError::AuthRequired)?;
+    let result = call(fresh.clone()).await;
+    if matches!(result, Err(AppError::AuthRequired)) {
+        sign_out(ctx, Service::Comick, &fresh);
+    }
+    result
+}
+
 async fn anilist_profile(ctx: &Context<'_>, token: &str) -> Result<Profile, AppError> {
     let viewer = ctx.anilist.get_viewer(token).await?;
     Ok(Profile {
@@ -245,6 +344,41 @@ pub async fn complete_login(
                 &profile,
             )?;
             Ok(profile)
+        }
+        (Service::Comick, Redirect::Code { code, state }) => {
+            if state.as_deref() != Some(expected_state) {
+                return Err(wrong_attempt());
+            }
+            let verifier = code_verifier.ok_or("No Comick sign-in is in progress.")?;
+            let tokens = ctx.comick.exchange_code(&code, verifier).await.map_err(|e| match e {
+                AppError::AuthRequired => "Comick did not accept the sign-in code.".to_string(),
+                other => format!("Could not finish the Comick sign-in: {}", other),
+            })?;
+            if !tokens.can_write() {
+                tracing::warn!("Comick granted read access only; list updates will be skipped");
+            }
+            let user = ctx
+                .comick
+                .me(&tokens.access_token)
+                .await
+                .map_err(|e| format!("Could not load your Comick profile: {}", e))?;
+            let name = user.username.clone().unwrap_or_default();
+            ctx.store.save_comick(
+                &ComickTokenSet {
+                    access_token: &tokens.access_token,
+                    refresh_token: tokens.refresh_token.as_deref(),
+                    expires_at: current_unix_timestamp() + tokens.expires_in.max(0),
+                    scope: tokens.scope.as_deref(),
+                },
+                &user.id,
+                &name,
+                user.avatar_url.as_deref(),
+            )?;
+            Ok(Profile {
+                id: 0,
+                name,
+                avatar_url: user.avatar_url,
+            })
         }
         (_, Redirect::Denied { error, description }) => {
             Err(oauth::denial_message(service, &error, description.as_deref()))

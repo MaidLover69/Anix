@@ -26,7 +26,10 @@ impl AppState {
         let plugins = PluginRegistry::open_default();
         let provider_manager = {
             let plugins = plugins.clone();
-            ProviderManager::with_source(std::sync::Arc::new(move || plugins.providers()))
+            ProviderManager::with_source_and_languages(
+                std::sync::Arc::new(move || plugins.providers()),
+                std::sync::Arc::new(crate::commands::settings::language_prefs),
+            )
         };
 
         Self {

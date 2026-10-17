@@ -21,6 +21,11 @@ interface SubtitleSettingsModalProps {
   /** `SUBTITLES_OFF` or the id of the option that is really showing. */
   selectedSubtitleId: string;
   onSelectSubtitle: (id: string) => void;
+  /** Tracks that can be shown as the second subtitle, at the top of the picture. */
+  secondarySubtitles?: SubtitleOption[];
+  /** `SUBTITLES_OFF` or the id of the second subtitle. */
+  selectedSecondaryId?: string;
+  onSelectSecondary?: (id: string) => void;
   audioTracks: MediaTrackOption[];
   selectedAudioTrackId: number;
   onSelectAudioTrack: (id: number) => void;
@@ -79,6 +84,9 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
   subtitles,
   selectedSubtitleId,
   onSelectSubtitle,
+  secondarySubtitles = [],
+  selectedSecondaryId = SUBTITLES_OFF,
+  onSelectSecondary,
   audioTracks,
   selectedAudioTrackId,
   onSelectAudioTrack,
@@ -92,10 +100,14 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
   const setAutoPlayNext = usePlayerStore((s) => s.setAutoPlayNext);
   const subtitleFontSize = usePlayerStore((s) => s.subtitleFontSize);
   const setSubtitleFontSize = usePlayerStore((s) => s.setSubtitleFontSize);
+  const subtitleRaise = usePlayerStore((s) => s.subtitleRaise);
+  const setSubtitleRaise = usePlayerStore((s) => s.setSubtitleRaise);
   const subtitleColor = usePlayerStore((s) => s.subtitleColor);
   const setSubtitleColor = usePlayerStore((s) => s.setSubtitleColor);
   const subtitleBackground = usePlayerStore((s) => s.subtitleBackground);
   const setSubtitleBackground = usePlayerStore((s) => s.setSubtitleBackground);
+  const secondaryFontSize = usePlayerStore((s) => s.secondarySubtitleFontSize);
+  const setSecondaryFontSize = usePlayerStore((s) => s.setSecondarySubtitleFontSize);
   const subtitleDelayMs = usePlayerStore((s) => s.subtitleDelayMs);
   const setSubtitleDelayMs = usePlayerStore((s) => s.setSubtitleDelayMs);
 
@@ -167,7 +179,43 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
                   This stream has no separate subtitle tracks. Subtitles may be part of the picture.
                 </p>
               )}
+              <p className="text-xs text-text-muted">
+                Drop a .srt, .ass or .vtt file on the player to add it as a track.
+              </p>
             </section>
+
+            {onSelectSecondary && secondarySubtitles.length > 0 && (
+              <section className="flex flex-col gap-2">
+                <SectionLabel>Second subtitle (top of the picture)</SectionLabel>
+                <div role="radiogroup" aria-label="Second subtitle track" className="flex flex-col gap-1">
+                  {[{ id: SUBTITLES_OFF, label: 'Off', format: '', isDefault: false }, ...secondarySubtitles].map(
+                    (option) => {
+                      const selected = option.id === selectedSecondaryId;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          onClick={() => onSelectSecondary(option.id)}
+                          className={rowClass(selected)}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate">{option.label}</span>
+                            {option.format && (
+                              <span className="flex-shrink-0 text-[11px] uppercase text-text-muted">
+                                {option.format}
+                              </span>
+                            )}
+                          </span>
+                          {selected && <Check aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="flex flex-col gap-2">
               <SectionLabel>Audio</SectionLabel>
@@ -223,6 +271,40 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
                 step={1}
                 valueText={`${subtitleFontSize} pixels`}
                 onChange={setSubtitleFontSize}
+              />
+            </section>
+
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <SectionLabel>Subtitle height</SectionLabel>
+                <span className="text-xs tabular-nums text-text-secondary">
+                  {subtitleRaise === 0 ? 'Bottom' : `${subtitleRaise}% up`}
+                </span>
+              </div>
+              <Slider
+                label="Subtitle height"
+                value={subtitleRaise}
+                min={0}
+                max={40}
+                step={1}
+                valueText={subtitleRaise === 0 ? 'At the bottom' : `${subtitleRaise} percent above the bottom`}
+                onChange={setSubtitleRaise}
+              />
+            </section>
+
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <SectionLabel>Second subtitle size</SectionLabel>
+                <span className="text-xs tabular-nums text-text-secondary">{secondaryFontSize}px</span>
+              </div>
+              <Slider
+                label="Second subtitle text size"
+                value={secondaryFontSize}
+                min={12}
+                max={40}
+                step={1}
+                valueText={`${secondaryFontSize} pixels`}
+                onChange={setSecondaryFontSize}
               />
             </section>
 

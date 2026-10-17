@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { HistoryEntry, WatchlistEntry } from '../types';
+import type { HistoryEntry, WatchedEpisodeRow, WatchlistEntry } from '../types';
 
 export function useWatchlist() {
   return useQuery<WatchlistEntry[]>({
@@ -144,6 +144,52 @@ export function useUpdateWatchProgress() {
       queryClient.invalidateQueries({ queryKey: ['continueWatching'] });
       queryClient.invalidateQueries({ queryKey: ['homeData'] });
       queryClient.invalidateQueries({ queryKey: ['watchedEpisodes', variables.anilistId] });
+      queryClient.invalidateQueries({ queryKey: ['watchedHistory'] });
     },
+  });
+}
+
+/**
+ * Marks episodes as watched (or unmarks them) in the local history. Marking queues the list
+ * progress of the connected trackers once, for the highest episode.
+ */
+export function useSetEpisodesWatched() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      anilistId,
+      title,
+      cover,
+      episodes,
+      watched,
+    }: {
+      anilistId: number;
+      title: string;
+      cover?: string | null;
+      episodes: number[];
+      watched: boolean;
+    }) =>
+      invoke<number>('set_episodes_watched', {
+        anilistId,
+        title,
+        cover: cover || null,
+        episodes,
+        watched,
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['watchedEpisodes', variables.anilistId] });
+      queryClient.invalidateQueries({ queryKey: ['continueWatching'] });
+      queryClient.invalidateQueries({ queryKey: ['homeData'] });
+      queryClient.invalidateQueries({ queryKey: ['watchedHistory'] });
+    },
+  });
+}
+
+/** Every watched episode (Library › Stats). */
+export function useWatchedHistory(enabled = true) {
+  return useQuery<WatchedEpisodeRow[]>({
+    queryKey: ['watchedHistory'],
+    queryFn: () => invoke<WatchedEpisodeRow[]>('get_watched_history'),
+    enabled,
   });
 }

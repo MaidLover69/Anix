@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, ListPlus } from 'lucide-react';
+import { Check, HardDrive, ListPlus, MoreHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
 import { Button } from './ui/Button';
@@ -11,9 +11,13 @@ interface EpisodeItemProps {
   isWatched?: boolean;
   progressPercent?: number; // 0..100
   isFiller?: boolean;
+  /** The user has this episode as a file; it plays from the file. */
+  isLocal?: boolean;
   viewMode?: 'compact' | 'list' | 'grid';
   onSelect: (ep: EpisodeItemType) => void;
   onAddToPlaylist?: (ep: EpisodeItemType) => void;
+  /** Opens the episode's action menu (mark watched up to here, …) at a point on screen. */
+  onOpenActions?: (ep: EpisodeItemType, at: { x: number; y: number }, trigger: HTMLElement) => void;
 }
 
 // Row actions appear on hover and whenever focus is inside the row.
@@ -23,6 +27,16 @@ const REVEAL_CLASS =
 const FillerBadge: React.FC = () => (
   <span className="flex-shrink-0 rounded-sm bg-state-warning/15 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-state-warning">
     Filler
+  </span>
+);
+
+const LocalBadge: React.FC = () => (
+  <span
+    title="You have this episode as a file"
+    className="flex flex-shrink-0 items-center gap-1 rounded-sm bg-accent-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-accent-300"
+  >
+    <HardDrive aria-hidden="true" className="h-3 w-3" />
+    Local
   </span>
 );
 
@@ -77,19 +91,48 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
   isWatched = false,
   progressPercent = 0,
   isFiller = false,
+  isLocal = false,
   viewMode = 'list',
   onSelect,
   onAddToPlaylist,
+  onOpenActions,
 }) => {
   const title = distinctEpisodeTitle(episode.number, episode.title);
   const filler = isFiller || episode.filler;
   const percent = isWatched ? 0 : Math.min(100, Math.max(0, progressPercent));
-  const playLabel = `Play episode ${episode.number}${title ? `: ${title}` : ''}`;
+  const playLabel = `Play episode ${episode.number}${title ? `: ${title}` : ''}${isLocal ? ' (local file)' : ''}`;
 
   // The row is a container with two sibling controls (play, add to playlist) so both are
   // real buttons that the keyboard can reach.
   const rowClass =
     'group relative flex rounded-md transition-colors hover:bg-ink/5 focus-within:bg-ink/5';
+
+  // Right-click anywhere on the row opens the same menu as the "More actions" button.
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onOpenActions) return;
+    e.preventDefault();
+    const trigger = e.currentTarget.querySelector<HTMLElement>('button') ?? e.currentTarget;
+    onOpenActions(episode, { x: e.clientX, y: e.clientY }, trigger);
+  };
+
+  const renderActionsButton = (className?: string) =>
+    onOpenActions && (
+      <Button
+        icon
+        variant="ghost"
+        size="sm"
+        aria-label={`More actions for episode ${episode.number}`}
+        aria-haspopup="menu"
+        title="More actions"
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          onOpenActions(episode, { x: rect.left, y: rect.bottom + 4 }, e.currentTarget);
+        }}
+        className={clsx(REVEAL_CLASS, className)}
+      >
+        <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+      </Button>
+    );
 
   const renderPlaylistButton = (className?: string) =>
     onAddToPlaylist && (
@@ -108,7 +151,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
 
   if (viewMode === 'compact') {
     return (
-      <div className={clsx(rowClass, 'items-center gap-2 pr-1')}>
+      <div className={clsx(rowClass, 'items-center gap-2 pr-1')} onContextMenu={handleContextMenu}>
         <button
           type="button"
           onClick={() => onSelect(episode)}
@@ -132,16 +175,18 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
             </span>
           )}
           {filler && <FillerBadge />}
+          {isLocal && <LocalBadge />}
           {isWatched && <WatchedMark />}
         </button>
         {renderPlaylistButton()}
+        {renderActionsButton()}
       </div>
     );
   }
 
   if (viewMode === 'grid') {
     return (
-      <div className={clsx(rowClass, 'flex-col p-2')}>
+      <div className={clsx(rowClass, 'flex-col p-2')} onContextMenu={handleContextMenu}>
         <button
           type="button"
           onClick={() => onSelect(episode)}
@@ -159,17 +204,21 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
               Episode {episode.number}
             </span>
             {filler && <FillerBadge />}
+            {isLocal && <LocalBadge />}
           </span>
           {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
           {isWatched && <WatchedMark className="mt-1" />}
         </button>
-        {renderPlaylistButton('dark-scope absolute right-3 top-3 bg-black/70')}
+        <span className="absolute right-3 top-3 flex gap-1">
+          {renderPlaylistButton('dark-scope bg-black/70')}
+          {renderActionsButton('dark-scope bg-black/70')}
+        </span>
       </div>
     );
   }
 
   return (
-    <div className={clsx(rowClass, 'items-center gap-1 p-2')}>
+    <div className={clsx(rowClass, 'items-center gap-1 p-2')} onContextMenu={handleContextMenu}>
       <button
         type="button"
         onClick={() => onSelect(episode)}
@@ -188,6 +237,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
               Episode {episode.number}
             </span>
             {filler && <FillerBadge />}
+            {isLocal && <LocalBadge />}
           </span>
           {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
           {isWatched ? (
@@ -200,6 +250,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
         </span>
       </button>
       {renderPlaylistButton()}
+      {renderActionsButton()}
     </div>
   );
 };

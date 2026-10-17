@@ -5,9 +5,10 @@
 //! sign-in, or the next start of the app. Progress recorded while an account is not connected
 //! waits in the queue until it is.
 
+use super::comick::{self, ComickEntry, ComickProgress, ComickWrite};
 use super::oauth::Service;
 use super::session::{self, Context, Notice};
-use crate::clients::anilist::{ListEntryState, MediaListContext};
+use crate::clients::anilist::{parse_media_hint, ListEntryState, MediaListContext};
 use crate::db;
 use crate::error::AppError;
 use crate::models::{HistoryEntry, MediaListEntry};
@@ -60,6 +61,12 @@ pub enum SkipReason {
     NoMalId,
     /// AniList has no such anime.
     UnknownAnime,
+    /// No Comick title carries this anime's AniList (or MyAnimeList) id.
+    NoComickTitle,
+    /// The Comick connection was granted without `library:write`.
+    NoWriteAccess,
+    /// The remote progress is a label that is not a number; it is left as it is.
+    UnknownRemoteProgress,
 }
 
 /// Decides what a watched episode changes on a list. Progress is never lowered and a status
@@ -176,7 +183,7 @@ async fn ensure_queue(pool: &SqlitePool) -> Result<(), AppError> {
 
 /// Queues one push. A later episode of the same anime replaces an earlier one; an earlier
 /// episode never replaces a later one.
-async fn enqueue(
+pub async fn enqueue(
     pool: &SqlitePool,
     service: Service,
     anilist_id: i32,
@@ -205,8 +212,8 @@ async fn enqueue(
     Ok(())
 }
 
-/// Queues a watched episode for both services, connected or not. Returns false for an episode
-/// that is not list progress.
+/// Queues a watched episode for every service this build can sign in to, connected or not.
+/// Returns false for an episode that is not list progress.
 pub async fn queue_watched_episode(
     pool: &SqlitePool,
     anilist_id: i32,
@@ -218,7 +225,7 @@ pub async fn queue_watched_episode(
     if anilist_id <= 0 {
         return Ok(false);
     }
-    for service in Service::ALL {
+    for service in Service::ALL.into_iter().filter(|service| service.available()) {
         enqueue(pool, service, anilist_id, PendingKind::Progress, progress).await?;
     }
     Ok(true)
@@ -462,6 +469,191 @@ async fn push_to_mal(
     Ok(PushOutcome::Updated(update))
 }
 
+// ---- Comick titles --------------------------------------------------------------------------
+
+/// A title that Comick did not have is looked for again after this long.
+pub const COMICK_MISS_RECHECK_S: i64 = 7 * 24 * 3600;
+
+async fn ensure_comick_titles(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS comick_titles (
+            anilist_id  INTEGER PRIMARY KEY,
+            hid         TEXT,
+            checked_at  INTEGER NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// What is known about the Comick title of an anime: `None` when it was never looked up (or a
+/// miss is due for another look), `Some(None)` when Comick recently had no match.
+pub async fn known_comick_hid(pool: &SqlitePool, anilist_id: i32) -> Result<Option<Option<String>>, AppError> {
+    ensure_comick_titles(pool).await?;
+    let row = sqlx::query("SELECT hid, checked_at FROM comick_titles WHERE anilist_id = ?1")
+        .bind(anilist_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let hid: Option<String> = row.get("hid");
+    let checked_at: i64 = row.get("checked_at");
+    match hid {
+        Some(hid) => Ok(Some(Some(hid))),
+        None if checked_at + COMICK_MISS_RECHECK_S > db::current_unix_timestamp() => Ok(Some(None)),
+        None => Ok(None),
+    }
+}
+
+pub async fn remember_comick_hid(pool: &SqlitePool, anilist_id: i32, hid: Option<&str>) -> Result<(), AppError> {
+    ensure_comick_titles(pool).await?;
+    sqlx::query(
+        r#"
+        INSERT INTO comick_titles (anilist_id, hid, checked_at) VALUES (?1, ?2, ?3)
+        ON CONFLICT(anilist_id) DO UPDATE SET hid = excluded.hid, checked_at = excluded.checked_at;
+        "#,
+    )
+    .bind(anilist_id)
+    .bind(hid)
+    .bind(db::current_unix_timestamp())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// How many of an anime's titles are searched on Comick before giving up.
+const COMICK_SEARCHES: usize = 3;
+
+/// The Comick HID of an AniList anime: from the cache, or by searching Comick for its titles
+/// and keeping the result whose external AniList id (or MyAnimeList id) is this anime.
+pub async fn comick_hid(ctx: &Context<'_>, anilist_id: i32, id_mal: Option<i32>) -> Result<Option<String>, AppError> {
+    if let Some(known) = known_comick_hid(ctx.pool, anilist_id).await? {
+        return Ok(known);
+    }
+    let media = ctx.anilist.fetch_details(anilist_id as i64).await?;
+    let hint = parse_media_hint(&media);
+    let id_mal = id_mal.or(hint.id_mal.map(|id| id as i32));
+
+    for title in hint.titles.iter().take(COMICK_SEARCHES) {
+        let results = session::with_comick(ctx, |token| async move {
+            ctx.comick.search_anime(&token, title).await
+        })
+        .await?;
+        if let Some(hid) = comick::match_hid(&results, anilist_id, id_mal) {
+            remember_comick_hid(ctx.pool, anilist_id, Some(&hid)).await?;
+            return Ok(Some(hid));
+        }
+    }
+    remember_comick_hid(ctx.pool, anilist_id, None).await?;
+    Ok(None)
+}
+
+async fn push_to_comick(
+    ctx: &Context<'_>,
+    item: &PendingSync,
+    cache: &mut MediaCache,
+) -> Result<PushOutcome, AppError> {
+    let scope = ctx.store.comick().and_then(|session| session.scope);
+    if !comick::scope_allows_writes(scope.as_deref()) {
+        return Ok(PushOutcome::Skipped(SkipReason::NoWriteAccess));
+    }
+
+    let id = item.anilist_id;
+    let media = match cache.get(&id) {
+        Some(known) => known.clone(),
+        None => {
+            let fetched = ctx.anilist.list_context(None, id).await?;
+            cache.insert(id, fetched.clone());
+            fetched
+        }
+    };
+    let Some(media) = media else {
+        return Ok(PushOutcome::Skipped(SkipReason::UnknownAnime));
+    };
+    let Some(hid) = comick_hid(ctx, id, media.id_mal.filter(|mal_id| *mal_id > 0)).await? else {
+        return Ok(PushOutcome::Skipped(SkipReason::NoComickTitle));
+    };
+
+    let remote: Option<ComickEntry> = session::with_comick(ctx, |token| {
+        let hid = hid.clone();
+        async move { ctx.comick.get_entry(&token, &hid).await }
+    })
+    .await?;
+    let current = match remote {
+        None => None,
+        Some(entry) => match comick::progress_episodes(entry.progress.as_ref()) {
+            Ok(progress) => Some(ListEntryState {
+                status: comick::anilist_status_from_comick(entry.status).to_string(),
+                progress,
+            }),
+            Err(()) if item.kind == PendingKind::Planning => {
+                return Ok(PushOutcome::Skipped(SkipReason::AlreadyListed));
+            }
+            Err(()) => return Ok(PushOutcome::Skipped(SkipReason::UnknownRemoteProgress)),
+        },
+    };
+
+    let update = match item.kind {
+        PendingKind::Planning if current.is_some() => {
+            return Ok(PushOutcome::Skipped(SkipReason::AlreadyListed));
+        }
+        PendingKind::Planning => ProgressUpdate {
+            progress: 0,
+            status: Some("PLANNING"),
+        },
+        PendingKind::Progress => {
+            let plan = plan_progress_update(
+                current.as_ref(),
+                item.progress,
+                media.episodes,
+                show_finished(&media),
+            );
+            match plan {
+                Ok(update) => update,
+                Err(reason) => return Ok(PushOutcome::Skipped(reason)),
+            }
+        }
+    };
+
+    let write = ComickWrite {
+        status: update.status.map(comick::comick_status),
+        progress: (item.kind == PendingKind::Progress).then(|| ComickProgress {
+            number: Some(update.progress.to_string()),
+        }),
+    };
+    session::with_comick(ctx, |token| {
+        let hid = hid.clone();
+        let write = write.clone();
+        async move { ctx.comick.put_entry(&token, &hid, &write).await }
+    })
+    .await?;
+    Ok(PushOutcome::Updated(update))
+}
+
+/// The connected user's Comick anime library, every page of it.
+pub async fn comick_library(ctx: &Context<'_>) -> Result<Vec<ComickEntry>, AppError> {
+    const MAX_PAGES: usize = 50;
+    let mut entries = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let page = session::with_comick(ctx, |token| {
+            let cursor = cursor.clone();
+            async move { ctx.comick.library_page(&token, cursor.as_deref()).await }
+        })
+        .await?;
+        entries.extend(page.data);
+        match page.next_cursor {
+            Some(next) if !next.is_empty() => cursor = Some(next),
+            _ => break,
+        }
+    }
+    Ok(entries)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DrainReport {
     pub updated: usize,
@@ -495,6 +687,7 @@ pub async fn drain(ctx: &Context<'_>) -> DrainReport {
             let result = match service {
                 Service::AniList => push_to_anilist(ctx, &item, &mut cache).await,
                 Service::Mal => push_to_mal(ctx, &item, &mut cache).await,
+                Service::Comick => push_to_comick(ctx, &item, &mut cache).await,
             };
             let stored = match &result {
                 Ok(PushOutcome::Updated(update)) => {

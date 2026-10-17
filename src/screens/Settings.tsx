@@ -4,6 +4,13 @@ import { Puzzle, RefreshCw, Trash2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CustomSelect } from '../components/CustomSelect';
 import { ThemePicker } from '../components/ThemePicker';
+import { AppearanceExtras } from '../components/settings/AppearanceExtras';
+import { Row, Section } from '../components/settings/SettingsLayout';
+import { SystemSection } from '../components/settings/SystemSection';
+import { LanguagePreferences } from '../components/settings/LanguagePreferences';
+import { pluginLanguageSummary } from '../lib/languages';
+import { HealthBadge, PluginDirectory, UpdateBadge } from '../components/settings/PluginTools';
+import { usePluginHealth, usePluginUpdates, PLUGIN_UPDATES_KEY, type HealthState } from '../hooks/usePluginHealth';
 import { useTheme } from '../hooks/useTheme';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
@@ -29,10 +36,10 @@ import {
   useStreamingProviders,
 } from '../hooks/usePlugins';
 import { invalidateAdultFilteredQueries } from '../hooks/useAniList';
-import { ACCOUNT_LABELS, ACCOUNT_SERVICES, useAccountStatus } from '../hooks/useAccounts';
+import { ACCOUNT_LABELS, ACCOUNT_SERVICES, isAccountAvailable, useAccountStatus } from '../hooks/useAccounts';
 import { AccountAction, accountSummary } from '../components/AuthDialog';
 import { useUIStore } from '../stores/uiStore';
-import type { AppSettings, DohProvider, ExternalPlayer, PluginInfo, PluginRepo } from '../types';
+import type { AppSettings, DohProvider, ExternalPlayer, PluginInfo, PluginRepo, PluginUpdate } from '../types';
 
 // Episodes always open in the built-in player; this picks the program used outside it.
 const PLAYER_OPTIONS: { value: ExternalPlayer; label: string }[] = [
@@ -49,63 +56,6 @@ const DOH_OPTIONS: { value: DohProvider; label: string }[] = [
 function isOneOf<T extends string>(value: unknown, options: { value: T }[]): value is T {
   return options.some((o) => o.value === value);
 }
-
-const Section: React.FC<{
-  title: string;
-  children: React.ReactNode;
-  /** Set on a section that can be linked to; it then takes focus when the link is followed. */
-  sectionRef?: React.Ref<HTMLElement>;
-}> = ({ title, children, sectionRef }) => {
-  const titleId = useId();
-  return (
-    <section
-      ref={sectionRef}
-      aria-labelledby={titleId}
-      tabIndex={sectionRef ? -1 : undefined}
-      className="flex scroll-mt-4 flex-col gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent-500/60 focus-visible:ring-offset-4 focus-visible:ring-offset-bg-page"
-    >
-      <h2 id={titleId} className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-        {title}
-      </h2>
-      <div className="divide-y divide-border rounded-xl ui-card bg-bg-card px-4">{children}</div>
-    </section>
-  );
-};
-
-/** A labelled row; `children` receives the ids to tie the control to its label and hint. */
-const Row: React.FC<{
-  label: string;
-  hint?: string;
-  /** Puts the control under the label, for one that needs the full width. */
-  stacked?: boolean;
-  children: (ids: { labelId: string; hintId: string | undefined }) => React.ReactNode;
-}> = ({ label, hint, stacked = false, children }) => {
-  const labelId = useId();
-  const hintId = useId();
-  return (
-    <div
-      className={
-        stacked
-          ? 'flex flex-col gap-3 py-3'
-          : 'flex min-h-[56px] items-center justify-between gap-6 py-3'
-      }
-    >
-      <div className="flex min-w-0 flex-col">
-        <span id={labelId} className="text-[13px] font-medium text-text-primary">
-          {label}
-        </span>
-        {hint && (
-          <span id={hintId} className="mt-0.5 text-xs text-text-muted">
-            {hint}
-          </span>
-        )}
-      </div>
-      <div className={stacked ? 'flex w-full' : 'flex flex-shrink-0 items-center'}>
-        {children({ labelId, hintId: hint ? hintId : undefined })}
-      </div>
-    </div>
-  );
-};
 
 /** The link to send to `add_plugin_repo`, or why what was typed cannot be one. */
 function parseRepoLink(input: string): { url: string } | { problem: string } {
@@ -176,17 +126,20 @@ const PluginIcon: React.FC<{ src: string | null }> = ({ src }) => {
 const PluginRow: React.FC<{
   plugin: PluginInfo;
   onToggle: (plugin: PluginInfo, enabled: boolean) => void;
-}> = ({ plugin, onToggle }) => {
+  health?: HealthState;
+  update?: PluginUpdate;
+  onTest?: (plugin: PluginInfo) => void;
+}> = ({ plugin, onToggle, health, update, onTest }) => {
   const nameId = useId();
   const name = plugin.name.trim() || plugin.id;
   const version = plugin.version.trim();
   const meta = [
     version ? (/^v/i.test(version) ? version : `v${version}`) : null,
     plugin.author.trim() ? `by ${plugin.author.trim()}` : null,
-    plugin.lang.trim() ? plugin.lang.trim().toUpperCase() : null,
   ]
     .filter(Boolean)
     .join(' · ');
+  const languages = pluginLanguageSummary(plugin);
   const failed = plugin.status === 'error';
 
   return (
@@ -199,13 +152,28 @@ const PluginRow: React.FC<{
               {name}
             </span>
             {meta && <span className="text-xs text-text-muted select-text">{meta}</span>}
+            <UpdateBadge update={update} />
+            <HealthBadge state={health} />
           </p>
           {plugin.description.trim() && (
             <p className="mt-0.5 line-clamp-2 text-xs leading-[18px] text-text-muted select-text">
               {plugin.description.trim()}
             </p>
           )}
+          {languages && <p className="mt-0.5 text-xs text-text-secondary select-text">{languages}</p>}
         </div>
+        {onTest && plugin.enabled && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-0.5"
+            aria-label={`Test ${name}`}
+            disabled={health === 'testing'}
+            onClick={() => onTest(plugin)}
+          >
+            Test
+          </Button>
+        )}
         <Switch
           aria-labelledby={nameId}
           className="mt-1.5"
@@ -222,6 +190,9 @@ const PluginRow: React.FC<{
             {plugin.error?.trim() || 'The plugin did not report a reason.'}
           </p>
         </div>
+      )}
+      {health && health !== 'testing' && health.error && health.status !== 'ok' && (
+        <p className="mt-2 break-words text-xs text-text-muted select-text">Test: {health.error}</p>
       )}
     </li>
   );
@@ -252,6 +223,10 @@ const PluginsSection: React.FC = () => {
   const removeRepo = useRemovePluginRepo();
   const refreshRepos = useRefreshPluginRepos();
   const setPluginEnabled = useSetPluginEnabled();
+  const queryClient = useQueryClient();
+  const pluginHealth = usePluginHealth();
+  const updatesQuery = usePluginUpdates(repos.length > 0);
+  const updates = new Map((updatesQuery.data ?? []).map((u) => [u.id, u]));
 
   const fieldId = useId();
   const [link, setLink] = useState('');
@@ -292,6 +267,7 @@ const PluginsSection: React.FC = () => {
   const handleRefresh = () => {
     refreshRepos.mutate(undefined, {
       onSuccess: (updated) => {
+        queryClient.invalidateQueries({ queryKey: PLUGIN_UPDATES_KEY });
         const failed = updated.filter((repo) => repo.error).length;
         if (failed > 0) {
           showToast({
@@ -347,7 +323,14 @@ const PluginsSection: React.FC = () => {
   const pluginList = (list: PluginInfo[]) => (
     <ul className="mt-3 flex flex-col gap-2">
       {list.map((plugin) => (
-        <PluginRow key={plugin.id} plugin={plugin} onToggle={handleToggle} />
+        <PluginRow
+          key={plugin.id}
+          plugin={plugin}
+          onToggle={handleToggle}
+          health={pluginHealth.results[plugin.id]}
+          update={updates.get(plugin.id)}
+          onTest={(p) => pluginHealth.test(p.id)}
+        />
       ))}
     </ul>
   );
@@ -412,12 +395,15 @@ const PluginsSection: React.FC = () => {
           }}
         />
       ) : nothingAdded ? (
+        <>
         <EmptyState
           className="py-10"
           icon={<Puzzle aria-hidden="true" />}
           title="No plugins yet"
           description="Streaming sources come from plugins. Paste the link of a plugin repository above to install the ones it offers. Until then anime and episode lists still show, but nothing can be played."
         />
+        <PluginDirectory repos={repos} />
+        </>
       ) : (
         <>
           <Row
@@ -427,6 +413,16 @@ const PluginsSection: React.FC = () => {
             )}`}
           >
             {() => (
+              <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => pluginHealth.testAll(plugins.filter((p) => p.enabled).map((p) => p.id))}
+                disabled={pluginHealth.testingAll || !plugins.some((p) => p.enabled)}
+              >
+                {pluginHealth.testingAll && <Spinner size="sm" label="Testing plugins" />}
+                Test all
+              </Button>
               <Button
                 variant="secondary"
                 size="sm"
@@ -440,6 +436,7 @@ const PluginsSection: React.FC = () => {
                 )}
                 Refresh all
               </Button>
+              </div>
             )}
           </Row>
 
@@ -497,6 +494,8 @@ const PluginsSection: React.FC = () => {
               </div>
             );
           })}
+
+          <PluginDirectory repos={repos} />
 
           {strayPlugins.length > 0 && (
             <div className="py-3">
@@ -655,6 +654,7 @@ export const Settings: React.FC = () => {
             />
           )}
         </Row>
+        <AppearanceExtras settings={settings} onChange={(key, value) => updateSetting(key, value)} />
       </Section>
 
       <Section title="Playback">
@@ -715,7 +715,7 @@ export const Settings: React.FC = () => {
           hint={
             providers.none
               ? 'Providers come from plugins. Enable one under Plugins to choose it here.'
-              : 'Tried first for streams and downloads. Auto tries every enabled plugin.'
+              : 'Tried first for streams and downloads. Auto tries the plugins in your languages below.'
           }
         >
           {({ labelId }) => (
@@ -729,6 +729,7 @@ export const Settings: React.FC = () => {
             />
           )}
         </Row>
+        <LanguagePreferences />
         <Row label="Hide adult content" hint="Leave 18+ titles out of search, rails and the schedule.">
           {({ labelId, hintId }) => (
             <Switch
@@ -747,6 +748,8 @@ export const Settings: React.FC = () => {
       </Section>
 
       <PluginsSection />
+
+      <SystemSection />
 
       <Section title="Network">
         <Row
@@ -799,7 +802,11 @@ export const Settings: React.FC = () => {
           <Row
             key={service}
             label={ACCOUNT_LABELS[service]}
-            hint={accountSummary(accountsQuery.data?.[service], accountsQuery.isError)}
+            hint={accountSummary(
+              accountsQuery.data?.[service],
+              accountsQuery.isError,
+              isAccountAvailable(service, accountsQuery.data),
+            )}
           >
             {() => <AccountAction service={service} />}
           </Row>

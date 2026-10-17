@@ -269,6 +269,30 @@ const SCHEMA: &str = r#"
         added_at      INTEGER NOT NULL,
         FOREIGN KEY(playlist_id) REFERENCES custom_playlists(id) ON DELETE CASCADE
     );
+
+    -- "Your files": a folder and/or single files the user linked to one AniList title.
+    CREATE TABLE IF NOT EXISTS local_media_links (
+        anilist_id    INTEGER PRIMARY KEY,
+        folder_path   TEXT,
+        updated_at    INTEGER NOT NULL
+    );
+
+    -- `manual` is set once the user chose the episode number (NULL = not used); a re-scan
+    -- keeps it. `from_folder` rows are pruned when they leave the linked folder.
+    CREATE TABLE IF NOT EXISTS local_media_files (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        anilist_id     INTEGER NOT NULL,
+        file_path      TEXT NOT NULL,
+        file_size      INTEGER NOT NULL DEFAULT 0,
+        episode_number REAL,
+        manual         INTEGER NOT NULL DEFAULT 0,
+        from_folder    INTEGER NOT NULL DEFAULT 0,
+        added_at       INTEGER NOT NULL,
+        UNIQUE(anilist_id, file_path),
+        FOREIGN KEY(anilist_id) REFERENCES local_media_links(anilist_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_local_media_files_episode
+        ON local_media_files(anilist_id, episode_number);
 "#;
 
 /// One row per (anime, episode). `completed` is set once the episode has been watched to
@@ -318,6 +342,8 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(SCHEMA).execute(&mut *tx).await?;
     migrate_watch_history(&mut tx).await?;
     migrate_notification_preferences(&mut tx).await?;
+    crate::offline::create_tables(&mut tx).await?;
+    crate::local_library::create_tables(&mut tx).await?;
 
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(updated_at DESC)")
         .execute(&mut *tx)
@@ -644,6 +670,99 @@ pub async fn update_watch_progress(
     .await?;
 
     Ok(())
+}
+
+/// Marks `episodes` of one anime as watched, or takes the mark off, in one transaction.
+/// A marked episode is put at its end: its known length, or 1 ms of 1 ms when the length is
+/// not known, so the 85% rule counts it everywhere. Unmarking keeps the row (title, length)
+/// with the position back at the start. Returns the number of rows written.
+pub async fn set_episodes_watched(
+    pool: &SqlitePool,
+    anilist_id: i32,
+    title: &str,
+    cover: Option<&str>,
+    episodes: &[f64],
+    watched: bool,
+) -> Result<u64, AppError> {
+    let now = current_unix_millis();
+    let mut tx = pool.begin().await?;
+    let mut written = 0;
+    for &episode in episodes.iter().filter(|n| n.is_finite()) {
+        let result = if watched {
+            sqlx::query(
+                r#"
+                INSERT INTO watch_history (anilist_id, episode_number, position_ms, duration_ms, updated_at, from_remote, title, cover, completed)
+                VALUES (?1, ?2, 1, 1, ?3, 0, ?4, ?5, 1)
+                ON CONFLICT(anilist_id, episode_number) DO UPDATE SET
+                    position_ms = CASE WHEN watch_history.duration_ms > 1 THEN watch_history.duration_ms ELSE 1 END,
+                    duration_ms = CASE WHEN watch_history.duration_ms > 1 THEN watch_history.duration_ms ELSE 1 END,
+                    updated_at = excluded.updated_at,
+                    from_remote = 0,
+                    title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE watch_history.title END,
+                    cover = COALESCE(excluded.cover, watch_history.cover),
+                    completed = 1;
+                "#,
+            )
+            .bind(anilist_id)
+            .bind(episode)
+            .bind(now)
+            .bind(title)
+            .bind(cover)
+            .execute(&mut *tx)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                UPDATE watch_history SET position_ms = 0, completed = 0
+                WHERE anilist_id = ?1 AND ABS(episode_number - ?2) < 0.001
+                "#,
+            )
+            .bind(anilist_id)
+            .bind(episode)
+            .execute(&mut *tx)
+            .await?
+        };
+        written += result.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(written)
+}
+
+/// One watched episode, for the statistics.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct WatchedEpisodeRow {
+    pub anilist_id: i32,
+    pub title: String,
+    pub cover: Option<String>,
+    pub episode_number: f64,
+    /// 0 or 1 when the length is not known (marked by hand, or synced from a list).
+    pub duration_ms: i64,
+    pub updated_at: i64,
+}
+
+/// Every episode that counts as watched, newest first.
+pub async fn get_watched_history(pool: &SqlitePool) -> Result<Vec<WatchedEpisodeRow>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT anilist_id, title, cover, episode_number, duration_ms, updated_at
+        FROM watch_history
+        WHERE completed = 1
+        ORDER BY updated_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| WatchedEpisodeRow {
+            anilist_id: r.get::<i64, _>("anilist_id") as i32,
+            title: r.get("title"),
+            cover: r.get("cover"),
+            episode_number: r.get("episode_number"),
+            duration_ms: r.get("duration_ms"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect())
 }
 
 pub async fn add_to_watchlist(

@@ -17,6 +17,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   download_quality: 'best',
   download_dir: '',
   theme: DEFAULT_THEME,
+  minimize_to_tray: false,
+  start_with_desktop: false,
+  preferred_sub_languages: ['en'],
+  preferred_dub_languages: ['en'],
+  only_preferred_languages: true,
+  window_buttons: 'desktop',
+  use_system_accent: false,
 };
 
 /** Stands for "no specific provider" wherever a provider key (a plugin id) is expected. */

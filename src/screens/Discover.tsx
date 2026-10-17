@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Search, ChevronLeft, ChevronRight, X, SearchX } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { invoke } from '@tauri-apps/api/core';
+import { Search, ChevronLeft, ChevronRight, X, SearchX, Dices, History } from 'lucide-react';
 import clsx from 'clsx';
 import { AnimeCard } from '../components/AnimeCard';
 import { SkeletonCard } from '../components/SkeletonCard';
@@ -12,6 +14,12 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { Spinner } from '../components/ui/Spinner';
 import { useSearchAnime } from '../hooks/useAniList';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { useSearchHistory } from '../hooks/useSearchHistory';
+import { useSettings } from '../hooks/useSettings';
+import { useUIStore } from '../stores/uiStore';
+import { errorMessage } from '../components/ui/ErrorState';
+import type { SearchParams } from '../hooks/useAniList';
+import type { Media } from '../types';
 
 const GENRES = [
   'Action',
@@ -65,6 +73,11 @@ const PER_PAGE = 24;
 const SEARCH_DEBOUNCE_MS = 350;
 const GRID_CLASS = 'grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-4 gap-y-6';
 
+// "Surprise me" draws from this many pages of the most popular titles, keeping well-rated ones.
+const SURPRISE_PAGES = 10;
+const SURPRISE_PER_PAGE = 50;
+const SURPRISE_MIN_SCORE = 75;
+
 function oneOf(value: string | null, options: { value: string }[], fallback: string): string {
   return value !== null && options.some((o) => o.value === value) ? value : fallback;
 }
@@ -72,6 +85,12 @@ function oneOf(value: string | null, options: { value: string }[], fallback: str
 export const Discover: React.FC = () => {
   // The URL is the single source of truth for filters and page, so Back restores them.
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const showToast = useUIStore((s) => s.showToast);
+  const { data: settings } = useSettings();
+  const searchHistory = useSearchHistory();
+  const [surprising, setSurprising] = useState(false);
 
   const urlQuery = searchParams.get('q') ?? '';
   const selectedGenres = searchParams.getAll('genre').filter((g) => GENRES.includes(g));
@@ -167,6 +186,60 @@ export const Discover: React.FC = () => {
     document.querySelector('main')?.scrollTo({ top: 0 });
   };
 
+  // Puts a query in the box and the URL at once (a recent search, or Enter).
+  const commitQuery = (value: string) => {
+    const trimmed = value.trim();
+    setInput(value);
+    lastSyncedQuery.current = trimmed;
+    updateParams((params) => {
+      if (trimmed) params.set('q', trimmed);
+      else params.delete('q');
+    });
+    if (trimmed) searchHistory.record(trimmed);
+  };
+
+  const surpriseMe = async () => {
+    setSurprising(true);
+    try {
+      const params: SearchParams = {
+        sort: 'POPULARITY_DESC',
+        page: 1 + Math.floor(Math.random() * SURPRISE_PAGES),
+        perPage: SURPRISE_PER_PAGE,
+      };
+      // Same key as useSearchAnime, so a page drawn before is served from the cache.
+      const list = await queryClient.fetchQuery<Media[]>({
+        queryKey: ['searchAnime', params],
+        queryFn: () =>
+          invoke<Media[]>('search_anime', {
+            query: null,
+            genres: null,
+            format: null,
+            status: null,
+            sort: params.sort,
+            page: params.page,
+            perPage: params.perPage,
+          }),
+        staleTime: 30 * 60 * 1000,
+      });
+      // The backend already leaves adult titles out unless they are allowed in Settings.
+      const allowAdult = settings?.hide_adult_content === false;
+      const eligible = list.filter(
+        (m) => m.status !== 'NOT_YET_RELEASED' && (allowAdult || !m.is_adult)
+      );
+      const wellRated = eligible.filter((m) => (m.average_score ?? 0) >= SURPRISE_MIN_SCORE);
+      const pool = wellRated.length > 0 ? wellRated : eligible;
+      if (pool.length === 0) {
+        showToast({ type: 'info', title: 'Nothing to pick this time', message: 'Try again in a moment.' });
+        return;
+      }
+      navigate(`/detail/${pool[Math.floor(Math.random() * pool.length)].id}`);
+    } catch (err) {
+      showToast({ type: 'error', title: 'Could not pick an anime', message: errorMessage(err) });
+    } finally {
+      setSurprising(false);
+    }
+  };
+
   const hasActiveFilters =
     !!input.trim() || !!urlQuery || selectedGenres.length > 0 || !!format || !!status || sort !== DEFAULT_SORT;
 
@@ -191,6 +264,9 @@ export const Discover: React.FC = () => {
               spellCheck={false}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && input.trim()) commitQuery(input);
+              }}
               className="h-9 w-full rounded-md bg-bg-input pl-9 pr-9 text-[13px] text-text-primary placeholder:text-text-muted"
             />
             {input && (
@@ -227,6 +303,11 @@ export const Discover: React.FC = () => {
             options={SORTS}
           />
 
+          <Button variant="neutral" onClick={surpriseMe} disabled={surprising} title="Open a random well-rated anime">
+            {surprising ? <Spinner size="sm" /> : <Dices aria-hidden="true" className="h-4 w-4" />}
+            Surprise me
+          </Button>
+
           {hasActiveFilters && (
             <Button variant="ghost" onClick={clearFilters}>
               <X aria-hidden="true" className="h-4 w-4" />
@@ -234,6 +315,38 @@ export const Discover: React.FC = () => {
             </Button>
           )}
         </div>
+
+        {!input.trim() && searchHistory.history.length > 0 && (
+          <div role="group" aria-label="Recent searches" className="flex flex-wrap items-center gap-2">
+            <History aria-hidden="true" className="h-4 w-4 text-text-muted" />
+            {searchHistory.history.map((recent) => (
+              <span
+                key={recent}
+                className="ui-chip inline-flex h-7 max-w-[16rem] items-center rounded-sm bg-bg-elevated text-xs text-text-secondary"
+              >
+                <button
+                  type="button"
+                  onClick={() => commitQuery(recent)}
+                  title={`Search for ${recent}`}
+                  className="h-full min-w-0 cursor-pointer truncate rounded-l-sm pl-3 pr-1.5 transition-colors hover:text-text-primary"
+                >
+                  {recent}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove “${recent}” from recent searches`}
+                  onClick={() => searchHistory.remove(recent)}
+                  className="flex h-full w-6 flex-shrink-0 cursor-pointer items-center justify-center rounded-r-sm text-text-muted transition-colors hover:bg-ink/10 hover:text-text-primary"
+                >
+                  <X aria-hidden="true" className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <Button variant="ghost" size="sm" onClick={searchHistory.clear}>
+              Clear
+            </Button>
+          </div>
+        )}
 
         <div role="group" aria-label="Genres" className="flex flex-wrap items-center gap-2">
           {GENRES.map((genre) => (
@@ -281,6 +394,10 @@ export const Discover: React.FC = () => {
       ) : (
         <div
           aria-busy={isPlaceholderData}
+          // Opening a result keeps its search in the recent list.
+          onClickCapture={(e) => {
+            if (urlQuery && e.target instanceof Element && e.target.closest('a')) searchHistory.record(urlQuery);
+          }}
           className={clsx(GRID_CLASS, 'transition-opacity', isPlaceholderData && 'opacity-50')}
         >
           {animeList.map((anime) => (

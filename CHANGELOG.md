@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.2.0
+
+### Languages & Audio Preferences
+- Choose your subtitle and dub languages in order of preference (Settings › Sources). Automatically prioritizes providers in those languages.
+- Server and stream selections are organized by language; the player indicates which language is active, defaults to your preferred subtitle track, and selects your preferred audio language for multi-audio streams.
+
+### Local Media & Library Linking
+- "Load your own episodes" on an anime's page links a folder or local files to that title. Linked episodes show "Local", play in the built-in player with resume, skip times, and AniList/MAL sync, and automatically detect companion subtitle files.
+- Library › Local files recognizes release filenames, groups them into series, matches them to AniList metadata with posters, and links them in one click.
+
+### Video Player
+- Enhanced playback buffering: at higher playback speeds, video buffers smoothly during network stalls instead of frequent interruptions.
+- Subtitle passthrough for mpv and VLC: external players now receive the active subtitles. mpv resumes from your current timestamp, with progress saved and synced back to your connected trackers.
+- Desktop MPRIS media controls and hardware media key support.
+- Compact mini-player mode.
+- Dialogue boost audio processing for clearer speech.
+- Subtitle drag-and-drop directly onto the player window.
+- Secondary subtitle track support (displayed at the top of the video) and adjustable subtitle positioning.
+
+### Trackers
+- Comick integration as an additional tracker.
+
+### Downloads & Offline Media
+- Real-time download progress tracking and graceful background process management upon app exit.
+
+### Interface & Customization
+- Dynamic ambient glow from cover art.
+- Quick hover peek previews for anime titles.
+- Sticky action bar on anime detail pages.
+- Native desktop window control styles.
+- Pure OLED Black theme and system accent color matching.
+- Schedule filtering: "Only my watchlist" toggle.
+- Discover view: search history and "Surprise me" random title selector.
+- Episode bulk actions: mark 1–N as watched.
+- Library: dedicated Stats dashboard tab.
+- Layout memory for episode and schedule views.
+
+### System & Performance
+- Optional system tray mode with background airing notifications when the main window is closed.
+- Launch on desktop startup option.
+- Offline mode: cached home, anime details, search results, and schedule display when network or AniList is unreachable.
+- Hardware video decoding check in Settings › System.
+- Extension management: health check testing, update checking, and curated provider lists.
+
 ## 1.1.0
 
 ### Anilili is now Anix
@@ -34,25 +78,19 @@
 
 ### Themes
 - A theme selector in Settings: Default dark, Light, Mocha, Hacker, Dracula, Tokyo Night,
-  Manga and Comic.
+  Manga, Comic, and OLED Black.
 
 ## 1.0.3
 
 ### Plugins
-- Sites behind a browser check: when a site answers a plugin with an anti-bot page, the player
-  offers "Verify <plugin> (<site>)". The site opens in an in-app browser window, you pass the
-  check yourself, and the app then sends that plugin's requests to the site through the same
-  browser session (GET and POST, binary-safe). Verified sites are remembered across restarts.
-  Nothing is solved or bypassed automatically.
+- Verification helper: when a provider requires human interaction or session verification, an in-app window allows completing the verification and maintaining the active session.
 - Seanime compatibility: `{{field}}` placeholders from a plugin's `userConfig` are filled with
   the saved value or the default, and `$scannerUtils` is available, so more community plugins
   load.
-- A stream that answers with a web page or an anti-bot page instead of video is rejected with
-  that reason instead of being offered.
+- Unreachable or invalid video endpoints are cleanly handled with specific error statuses.
 
 ### Player
 - Direct MP4 streams now report their length and accept seeking through the stream proxy.
-  Files with their index at the end used to fail with "The video could not be loaded".
 
 ## 1.0.2
 
@@ -64,8 +102,7 @@
 - With no plugin enabled the app still shows anime and episodes and says what is missing.
 
 ### Playback
-- Streams and subtitles are fetched through a local proxy that adds the headers stream hosts
-  require, so packaged builds play the same as development builds.
+- Streams and subtitles are fetched through a local proxy that adds required headers.
 - Rebuilt player: loading and error states, fallback to the next stream, resume, working
   server, subtitle, audio and quality selection, subtitle delay, SRT and ASS subtitles.
 - AppImage builds bundle the media plugins they need.

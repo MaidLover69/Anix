@@ -76,6 +76,14 @@ pub fn write_settings_file(path: &Path, settings: &Value) -> Result<(), String> 
     Ok(())
 }
 
+/// The language preferences as saved, or their defaults when the settings cannot be read.
+pub fn language_prefs() -> crate::providers::languages::LanguagePrefs {
+    let settings = get_settings_path()
+        .and_then(|path| read_settings_file(&path))
+        .unwrap_or_else(|_| serde_json::json!({}));
+    crate::providers::languages::LanguagePrefs::from_settings(&settings)
+}
+
 /// Settings for the frontend. Account tokens stay in the backend and are never returned.
 #[tauri::command]
 pub async fn get_settings() -> Result<Value, String> {
@@ -88,7 +96,7 @@ pub async fn get_settings() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn save_settings(mut settings: Value) -> Result<(), String> {
+pub async fn save_settings(app: tauri::AppHandle, mut settings: Value) -> Result<(), String> {
     let path = get_settings_path()?;
     {
         // The frontend never sees the account keys, so carry the stored ones over.
@@ -99,5 +107,6 @@ pub async fn save_settings(mut settings: Value) -> Result<(), String> {
     }
     // The release-notifications switch lives in settings; apply it right away.
     crate::notifier::replan();
+    crate::system::apply(&app, crate::system::SystemSettings::from_json(&settings));
     Ok(())
 }

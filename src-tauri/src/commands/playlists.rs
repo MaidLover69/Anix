@@ -112,7 +112,7 @@ const LEGACY_PLAYLIST_FILE_PREFIX: &str = "anilili_playlist_";
 const PLAYLIST_FILE_MAX_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// An absolute directory for playlist files: the player is started from another directory.
-fn playlist_dir() -> PathBuf {
+pub(crate) fn playlist_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|d| d.is_absolute() && d.is_dir())

@@ -5,6 +5,7 @@
  */
 export const THEMES = [
   { id: 'dark', name: 'Dark', scheme: 'dark' },
+  { id: 'oled', name: 'OLED black', scheme: 'dark' },
   { id: 'light', name: 'Light', scheme: 'light' },
   { id: 'mocha', name: 'Catppuccin Mocha', scheme: 'dark' },
   { id: 'hacker', name: 'Hacker', scheme: 'dark' },

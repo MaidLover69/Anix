@@ -1,20 +1,8 @@
 use crate::commands::player::{local_file_player_args, resolve_player_bin, sanitized_command};
-use once_cell::sync::Lazy;
-use regex::Regex;
+use crate::release_parser::{file_stem, parse_file_name, ReleaseKind};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-// Common episode patterns: " - 01 ", " - 01.", "E01", "EP01", "Episode 01"
-static EPISODE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)(?:[-_]\s*|ep(?:isode)?\.?\s*|e)(\d{1,4}(?:\.\d)?)"#)
-        .expect("Failed to compile episode regex")
-});
-
-// Release groups and tags like [SubsPlease], [Erai-raws], (1080p)
-static RELEASE_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"\[[^\]]+\]|\([^\)]+\)"#).expect("Failed to compile release tag regex")
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalAnimeFile {
@@ -25,22 +13,12 @@ pub struct LocalAnimeFile {
     pub parsed_episode: Option<f64>,
 }
 
-fn parse_episode_and_title(file_name: &str) -> (String, Option<f64>) {
-    // Remove extension
-    let name = file_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(file_name);
-
-    let episode = EPISODE_REGEX.captures(name).and_then(|caps| {
-        caps.get(1).and_then(|m| m.as_str().parse::<f64>().ok())
-    });
-
-    let cleaned = RELEASE_TAG_REGEX.replace_all(name, "").trim().to_string();
-
-    let title = if let Some((t, _)) = cleaned.rsplit_once('-') {
-        t.trim().to_string()
-    } else {
-        cleaned
-    };
-
+/// The series title and episode number a file name suggests, read by the release parser.
+/// Openings, endings and other extras have no episode; a name with no title keeps its stem.
+pub fn parse_episode_and_title(file_name: &str) -> (String, Option<f64>) {
+    let parsed = parse_file_name(file_name);
+    let episode = if parsed.kind == ReleaseKind::Extra { None } else { parsed.episode };
+    let title = if parsed.title.is_empty() { file_stem(file_name) } else { parsed.title };
     (title, episode)
 }
 

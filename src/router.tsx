@@ -11,6 +11,7 @@ import {
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
+import { OfflineBanner } from './components/OfflineBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { ToastContainer } from './components/Toast';
@@ -182,6 +183,7 @@ const AppLayout: React.FC = () => {
   return (
     <div className="ui-app flex h-screen w-screen flex-col overflow-hidden bg-bg-page text-text-primary select-none">
       <TitleBar />
+      <OfflineBanner />
 
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">
         {!isWatchScreen && <Sidebar />}

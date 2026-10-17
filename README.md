@@ -100,7 +100,9 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 ## Installation
 
-Pre-built Linux packages for **v1.2.0** are available on [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases):
+Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download> and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
+
+- **Direct AppImage Download:** [Anix_1.1.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
 
 ### AppImage (Universal, any distribution)
 
@@ -111,17 +113,6 @@ chmod +x Anix_1.2.0_amd64.AppImage
 
 *(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.2.0_amd64.AppImage`)*
 
-### RPM (Fedora, openSUSE, RHEL)
-
-```bash
-sudo dnf install ./Anix-1.2.0-1.x86_64.rpm
-```
-
-### DEB (Ubuntu, Debian, Linux Mint)
-
-```bash
-sudo apt install ./Anix_1.2.0_amd64.deb
-```
 
 ---
 

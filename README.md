@@ -102,7 +102,8 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [GitHub Releases](https://github.com/MaidLover69/Anix/releases), and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
 
-- **Direct AppImage Download (v1.2.0):** [GitHub Release](https://github.com/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage) • [Codeberg Release](https://codeberg.org/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage)
+- **Direct AppImage Download:** [Anix_1.2.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
+- [GitHub Release](https://github.com/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage) • [Codeberg Release](https://codeberg.org/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage)
 
 ### AppImage (Universal, any distribution)
 

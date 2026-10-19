@@ -14,7 +14,7 @@
   <b>Anix</b> is a native Linux desktop application for cataloguing and tracking anime. Browse the AniList catalogue, keep your AniList, MyAnimeList, and Comick watchlists in sync, follow weekly airing schedules with desktop notifications, and organize and play your local anime media library using the built-in player or MPV / VLC. Zero telemetry.
 </p>
 
-**Website:** <https://anix-linux.vercel.app> • **Codeberg:** <https://codeberg.org/MaidLover69/Anix>
+**Website:** <https://anix-linux.vercel.app> • **GitHub:** <https://github.com/MaidLover69/Anix> • **Codeberg:** <https://codeberg.org/MaidLover69/Anix>
 
 </div>
 
@@ -100,9 +100,9 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 ## Installation
 
-Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download> and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
+Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [GitHub Releases](https://github.com/MaidLover69/Anix/releases), and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
 
-- **Direct AppImage Download:** [Anix_1.1.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
+- **Direct AppImage Download (v1.2.0):** [GitHub Release](https://github.com/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage) • [Codeberg Release](https://codeberg.org/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage)
 
 ### AppImage (Universal, any distribution)
 
@@ -110,6 +110,12 @@ Packages for Linux are available from the project website: <https://anix-linux.v
 chmod +x Anix_1.2.0_amd64.AppImage
 ./Anix_1.2.0_amd64.AppImage
 ```
+
+**For users now, with no new release who are facing the issue of no Thumnails:**
+
+Run it from a terminal with: G_TLS_GNUTLS_PRIORITY=NORMAL ./Anix_1.2.0_amd64.AppImage
+Or, to make it permanent, put this line in their Anix .desktop file: Exec=env G_TLS_GNUTLS_PRIORITY=NORMAL /path/to/Anix_1.2.0_amd64.AppImage %U
+Fedora users don't need it.
 
 *(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.2.0_amd64.AppImage`)*
 

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import Hls from 'hls.js';
 import type { ErrorData, Level, MediaPlaylist } from 'hls.js';
-import { normalizeLanguage } from '../lib/languages';
+import { preferredAudioTrack } from '../components/player/playerLogic';
 import { buildProxyUrl } from '../lib/streamProxy';
 import type { StreamItem } from '../types';
+import { t } from '../i18n';
 
 export type EnginePhase = 'loading' | 'ready' | 'error';
 
@@ -91,19 +92,10 @@ function toLevels(levels: Level[]): QualityLevel[] {
 function toTrackOptions(tracks: MediaPlaylist[]): MediaTrackOption[] {
   return tracks.map((track) => ({
     id: track.id,
-    label: track.name || track.lang || `Track ${track.id + 1}`,
+    label: track.name || track.lang || t('usePlayerEngine.trackNumber', { number: track.id + 1 }),
   }));
 }
 
-/** Index of the first track in a wanted language, trying the languages in order. */
-export function preferredAudioTrack(tracks: Pick<MediaPlaylist, 'lang' | 'name'>[], wanted: string[]): number {
-  const codes = tracks.map((track) => normalizeLanguage(track.lang) ?? normalizeLanguage(track.name));
-  for (const language of wanted) {
-    const index = codes.indexOf(language.toLowerCase());
-    if (index !== -1) return index;
-  }
-  return -1;
-}
 
 function describeHlsError(data: ErrorData): string {
   const status = data.response?.code;
@@ -111,15 +103,15 @@ function describeHlsError(data: ErrorData): string {
   switch (data.details) {
     case Hls.ErrorDetails.MANIFEST_LOAD_ERROR:
     case Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT:
-      return `The stream playlist could not be loaded${suffix}`;
+      return t('usePlayerEngine.playlistLoadFailed') + suffix;
     case Hls.ErrorDetails.MANIFEST_PARSING_ERROR:
-      return `The stream playlist is not valid${suffix}`;
+      return t('usePlayerEngine.playlistInvalid') + suffix;
     case Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR:
-      return `This stream uses a codec the player cannot decode${suffix}`;
+      return t('usePlayerEngine.codecUnsupported') + suffix;
     default:
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) return `The stream stopped loading${suffix}`;
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) return `The stream could not be decoded${suffix}`;
-      return `Playback failed${suffix}`;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) return t('usePlayerEngine.streamStopped') + suffix;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) return t('usePlayerEngine.streamDecodeFailed') + suffix;
+      return t('usePlayerEngine.playbackFailed') + suffix;
   }
 }
 
@@ -127,13 +119,13 @@ function describeMediaError(error: MediaError | null): string {
   const detail = error?.message ? ` (${error.message})` : '';
   switch (error?.code) {
     case MediaError.MEDIA_ERR_NETWORK:
-      return `The video stopped loading because of a network error${detail}`;
+      return t('usePlayerEngine.videoNetworkError') + detail;
     case MediaError.MEDIA_ERR_DECODE:
-      return `The video could not be decoded${detail}`;
+      return t('usePlayerEngine.videoDecodeFailed') + detail;
     case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-      return `The video could not be loaded, or its format is not supported${detail}`;
+      return t('usePlayerEngine.videoNotSupported') + detail;
     default:
-      return `The video could not be played${detail}`;
+      return t('usePlayerEngine.videoPlayFailed') + detail;
   }
 }
 
@@ -231,7 +223,7 @@ export function usePlayerEngine({
       hls?.destroy();
       hls = null;
       hlsRef.current = null;
-      const tried = streams.length > 1 ? ` Tried ${streams.length} streams.` : '';
+      const tried = streams.length > 1 ? ` ${t('usePlayerEngine.triedStreams', { count: streams.length })}` : '';
       setError(`${firstErrorRef.current}.${tried}`);
       setPhase('error');
     };
@@ -246,7 +238,7 @@ export function usePlayerEngine({
         wantPlayRef.current = false;
         return;
       }
-      fail(`Playback could not start${message ? ` (${message})` : ''}`);
+      fail(t('usePlayerEngine.playStartFailed') + (message ? ` (${message})` : ''));
     };
     playRejectedRef.current = onPlayRejected;
 
@@ -342,7 +334,7 @@ export function usePlayerEngine({
       instance.loadSource(url);
       instance.attachMedia(video);
     } else if (hlsStream && !video.canPlayType('application/vnd.apple.mpegurl')) {
-      fail('This webview cannot play HLS streams (Media Source Extensions are unavailable)');
+      fail(t('usePlayerEngine.noMse'));
     } else {
       video.src = url;
     }

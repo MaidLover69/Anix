@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { HistoryEntry, WatchedEpisodeRow, WatchlistEntry } from '../types';
+import type { HistoryEntry, ListStatus, ListStatusValue, WatchedEpisodeRow, WatchlistEntry } from '../types';
+import { t } from '../i18n';
 
 export function useWatchlist() {
   return useQuery<WatchlistEntry[]>({
@@ -191,5 +192,96 @@ export function useWatchedHistory(enabled = true) {
     queryKey: ['watchedHistory'],
     queryFn: () => invoke<WatchedEpisodeRow[]>('get_watched_history'),
     enabled,
+  });
+}
+
+/** The watchlist statuses in display order. Labels are getters so they follow the interface language. */
+export const LIST_STATUS_OPTIONS: { value: ListStatusValue; label: string }[] = [
+  { value: 'CURRENT', get label() { return t('useLibrary.watching'); } },
+  { value: 'PLANNING', get label() { return t('useLibrary.planToWatch'); } },
+  { value: 'COMPLETED', get label() { return t('useLibrary.completed'); } },
+  { value: 'PAUSED', get label() { return t('useLibrary.onHold'); } },
+  { value: 'DROPPED', get label() { return t('useLibrary.dropped'); } },
+];
+
+export function listStatusLabel(status: string | null | undefined): string {
+  return LIST_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? t('useLibrary.notOnList');
+}
+
+/**
+ * The status of one anime: the connected AniList/MyAnimeList entry when there is one,
+ * otherwise the watchlist's (also while the tracker cannot be reached).
+ */
+export function useListStatus(anilistId: number | null) {
+  const queryClient = useQueryClient();
+  return useQuery<ListStatus>({
+    queryKey: ['listStatus', anilistId],
+    queryFn: async () => {
+      const found = await invoke<ListStatus>('get_list_status', { anilistId });
+      // The backend copied the tracker's status into the watchlist.
+      if (found.source !== 'local') queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      return found;
+    },
+    enabled: anilistId !== null && anilistId !== 0,
+    networkMode: 'always',
+  });
+}
+
+/** Sets the status of an anime (adding it to the watchlist when needed), or `null` to remove it. */
+export function useSetListStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      anilistId,
+      title,
+      cover,
+      format,
+      averageScore,
+      status,
+    }: {
+      anilistId: number;
+      title: string;
+      cover?: string | null;
+      format?: string | null;
+      averageScore?: number | null;
+      status: ListStatusValue | null;
+    }) => {
+      if (status === null) {
+        await invoke('remove_from_watchlist', { anilistId });
+        return;
+      }
+      await invoke('set_list_status', {
+        anilistId,
+        title,
+        cover: cover || null,
+        format: format || null,
+        averageScore: averageScore ?? null,
+        status,
+      });
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['isInWatchlist', variables.anilistId] });
+      queryClient.invalidateQueries({ queryKey: ['listStatus', variables.anilistId] });
+    },
+  });
+}
+
+/**
+ * Reads the connected AniList list's statuses into the watchlist and sends the statuses
+ * waiting to be sent; the watchlist is refetched when something changed.
+ */
+export function useSyncListStatuses(enabled: boolean) {
+  const queryClient = useQueryClient();
+  return useQuery<number>({
+    queryKey: ['syncListStatuses'],
+    queryFn: async () => {
+      const changed = await invoke<number>('sync_list_statuses');
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      return changed;
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { CircleAlert, LoaderCircle, Puzzle } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { t } from '../../i18n';
 
 export interface PlayerStatusAction {
   label: string;
@@ -14,6 +15,8 @@ interface PlayerStatusProps {
   title: string;
   /** For errors: the reason as reported by the backend or the media element. */
   detail?: string | null;
+  /** Technical text behind a "Details" disclosure, under `detail`. */
+  moreDetail?: string | null;
   actions?: PlayerStatusAction[];
   /** Dims a video frame that is still visible underneath. */
   scrim?: boolean;
@@ -24,6 +27,7 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
   kind,
   title,
   detail,
+  moreDetail,
   actions = [],
   scrim = false,
 }) => (
@@ -52,6 +56,16 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
       <p className="max-h-32 max-w-xl overflow-y-auto break-words text-[13px] leading-5 text-text-secondary select-text">
         {detail}
       </p>
+    )}
+    {moreDetail && (
+      <details className="max-w-xl text-[12px] text-text-muted">
+        <summary className="cursor-pointer select-none rounded-sm hover:text-text-secondary">
+          {t('common.details')}
+        </summary>
+        <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-left leading-5 select-text">
+          {moreDetail}
+        </p>
+      </details>
     )}
     {actions.length > 0 && (
       <div className="mt-1 flex flex-wrap items-center justify-center gap-2">

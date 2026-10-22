@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from '../ui';
 import { SkeletonCard } from '../SkeletonCard';
+import { t } from '../../i18n';
 
 /** Poster columns sized by the cards, so they do not balloon on wide windows. */
 export const PosterGrid: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -25,7 +26,7 @@ interface ShowMoreProps {
 export const ShowMore: React.FC<ShowMoreProps> = ({ sentinelRef, onClick, remaining }) => (
   <div ref={sentinelRef} className="flex justify-center pt-6">
     <Button variant="ghost" size="sm" onClick={onClick}>
-      Show more ({remaining} remaining)
+      {t('posterGrid.showMore', { count: remaining })}
     </Button>
   </div>
 );

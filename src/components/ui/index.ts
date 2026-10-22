@@ -9,5 +9,7 @@ export type { SegmentOption } from './SegmentedControl';
 export { Chip } from './Chip';
 export { Switch } from './Switch';
 export { EmptyState } from './EmptyState';
+export { Mascot } from './Mascot';
+export type { MascotMood } from './Mascot';
 export { ErrorState, errorMessage } from './ErrorState';
 export { Spinner } from './Spinner';

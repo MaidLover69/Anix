@@ -1,4 +1,5 @@
 import type { ThemeId } from '../theme/themes';
+import type { TimeFormat } from '../lib/time';
 
 export interface MediaTitle {
   romaji: string | null;
@@ -74,7 +75,14 @@ export interface RelationEdge {
     format: string | null;
     status: string | null;
     averageScore: number | null;
+    seasonYear?: number | null;
+    isAdult?: boolean | null;
   };
+}
+
+/** One entry of `recommendations.nodes` in the details (AniList, or MyAnimeList while it is down). */
+export interface RecommendationNode {
+  mediaRecommendation: RelationEdge['node'] | null;
 }
 
 export interface Media {
@@ -167,6 +175,20 @@ export interface AnimeDetails {
   trailer: Trailer | null;
   characters: { edges: CharacterEdge[] } | null;
   relations: { edges: RelationEdge[] } | null;
+  recommendations?: { nodes: RecommendationNode[] } | null;
+  studios?: { edges: { isMain: boolean; node: { id: number; name: string } }[] } | null;
+  startDate?: FuzzyDate | null;
+  endDate?: FuzzyDate | null;
+  tags?: { name: string; rank: number | null; isMediaSpoiler: boolean | null }[] | null;
+  /** The catalogue that answered while AniList was unavailable (absent for AniList's own answer). */
+  servedBy?: string;
+}
+
+/** AniList's date with optional parts. */
+export interface FuzzyDate {
+  year?: number | null;
+  month?: number | null;
+  day?: number | null;
 }
 
 /** `fetch_mal_anime_synopsis` result (Jikan). */
@@ -253,6 +275,43 @@ export interface WatchlistEntry {
   format: string | null;
   average_score: number | null;
   added_at: number;
+  status: ListStatusValue;
+  /** False while a status chosen here waits to be sent to the connected lists. */
+  synced: boolean;
+}
+
+/** A watchlist status, in AniList vocabulary. */
+export type ListStatusValue = 'CURRENT' | 'PLANNING' | 'COMPLETED' | 'PAUSED' | 'DROPPED';
+
+/** The status shown for one anime and where it came from. */
+export interface ListStatus {
+  status: ListStatusValue | null;
+  synced: boolean;
+  source: 'anilist' | 'myanimelist' | 'local';
+}
+
+/** One entry of the notification centre. */
+export interface Notice {
+  id: number;
+  /** 'airing', 'download', 'test' or another short word. */
+  kind: string;
+  title: string;
+  body: string;
+  /** An in-app route or an anix:// link. */
+  link: string | null;
+  read: boolean;
+  /** Unix milliseconds. */
+  created_at: number;
+}
+
+export interface BackupResult {
+  path: string;
+  summary: {
+    counts: Record<string, number>;
+    has_logins: boolean;
+    logins_restored: boolean;
+    search_history: unknown;
+  };
 }
 
 export interface MediaListEntry {
@@ -280,6 +339,7 @@ export interface Viewer {
 export interface AiringEntry {
   id: number;
   airing_at: number;
+  /** 0 in an estimated schedule when the number is not known (a long-running show). */
   episode: number;
   media_id: number;
   media_title: string;
@@ -320,12 +380,20 @@ export interface DownloadRecord {
   created_at: number;
   /** Unix time in milliseconds */
   updated_at: number;
+  /** ISO 639-1 audio language ('ja' for a sub), once the source is known. */
+  audio_lang?: string | null;
+  /** ISO 639-1 subtitle language of a sub, once the source is known. */
+  sub_lang?: string | null;
 }
 
 export interface StorageCheck {
   ok: boolean;
   free_bytes: number;
   needed_bytes: number;
+  /** Size of the disk the download folder is on; 0 when unknown. */
+  total_bytes: number;
+  /** The download folder. */
+  dir: string;
 }
 
 export interface UpdateInfo {
@@ -333,6 +401,14 @@ export interface UpdateInfo {
   changelog: string;
   published_at: string;
   release_url: string;
+  /** The release's AppImage, when the website lists it with a checksum. */
+  appimage?: { url: string; sha256: string; size: number | null };
+}
+
+/** `get_update_install_support`: whether Install can replace the running AppImage. */
+export interface UpdateInstallSupport {
+  appimage: boolean;
+  reason: string | null;
 }
 
 export interface HomeData {
@@ -347,21 +423,38 @@ export interface HomeData {
 
 export type ExternalPlayer = 'builtin' | 'mpv' | 'vlc';
 export type DohProvider = 'cloudflare' | 'google' | 'adguard';
+/** `auto`: the system DNS until a site looks blocked, then DNS over HTTPS for that site. */
+export type DohMode = 'off' | 'on' | 'auto';
+/** The server last picked for an anime, tried first next time. */
+export interface RememberedSource {
+  provider: string;
+  category: 'sub' | 'dub';
+  at: number;
+}
+/** Which anime catalogue is asked first; the others stay as fallbacks. */
+export type CatalogueSource = 'auto' | 'anilist' | 'myanimelist' | 'kitsu' | 'shikimori' | 'comick';
 
 // Every key here has a reader. `settings.json` also holds the account keys (`anilist_*`,
 // `mal_*`), which only the backend reads and writes; see `AccountsStatus` for what the
 // frontend is told about accounts.
 export interface AppSettings {
   autoplay: boolean;
+  /** 1.2.0's single switch; read once to fill `skip_intro` and `skip_outro`. */
   auto_skip_intro_outro: boolean;
+  /** Jump past openings / endings (after a 3-second countdown) when skip times are known. */
+  skip_intro: boolean;
+  skip_outro: boolean;
   prefer_dub: boolean;
   /** 'auto' or a provider key (a key of the `get_all_episodes` result). */
   preferred_provider: string;
   external_player: ExternalPlayer;
   hide_adult_content: boolean;
   release_notifications: boolean;
+  /** 1.2.0's switch; `doh_mode` replaces it and keeps its value. */
   enable_doh: boolean;
+  doh_mode: DohMode;
   doh_provider: DohProvider;
+  catalogue_source: CatalogueSource;
   download_quality: string;
   download_dir: string;
   /** A built-in theme id (see `theme/themes.ts`). */
@@ -380,9 +473,65 @@ export interface AppSettings {
   window_buttons: WindowButtonsSetting;
   /** The desktop's accent colour replaces the theme's (not in Manga, which has no colour). */
   use_system_accent: boolean;
+  /** Mascot, kaomoji, friendlier wording and the completed stamp. */
+  playful_touches: boolean;
+  /** Hours after an air time during which extensions are asked whether the episode is out. */
+  release_check_hours: number;
+  /** "Alerts while Anix is closed": a windowless `--background` process is started at login. */
+  background_alerts: boolean;
+  /** Which engine plays streams; a change applies after a restart. */
+  player_engine: PlayerEngineSetting;
+  /** Embedded mpv's hardware decoding: copy-back or full interop after the self-test, always copy-back, or software. */
+  hwdec_mode: HwdecModeSetting;
+  /** Embedded mpv's read-ahead buffer, MB and seconds. */
+  player_buffer_mb: number;
+  player_readahead_secs: number;
+  /** Embedded mpv keeps its cache on disk (in the app's cache folder), up to `player_disk_cache_mb`. */
+  player_disk_cache: boolean;
+  player_disk_cache_mb: number;
+  /** Home row ids in the order chosen in Settings › Appearance; rows missing here follow. */
+  home_row_order?: string[];
+  /** Plugin ids in the order Auto tries them (Settings › Sources); plugins missing here follow. */
+  provider_order?: string[];
+  /** Settings › Plugins: test the enabled plugins in the background about once a day. */
+  plugin_health_checks?: boolean;
+  /** The server last picked per anime (AniList id), tried first on its next episodes. */
+  remembered_sources?: Record<string, RememberedSource>;
+  /** Settings › Appearance: blur the stills of episodes not watched yet (spoiler guard). */
+  blur_unwatched_art?: boolean;
+  /** Settings › Appearance: a custom accent colour (#rrggbb); the system accent wins while that is on. */
+  accent_color?: string | null;
+  /** Settings › Appearance: how strongly text and hairlines stand out. */
+  contrast?: ContrastLevel;
+  /** Settings › Appearance: the root font size every rem-based size follows. */
+  ui_size?: UiSize;
+  /** Settings › Appearance: clock times in 12 or 24 hours, or as the system writes them. */
+  time_format?: TimeFormat;
+  /** Settings › Appearance: an anime's art behind the app (`null`: none). */
+  background_art?: BackgroundArt | null;
+  /** Settings › Appearance › Language: an interface language code, or 'system' (missing = 'system'). */
+  app_language?: string;
+  /** The app version the setup screen was last shown in (missing: never, so it opens). */
+  setup_seen_version?: string;
 }
 
+/** 'external' opens every episode in the external player chosen in Settings. */
+export type PlayerEngineSetting = 'web' | 'mpv' | 'external';
+export type HwdecModeSetting = 'auto' | 'copy' | 'off';
+
 export type WindowButtonsSetting = 'desktop' | 'left' | 'right';
+
+export type ContrastLevel = 'standard' | 'medium' | 'high';
+export type UiSize = 'small' | 'medium' | 'large';
+export type { TimeFormat };
+
+/** The art chosen on an anime's page ("Use as background"), and how it is drawn. */
+export interface BackgroundArt {
+  url: string;
+  title: string;
+  /** 'blur' softens it; 'plain' only dims it (cheaper to draw). */
+  style: 'blur' | 'plain';
+}
 
 export type WindowButtonKind = 'minimize' | 'maximize' | 'close';
 
@@ -581,6 +730,25 @@ export interface PluginInfo {
   /** ISO 639-1 codes of the audio languages it serves dubs in. */
   dub_languages: string[];
   servers: string[];
+  /** The plugin has settings of its own (`get_plugin_config`). */
+  configurable: boolean;
+}
+
+/** One setting of a plugin (`get_plugin_config`). */
+export interface PluginConfigField {
+  name: string;
+  label: string;
+  /** `switch` values are "true" or "false". */
+  type: 'text' | 'switch' | 'select';
+  default: string;
+  value: string;
+  options?: { value: string; label: string }[];
+}
+
+export interface PluginConfig {
+  fields: PluginConfigField[];
+  requires_config: boolean;
+  configured: boolean;
 }
 
 export * from './system';

@@ -3,9 +3,10 @@
 
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
+use anix_lib::clients::anilist::MediaHint;
 use anix_lib::providers::manager::{
-    first_playlist_uri, resolve_playlist_uri, summarize_failures, verify_stream_segment,
-    verify_streams, ProviderManager,
+    apply_order, classify_reason, explain_failure, first_playlist_uri, main_failure, resolve_playlist_uri,
+    summarize_failures, verify_stream_segment, verify_streams, FailureKind, HintSource, ProviderManager,
 };
 use anix_lib::providers::AnimeProvider;
 use anix_lib::web_session::{SessionUse, SiteSpec};
@@ -152,6 +153,8 @@ struct MockProvider {
     delay: Duration,
     list_calls: AtomicUsize,
     source_calls: AtomicUsize,
+    /// The titles of every listing request, in order.
+    titles_seen: Mutex<Vec<String>>,
 }
 
 impl MockProvider {
@@ -165,6 +168,7 @@ impl MockProvider {
             delay: Duration::ZERO,
             list_calls: AtomicUsize::new(0),
             source_calls: AtomicUsize::new(0),
+            titles_seen: Mutex::new(Vec::new()),
         }
     }
 
@@ -193,8 +197,9 @@ impl AnimeProvider for MockProvider {
         })
     }
 
-    async fn get_episodes(&self, _query: &AnimeQuery) -> Result<ProviderData, AppError> {
+    async fn get_episodes(&self, query: &AnimeQuery) -> Result<ProviderData, AppError> {
         self.list_calls.fetch_add(1, Ordering::SeqCst);
+        self.titles_seen.lock().unwrap().extend(query.titles.iter().cloned());
         match &self.listing {
             Listing::Fail(err) => Err(err.clone()),
             Listing::Episodes(numbers) => {
@@ -233,6 +238,16 @@ async fn sources(
     manager
         .get_sources_for_episode(21, Some(21), episode, category, Some("One Piece".to_string()), preferred)
         .await
+}
+
+/// The plain-words first line of a failure message.
+fn headline(message: &str) -> &str {
+    message.split('\n').next().unwrap_or_default()
+}
+
+/// The per-provider list under it, shown behind Details.
+fn details(message: &str) -> &str {
+    message.split_once('\n').map_or("", |(_, rest)| rest)
 }
 
 fn failure_message(result: Result<SourcesResult, AppError>) -> String {
@@ -506,6 +521,9 @@ async fn every_failure_is_reported_with_its_reason() {
     let manager = manager_of(&[unplayable, blocked, waiting, erroring, erroring_too, missing]);
 
     let message = failure_message(sources(&manager, 2.0, "sub", None).await);
+    // A site waiting for Verify is what the user can act on first.
+    assert_eq!(headline(&message), explain_failure(&FailureKind::Verification, &Category::Sub));
+    let message = details(&message).to_string();
     assert!(message.starts_with("No source found. "), "{}", message);
     assert!(message.contains("unplayable: stream check failed: HTTP 404"), "{}", message);
     assert!(message.contains("blocked: blocked by anti-bot check"), "{}", message);
@@ -514,7 +532,8 @@ async fn every_failure_is_reported_with_its_reason() {
     assert!(message.contains("missing: anime not found"), "{}", message);
 
     let message = failure_message(sources(&manager, 99.0, "sub", Some("erroring")).await);
-    assert_eq!(message, "No source found. erroring: episode 99 not listed");
+    assert_eq!(details(&message), "No source found. erroring: episode 99 not listed");
+    assert_eq!(headline(&message), "No installed extension has this episode.");
 }
 
 #[tokio::test]
@@ -533,7 +552,8 @@ async fn dub_requests_only_reach_providers_with_a_dub() {
 
     let only_sub = manager_of(&[sub_only.clone()]);
     let message = failure_message(sources(&only_sub, 1.0, "dub", None).await);
-    assert_eq!(message, "No source found. sub-only: no dub");
+    assert_eq!(details(&message), "No source found. sub-only: no dub");
+    assert_eq!(headline(&message), "No installed extension has this episode in dub.");
 }
 
 #[tokio::test]
@@ -753,7 +773,7 @@ async fn a_failed_last_resort_reports_what_the_session_found() {
 
     let message = failure_message(sources(&manager, 1.0, "sub", None).await);
     assert_eq!(
-        message,
+        details(&message),
         "No source found. guarded: needs verification; blocked: blocked by anti-bot check"
     );
     // The last resort ran once; it is not repeated for an answer that is itself a refusal.
@@ -773,4 +793,106 @@ async fn listing_episodes_never_starts_a_session() {
     let names: Vec<&str> = listed.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, vec!["open"]);
     assert_eq!(guarded.calls(), vec![("episodes", SessionUse::Existing)]);
+}
+
+// ---------------------------------------------------------------- failures in plain words
+
+#[test]
+fn failure_reasons_are_classified() {
+    use FailureKind::*;
+    let cases: [(&str, FailureKind); 12] = [
+        ("needs verification", Verification),
+        ("blocked by anti-bot check", Verification),
+        ("stream check failed: HTTP 404 from cdn.example", Removed),
+        ("StreamWish: the server 'StreamWish' has no copy of this episode", Removed),
+        ("Vidmoly: not found on vidmoly.biz; Rumble: no Rumble player for this episode", Removed),
+        ("the video was removed from Voe", Removed),
+        (
+            "no supported player for this episode; this extension can't read the video hosts waaw.ac, fs.d-ld.net",
+            UnreadableHost("waaw.ac, fs.d-ld.net".to_string()),
+        ),
+        ("search timed out", TooSlow),
+        ("connection failed (uqload.com: Connection reset by peer (os error 104))", Unreachable),
+        ("anime not found", NotListed),
+        ("episode 99 not listed", NotListed),
+        ("findEpisodeServer returned something odd", Other),
+    ];
+    for (reason, kind) in cases {
+        assert_eq!(classify_reason(reason), kind, "{}", reason);
+    }
+}
+
+#[test]
+fn the_reason_shown_is_the_one_the_user_can_act_on() {
+    let failures = |reasons: &[&str]| -> Vec<(String, String)> {
+        reasons.iter().enumerate().map(|(i, r)| (format!("p{}", i), r.to_string())).collect()
+    };
+    assert_eq!(main_failure(&failures(&["episode 2 not listed", "timed out"])), FailureKind::TooSlow);
+    assert_eq!(main_failure(&failures(&["anime not found", "no dub"])), FailureKind::NotListed);
+    assert_eq!(
+        main_failure(&failures(&["timed out", "HTTP 410 from host.example", "needs verification"])),
+        FailureKind::Verification
+    );
+    assert_eq!(main_failure(&[]), FailureKind::Other);
+    assert!(explain_failure(&FailureKind::UnreadableHost("waaw.ac".into()), &Category::Sub).contains("waaw.ac"));
+}
+
+#[tokio::test]
+async fn a_removed_video_is_named_in_the_first_line() {
+    let gone = Arc::new(MockProvider::new("gone", Err(AppError::Network("HTTP 404 from cdn.example".into()))));
+    let manager = manager_of(&[gone]);
+    let message = failure_message(sources(&manager, 1.0, "sub", None).await);
+    assert_eq!(headline(&message), "The site removed this video.");
+    assert_eq!(details(&message), "No source found. gone: HTTP 404 from cdn.example");
+}
+
+// ---------------------------------------------------------------- the user's server order
+
+#[test]
+fn providers_follow_the_users_order_and_unnamed_ones_keep_theirs() {
+    let named = |names: &[&'static str]| -> Vec<Arc<dyn AnimeProvider>> {
+        names.iter().map(|n| Arc::new(MockProvider::new(n, Ok(Vec::new()))) as Arc<dyn AnimeProvider>).collect()
+    };
+    let order = vec!["c".to_string(), "A".to_string()];
+    let ordered: Vec<&str> = apply_order(named(&["a", "b", "c", "d"]), &order).iter().map(|p| p.name()).collect();
+    assert_eq!(ordered, vec!["c", "a", "b", "d"]);
+    let untouched: Vec<&str> = apply_order(named(&["a", "b"]), &[]).iter().map(|p| p.name()).collect();
+    assert_eq!(untouched, vec!["a", "b"]);
+}
+
+#[tokio::test]
+async fn an_earlier_provider_wins_over_a_later_one_that_is_only_a_little_faster() {
+    let host = host_with_good_stream().await;
+    let good = vec![hls(host.url("/hls/master.m3u8"))];
+    let mut first = MockProvider::new("first", Ok(good.clone()));
+    first.delay = Duration::from_millis(250);
+    let first = Arc::new(first);
+    let second = Arc::new(MockProvider::new("second", Ok(good)));
+    let manager = manager_of(&[first, second]);
+    let result = sources(&manager, 1.0, "sub", None).await.expect("a source");
+    assert_eq!(result.provider.as_deref(), Some("first"));
+}
+
+// ---------------------------------------------------------------- other names of a show
+
+#[tokio::test]
+async fn titles_from_the_catalogue_reach_the_extensions() {
+    let provider = Arc::new(MockProvider::new("named", Ok(Vec::new())));
+    let hints: HintSource = Arc::new(|_id| {
+        Box::pin(async {
+            // What the catalogue gives from MyAnimeList while AniList is down.
+            Ok(MediaHint {
+                id_mal: Some(40748),
+                titles: vec!["Jujutsu Kaisen".into(), "Sorcery Fight".into(), "JJK".into()],
+                english: Some("Jujutsu Kaisen".into()),
+                year: Some(2020),
+                episodes: Some(24),
+                format: Some("TV".into()),
+            })
+        })
+    });
+    let manager = ProviderManager::with_providers_and_hints(vec![provider.clone() as Arc<dyn AnimeProvider>], hints);
+    manager.get_all_episodes(113415, None, Some("Jujutsu Kaisen".to_string())).await.unwrap();
+    let seen = provider.titles_seen.lock().unwrap().clone();
+    assert_eq!(seen, vec!["Jujutsu Kaisen", "Sorcery Fight", "JJK"]);
 }

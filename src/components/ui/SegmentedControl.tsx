@@ -32,8 +32,11 @@ export function SegmentedControl<T extends string>({
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-    const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
-    const backward = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+    // Right to left, the next item is drawn on the left: swap the two horizontal arrows.
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    const key = rtl && e.key === 'ArrowLeft' ? 'ArrowRight' : rtl && e.key === 'ArrowRight' ? 'ArrowLeft' : e.key;
+    const forward = key === 'ArrowRight' || key === 'ArrowDown';
+    const backward = key === 'ArrowLeft' || key === 'ArrowUp';
     if (!forward && !backward) return;
     e.preventDefault();
     const enabled = options.map((o, i) => (o.disabled ? -1 : i)).filter((i) => i !== -1);
@@ -68,12 +71,12 @@ export function SegmentedControl<T extends string>({
             onClick={() => onChange(option.value)}
             onKeyDown={(e) => handleKeyDown(e, index)}
             className={clsx(
-              'inline-flex items-center justify-center gap-2 rounded-sm text-[13px] font-medium whitespace-nowrap select-none cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none',
+              'inline-flex items-center justify-center gap-2 rounded-sm text-[13px] font-medium whitespace-nowrap select-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
               size === 'sm' ? 'h-7' : 'h-8',
               option.label !== undefined ? 'px-3' : size === 'sm' ? 'w-7' : 'w-8',
               selected
                 ? 'bg-accent-tint text-accent-300'
-                : 'text-text-secondary hover:text-text-primary'
+                : 'text-text-secondary enabled:hover:text-text-primary'
             )}
           >
             {option.icon}

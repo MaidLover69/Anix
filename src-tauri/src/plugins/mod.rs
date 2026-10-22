@@ -39,6 +39,13 @@ pub fn start(app: tauri::AppHandle, registry: registry::PluginRegistry) {
             tracing::warn!("could not announce a plugin change: {}", e);
         }
     }));
+    let health_announcer = app.clone();
+    health::start_background(
+        registry.clone(),
+        std::sync::Arc::new(move || {
+            let _ = health_announcer.emit(health::EVENT_HEALTH_CHANGED, ());
+        }),
+    );
     tauri::async_runtime::spawn(async move {
         registry.load_all().await;
         registry.refresh_repos().await;

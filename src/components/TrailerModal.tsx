@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal } from './ui/Modal';
 import type { Trailer } from '../types';
+import { t } from '../i18n';
 
 interface TrailerModalProps {
   isOpen: boolean;
@@ -25,11 +26,11 @@ export const TrailerModal: React.FC<TrailerModalProps> = ({
   const embedUrl = `https://www.youtube-nocookie.com/embed/${trailer.id}?autoplay=1&rel=0`;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${animeTitle} trailer`} size="2xl">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('trailerModal.title', { title: animeTitle })} size="2xl">
       <div className="aspect-video w-full overflow-hidden rounded-xl bg-black">
         <iframe
           src={embedUrl}
-          title={`${animeTitle} trailer`}
+          title={t('trailerModal.title', { title: animeTitle })}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
           className="h-full w-full border-0"

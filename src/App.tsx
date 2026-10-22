@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { router } from './router';
 import { useThemeSync } from './hooks/useTheme';
+import { useSettings } from './hooks/useSettings';
+import { SetupDialog } from './components/setup/SetupDialog';
+import { applyLanguageSetting, useLocale } from './i18n';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,11 +33,27 @@ const ThemeSync: React.FC = () => {
   return null;
 };
 
+/**
+ * The screens, re-mounted when the interface language changes so every text is drawn again
+ * in it (the route and the query cache are kept).
+ */
+const LocalizedApp: React.FC = () => {
+  const settings = useSettings();
+  const appLanguage = settings.data?.app_language;
+  const settingsLoaded = settings.isSuccess;
+  useEffect(() => {
+    if (settingsLoaded) void applyLanguageSetting(appLanguage);
+  }, [settingsLoaded, appLanguage]);
+  const lang = useLocale();
+  return <RouterProvider key={lang} router={router} />;
+};
+
 export const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeSync />
-      <RouterProvider router={router} />
+      <LocalizedApp />
+      <SetupDialog />
     </QueryClientProvider>
   );
 };

@@ -4,16 +4,15 @@ import { Puzzle } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './ui/Button';
 import { PLUGIN_SETTINGS_PATH } from '../hooks/usePlugins';
+import { t } from '../i18n';
 
 /** What is missing, in one line: nothing installed, or nothing switched on. */
 export function noPluginsTitle(installed: number): string {
-  return installed === 0 ? 'No streaming plugin is installed' : 'No streaming plugin is enabled';
+  return installed === 0 ? t('noPluginsNotice.noneInstalled') : t('noPluginsNotice.noneEnabled');
 }
 
 export function noPluginsDetail(installed: number): string {
-  return installed === 0
-    ? 'Anix plays episodes through plugins. Add a plugin repository in Settings to start watching.'
-    : 'Anix plays episodes through plugins. Turn one on in Settings, or check the ones that failed to load.';
+  return installed === 0 ? t('noPluginsNotice.detailInstall') : t('noPluginsNotice.detailEnable');
 }
 
 interface NoPluginsNoticeProps {
@@ -55,7 +54,7 @@ export const NoPluginsNotice: React.FC<NoPluginsNoticeProps> = ({
           navigate(PLUGIN_SETTINGS_PATH);
         }}
       >
-        Open plugin settings
+        {t('noPluginsNotice.openSettings')}
       </Button>
     </div>
   );

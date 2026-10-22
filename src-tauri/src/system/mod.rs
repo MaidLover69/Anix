@@ -1,7 +1,9 @@
-//! Desktop integration: the tray and background mode, the autostart entry, and the
-//! hardware-acceleration diagnostics of Settings › System.
+//! Desktop integration: the tray and background mode, the autostart entry, the windowless
+//! `--background` release checks, and the hardware-acceleration diagnostics of Settings › System.
 
 pub mod autostart;
+pub mod background;
+pub mod gnutls;
 pub mod hwaccel;
 pub mod tray;
 
@@ -10,14 +12,18 @@ use serde_json::Value;
 
 /// Passed by the autostart entry: start hidden in the tray.
 pub const MINIMIZED_ARG: &str = "--minimized";
+/// Runs only the release checks, without a window (see [`background`]).
+pub const BACKGROUND_ARG: &str = "--background";
 
-/// The `settings.json` keys this module acts on. Both default to off.
+/// The `settings.json` keys this module acts on. All default to off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SystemSettings {
     /// "Keep running in the tray when the window is closed".
     pub minimize_to_tray: bool,
     /// "Start with the desktop session (minimised to tray)".
     pub start_with_desktop: bool,
+    /// "Alerts while Anix is closed": `--background` is started at login.
+    pub background_alerts: bool,
 }
 
 impl SystemSettings {
@@ -26,6 +32,7 @@ impl SystemSettings {
         Self {
             minimize_to_tray: flag("minimize_to_tray"),
             start_with_desktop: flag("start_with_desktop"),
+            background_alerts: flag("background_alerts"),
         }
     }
 
@@ -53,6 +60,10 @@ pub fn apply(app: &tauri::AppHandle, settings: SystemSettings) {
     };
     if let Err(e) = autostart::set_enabled(&config_home, exec.as_deref()) {
         tracing::warn!("The autostart entry could not be updated: {}", e);
+    }
+    let background = settings.background_alerts.then(autostart::current_exec_target).flatten();
+    if let Err(e) = background::install(&config_home, background.as_deref()) {
+        tracing::warn!("Alerts while Anix is closed could not be set up: {}", e);
     }
 }
 

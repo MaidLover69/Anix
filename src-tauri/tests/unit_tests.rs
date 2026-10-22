@@ -430,3 +430,84 @@ fn test_local_anime_file_model() {
     assert_eq!(file.parsed_title, "Frieren");
     assert_eq!(file.parsed_episode, Some(1.0));
 }
+
+#[test]
+fn errors_map_to_stable_short_codes() {
+    use anix_lib::error::code_for_message;
+    let cases = [
+        (AppError::Network("graphql.anilist.co timed out".into()), "CAT-TIMEOUT"),
+        (AppError::Network("AniList answered HTTP 403".into()), "CAT-403"),
+        (AppError::Network("cdn.example: HTTP status 503".into()), "NET-503"),
+        (AppError::Network("cdn.example: connection reset".into()), "NET-ERR"),
+        (AppError::Unreachable("graphql.anilist.co: dns error: failed to lookup address".into()), "CAT-DNS"),
+        (AppError::Unreachable("cdn.example: invalid peer certificate".into()), "NET-TLS"),
+        (AppError::Unreachable("cdn.example: Connection refused".into()), "NET-CONNECT"),
+        (AppError::Database("locked".into()), "DB-ERR"),
+        (AppError::Parse("kitsu.io: expected value".into()), "CAT-PARSE"),
+        (AppError::provider("hianime", "HTTP 404"), "SRC-404"),
+        (AppError::CaptchaRequired, "SRC-CAPTCHA"),
+        (AppError::VerificationRequired { site: "example".into(), origin: "https://example.org".into() }, "SRC-VERIFY"),
+        (AppError::NoSourcesFound, "SRC-NONE"),
+        (AppError::RateLimited { retry_after_s: 30 }, "NET-429"),
+        (AppError::AuthRequired, "AUTH-LOGIN"),
+        (AppError::Other("disk full".into()), "APP-ERR"),
+    ];
+    for (error, code) in cases {
+        assert_eq!(error.code(), code, "{:?}", error);
+        // The same code comes back from the text the frontend receives.
+        assert_eq!(code_for_message(&error.to_string()), code, "{}", error);
+    }
+    assert_eq!(AppError::SourcesUnavailable("hianime: no stream".into()).code(), "SRC-UNAVAILABLE");
+    // Plain failure messages (downloads, updates) still get a code from what they name.
+    assert_eq!(code_for_message("The stream host answered HTTP 403 Forbidden."), "NET-403");
+    assert_eq!(code_for_message("The stream host did not answer in time."), "APP-ERR");
+    assert_eq!(code_for_message("Could not reach AniList: request timed out"), "CAT-TIMEOUT");
+}
+
+#[test]
+fn gnutls_priority_is_set_only_for_an_appimage_without_a_policy_or_user_value() {
+    use anix_lib::system::gnutls::needs_priority;
+    use std::ffi::OsStr;
+    let appimage = Some(OsStr::new("/home/u/Anix.AppImage"));
+    assert!(needs_priority(appimage, false, None));
+    assert!(!needs_priority(appimage, true, None), "Fedora ships the policy file");
+    assert!(!needs_priority(appimage, false, Some(OsStr::new("PERFORMANCE"))), "a user value wins");
+    assert!(!needs_priority(None, false, None), "not an AppImage");
+    assert!(!needs_priority(Some(OsStr::new("")), false, None));
+}
+
+#[test]
+fn the_diagnostics_report_leaves_out_private_data() {
+    use anix_lib::diagnostics::{redact, report_settings};
+    let text = "\
+Download failed: https://cdn.example/v/ep3.m3u8?token=abc123&expires=99#t=5
+Logged in as someone.name+tag@example.co.uk
+Authorization: Bearer abc.def-ghi
+settings: {\"anilist_token\": \"s3cr3t-value\", \"session=xyz\"}
+jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl here
+key 0123456789abcdef0123456789abcdef01 end
+Saved to /home/someone/Videos/Anime/Show.mkv and /run/media/someone/Disk/a.mkv
+A folder at /media/other/stuff and file:///home/someone/x
+Kept: https://anilist.co/anime/21 and a 16-char tag 0123456789abcdef";
+    let out = redact(text, Some("/home/someone"));
+
+    for gone in ["abc123", "expires", "someone.name", "example.co.uk", "abc.def-ghi", "s3cr3t-value", "xyz", "eyJhbGci", "0123456789abcdef0123456789abcdef01", "someone", "other"] {
+        assert!(!out.contains(gone), "{:?} is still in:\n{}", gone, out);
+    }
+    assert!(out.contains("https://cdn.example/v/ep3.m3u8?<removed>"), "{}", out);
+    assert!(out.contains("<email>"));
+    assert!(out.contains("~/Videos/Anime/Show.mkv"), "{}", out);
+    assert!(out.contains("/run/media/<user>/Disk/a.mkv"), "{}", out);
+    assert!(out.contains("/media/<user>/stuff"), "{}", out);
+    assert!(out.contains("https://anilist.co/anime/21"), "links without a query stay: {}", out);
+    assert!(out.contains("0123456789abcdef"), "short ids stay readable: {}", out);
+
+    let settings = serde_json::json!({
+        "theme": "dark", "download_dir": "/home/someone/Anime", "anilist_token": "t", "mal_refresh_token": "r",
+        "comick_session": "c", "plugin_password": "p",
+    });
+    assert_eq!(
+        report_settings(&settings),
+        serde_json::json!({ "theme": "dark", "download_dir": "/home/someone/Anime" })
+    );
+}

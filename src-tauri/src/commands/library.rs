@@ -212,3 +212,65 @@ pub async fn get_watched_history(
         .await
         .map_err(|e| e.to_string())
 }
+
+/// When episodes were watched (Unix milliseconds), for the watch streak.
+#[tauri::command]
+pub async fn get_watch_times(state: State<'_, AppState>) -> Result<Vec<i64>, String> {
+    db::get_watch_times(&state.pool).await.map_err(|e| e.to_string())
+}
+
+/// Chooses the list status of an anime (putting it on the watchlist when needed). It is sent
+/// to the connected AniList and MyAnimeList lists in the background, or later when they
+/// cannot be reached.
+#[tauri::command]
+pub async fn set_list_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    anilist_id: i32,
+    title: String,
+    cover: Option<String>,
+    format: Option<String>,
+    average_score: Option<i32>,
+    status: String,
+) -> Result<(), String> {
+    accounts::sync::set_status(
+        &state.pool,
+        anilist_id,
+        &title,
+        cover.as_deref(),
+        format.as_deref(),
+        average_score,
+        &status,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    accounts::spawn_sync(app);
+    Ok(())
+}
+
+/// The status of one anime: the connected tracker's, or the watchlist's.
+#[tauri::command]
+pub async fn get_list_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    anilist_id: i32,
+) -> Result<accounts::sync::ListStatus, String> {
+    let (store, notifier) = accounts::parts(&app)?;
+    let ctx = accounts::context(&state, &store, &notifier);
+    accounts::sync::list_status(&ctx, anilist_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reads the statuses of the connected AniList list into the watchlist and sends what is
+/// waiting. Returns how many statuses changed.
+#[tauri::command]
+pub async fn sync_list_statuses(app: AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
+    let (store, notifier) = accounts::parts(&app)?;
+    let ctx = accounts::context(&state, &store, &notifier);
+    accounts::sync::drain(&ctx).await;
+    let connected = store.is_connected(accounts::oauth::Service::AniList);
+    accounts::sync::pull_statuses(&ctx)
+        .await
+        .map_err(|e| accounts::session::error_message(accounts::oauth::Service::AniList, connected, &e))
+}

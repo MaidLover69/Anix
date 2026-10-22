@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { CustomPlaylistItem } from '../types';
+import type { ScreenFit } from '../components/player/playerLogic';
+import type { Anime4kPreset } from '../lib/anime4k';
 
 export const DEFAULT_SUBTITLE_BACKGROUND = 'rgba(0, 0, 0, 0.5)';
 
@@ -16,6 +18,10 @@ interface PlayerState {
   subtitleBackground: string;
   /** Text size of the second subtitle, shown at the top of the picture. */
   secondarySubtitleFontSize: number;
+  /** Fit, Crop or Fill the screen with the picture. */
+  screenFit: ScreenFit;
+  /** Anime4K upscaling (embedded mpv only). */
+  anime4k: Anime4kPreset;
 
   // Kept for the running session only.
   playbackRate: number;
@@ -37,6 +43,8 @@ interface PlayerState {
   setSubtitleBackground: (background: string) => void;
   setSubtitleDelayMs: (delay: number) => void;
   setSecondarySubtitleFontSize: (size: number) => void;
+  setScreenFit: (fit: ScreenFit) => void;
+  setAnime4k: (preset: Anime4kPreset) => void;
   setMiniPlayer: (mini: boolean) => void;
   setCustomQueue: (items: CustomPlaylistItem[], startIndex?: number, playlistName?: string) => void;
   clearCustomQueue: () => void;
@@ -54,6 +62,8 @@ export const usePlayerStore = create<PlayerState>()(
       subtitleColor: '#ffffff',
       subtitleBackground: DEFAULT_SUBTITLE_BACKGROUND,
       secondarySubtitleFontSize: 18,
+      screenFit: 'fit',
+      anime4k: 'off',
 
       playbackRate: 1,
       subtitleDelayMs: 0,
@@ -76,6 +86,8 @@ export const usePlayerStore = create<PlayerState>()(
       setSubtitleDelayMs: (subtitleDelayMs) => set({ subtitleDelayMs }),
       setSecondarySubtitleFontSize: (secondarySubtitleFontSize) => set({ secondarySubtitleFontSize }),
       setMiniPlayer: (miniPlayer) => set({ miniPlayer }),
+      setScreenFit: (screenFit) => set({ screenFit }),
+      setAnime4k: (anime4k) => set({ anime4k }),
 
       setCustomQueue: (items, startIndex = 0, playlistName) => {
         set({
@@ -109,6 +121,8 @@ export const usePlayerStore = create<PlayerState>()(
         subtitleColor: state.subtitleColor,
         subtitleBackground: state.subtitleBackground,
         secondarySubtitleFontSize: state.secondarySubtitleFontSize,
+        screenFit: state.screenFit,
+        anime4k: state.anime4k,
       }),
     }
   )

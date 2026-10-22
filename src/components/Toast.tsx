@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useUIStore } from '../stores/uiStore';
 import type { ToastMessage } from '../stores/uiStore';
 import { Button } from './ui/Button';
+import { t } from '../i18n';
 
 interface ToastContainerProps {
   /**
@@ -24,6 +25,8 @@ const ICONS: Record<ToastMessage['type'], React.ReactNode> = {
 export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bottom-right' }) => {
   const toasts = useUIStore((s) => s.toasts);
   const removeToast = useUIStore((s) => s.removeToast);
+  const pauseToast = useUIStore((s) => s.pauseToast);
+  const resumeToast = useUIStore((s) => s.resumeToast);
 
   // Only the fullscreen element is painted while fullscreen, so toasts follow it.
   const [fullscreenElement, setFullscreenElement] = useState<Element | null>(
@@ -35,7 +38,8 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
 
-  // The live region stays mounted while empty so that additions are announced.
+  // The live region stays mounted while empty so that additions are announced. It is the only
+  // live region: a role on each toast as well would announce it twice.
   return createPortal(
     <div
       aria-live="polite"
@@ -44,14 +48,25 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
         'pointer-events-none fixed z-[80] flex w-full flex-col gap-2 px-4',
         placement === 'top-center'
           ? 'left-1/2 top-24 max-w-[480px] -translate-x-1/2 items-center'
-          : 'bottom-6 right-2 max-w-[392px] items-stretch'
+          : 'bottom-6 end-2 max-w-[392px] items-stretch'
       )}
     >
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          role={toast.type === 'error' ? 'alert' : 'status'}
-          className="ui-toast pointer-events-auto flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 pl-4 pr-2 shadow-pop animate-slide-up"
+          // Paused while the pointer or keyboard focus is on it, so it can't vanish mid-read.
+          onPointerEnter={() => pauseToast(toast.id)}
+          onPointerLeave={(e) => {
+            if (!e.currentTarget.contains(document.activeElement)) resumeToast(toast.id);
+          }}
+          onFocus={() => pauseToast(toast.id)}
+          onBlur={(e) => {
+            const toastEl = e.currentTarget;
+            if (!toastEl.contains(e.relatedTarget as Node | null) && !toastEl.matches(':hover')) {
+              resumeToast(toast.id);
+            }
+          }}
+          className="ui-toast pointer-events-auto flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 ps-4 pe-2 shadow-pop animate-slide-up"
         >
           {ICONS[toast.type]}
           <div className="flex min-w-0 flex-1 flex-col">
@@ -68,7 +83,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
             icon
             variant="ghost"
             size="sm"
-            aria-label="Dismiss notification"
+            aria-label={t('toast.dismiss')}
             onClick={() => removeToast(toast.id)}
             className="-my-1"
           >

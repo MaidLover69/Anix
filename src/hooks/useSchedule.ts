@@ -4,6 +4,7 @@ import { errorMessage } from '../components/ui/ErrorState';
 import { useUIStore } from '../stores/uiStore';
 import { useSettings } from './useSettings';
 import type { AiringEntry, NotificationPreference } from '../types';
+import { t } from '../i18n';
 
 export function useAiringSchedule(fromTs: number, toTs: number) {
   return useQuery<AiringEntry[]>({
@@ -17,6 +18,15 @@ export function useAiringSchedule(fromTs: number, toTs: number) {
 
 const NOTIFICATION_PREFERENCES_KEY = ['notificationPreferences'] as const;
 const NOTIFICATION_MUTATION_KEY = ['notificationPreference'] as const;
+
+/** Every bell that is on (the same fetch as `useNotificationBell`). */
+export function useNotificationBells() {
+  return useQuery({
+    queryKey: NOTIFICATION_PREFERENCES_KEY,
+    queryFn: () => invoke<NotificationPreference[]>('list_notification_preferences'),
+    staleTime: Infinity,
+  });
+}
 
 /**
  * Whether the release-notification bell of one anime is on. Every bell on screen reads the
@@ -62,15 +72,15 @@ export function useSetNotificationBell() {
       if (silenced) {
         showToast({
           type: 'info',
-          title: 'Bell saved',
-          message: 'Release notifications are switched off in Settings, so nothing will be shown until they are back on.',
+          title: t('useSchedule.bellSaved'),
+          message: t('useSchedule.bellSavedSilenced'),
         });
         return;
       }
       showToast({
         type: 'success',
-        title: 'Notifications on',
-        message: `You'll be notified when new episodes of ${pref.media_title} air.`,
+        title: t('useSchedule.notificationsOn'),
+        message: t('useSchedule.notifiedWhenAiring', { title: pref.media_title }),
       });
     },
     onError: (error, pref, context) => {
@@ -81,7 +91,7 @@ export function useSetNotificationBell() {
       });
       showToast({
         type: 'error',
-        title: pref.enabled ? 'Could not turn notifications on' : 'Could not turn notifications off',
+        title: pref.enabled ? t('useSchedule.couldNotTurnOn') : t('useSchedule.couldNotTurnOff'),
         message: errorMessage(error),
       });
     },
@@ -92,4 +102,51 @@ export function useSetNotificationBell() {
       }
     },
   });
+}
+
+const LEAD_TIMES_KEY = ['bellLeadTimes'] as const;
+
+/** Minutes before air time a bell can remind; 0 is no reminder. */
+export const LEAD_CHOICES = [0, 10, 30, 60] as const;
+
+/** How many minutes before an episode airs the bell of one anime reminds (0 = not before). */
+export function useBellLeadTime(mediaId: number) {
+  return useQuery({
+    queryKey: LEAD_TIMES_KEY,
+    queryFn: () => invoke<[number, number][]>('list_bell_lead_times'),
+    staleTime: Infinity,
+    select: (pairs) => pairs.find(([id]) => id === mediaId)?.[1] ?? 0,
+  });
+}
+
+/** Sets a bell's reminder lead time; the bell must already be on. */
+export function useSetBellLeadTime() {
+  const queryClient = useQueryClient();
+  const showToast = useUIStore((s) => s.showToast);
+  return useMutation({
+    mutationFn: ({ mediaId, minutes }: { mediaId: number; minutes: number }) =>
+      invoke<void>('set_bell_lead_time', { mediaId, minutes }),
+    onSuccess: (_data, { minutes }) => {
+      if (minutes > 0) {
+        showToast({
+          type: 'success',
+          title: t('useSchedule.reminderSet'),
+          message:
+            minutes >= 60
+              ? t('useSchedule.remindedHoursBefore', { count: minutes / 60 })
+              : t('useSchedule.remindedMinutesBefore', { count: minutes }),
+        });
+      }
+    },
+    onError: (error) =>
+      showToast({ type: 'error', title: t('useSchedule.couldNotSetReminder'), message: errorMessage(error) }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: LEAD_TIMES_KEY }),
+  });
+}
+
+export function leadTimeLabel(minutes: number): string {
+  if (minutes <= 0) return t('useSchedule.onlyWhenAirs');
+  return minutes >= 60
+    ? t('useSchedule.hoursBefore', { count: minutes / 60 })
+    : t('useSchedule.minutesBefore', { count: minutes });
 }

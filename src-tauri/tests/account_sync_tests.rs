@@ -97,6 +97,16 @@ fn respond(remote: &Shared, request: &Recorded) -> (u16, String) {
             );
         }
 
+        if query.contains("MediaListCollection") {
+            let entries: Vec<Value> = remote
+                .anime
+                .iter()
+                .filter_map(|(id, anime)| anime.anilist_entry.as_ref().map(|(status, progress)| (id, status, progress)))
+                .map(|(id, status, progress)| json!({ "id": id + 10_000, "mediaId": id, "status": status, "progress": progress, "score": 0, "media": { "id": id } }))
+                .collect();
+            return (200, json!({ "data": { "MediaListCollection": { "lists": [{ "name": "all", "entries": entries }] } } }).to_string());
+        }
+
         let id = variables["id"].as_i64().unwrap_or(0) as i32;
         return match remote.anime.get(&id) {
             None => (404, r#"{"errors":[{"message":"Not Found.","status":404}],"data":{"Media":null}}"#.to_string()),
@@ -762,4 +772,128 @@ async fn test_account_save_entry_reports_a_failed_mal_copy() {
     }
     assert!(world.store.is_connected(Service::Mal));
     assert_eq!(server.requests_to("/v2/").len(), 1);
+}
+
+// ---- List statuses ------------------------------------------------------------------------
+
+async fn local_status(world: &World, id: i32) -> Option<(String, bool)> {
+    db::get_watchlist_status(&world.pool, id).await.unwrap()
+}
+
+#[tokio::test]
+async fn test_account_connected_tracker_status_is_shown_and_local_change_pushed() {
+    let (remote, server) = remote_with(vec![
+        (100, Anime::new(Some(5100), Some(24), "FINISHED").on_anilist("PAUSED", 4).on_mal("on_hold", 4)),
+        (200, Anime::new(Some(5200), Some(12), "FINISHED").on_anilist("REPEATING", 2)),
+    ]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    connect_mal(&world);
+    db::add_to_watchlist(&world.pool, 100, "Show", None, None, None).await.unwrap();
+    db::add_to_watchlist(&world.pool, 200, "Other", None, None, None).await.unwrap();
+
+    // The tracker wins: its status replaces the watchlist's.
+    let shown = sync::list_status(&world.ctx(), 100).await.unwrap();
+    assert_eq!(shown, sync::ListStatus { status: Some("PAUSED".to_string()), synced: true, source: "anilist" });
+    assert_eq!(local_status(&world, 100).await, Some(("PAUSED".to_string(), true)));
+    // The whole list is read back at once too; a rewatch is "Watching" here.
+    assert_eq!(sync::pull_statuses(&world.ctx()).await.unwrap(), 1);
+    assert_eq!(local_status(&world, 200).await, Some(("CURRENT".to_string(), true)));
+
+    // A status chosen here is sent to both lists and then counts as in sync.
+    sync::set_status(&world.pool, 100, "Show", None, None, None, "DROPPED").await.unwrap();
+    assert_eq!(local_status(&world, 100).await, Some(("DROPPED".to_string(), false)));
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!((report.updated, report.failed), (2, 0));
+    assert_eq!(anilist_entry(&remote, 100), some("DROPPED", 4));
+    assert_eq!(mal_entry(&remote, 100), some("dropped", 4));
+    assert_eq!(mutations(&server).last().unwrap(), &json!({ "mediaId": 100, "status": "DROPPED" }));
+    assert_eq!(local_status(&world, 100).await, Some(("DROPPED".to_string(), true)));
+
+    // Unknown statuses are refused.
+    assert!(sync::set_status(&world.pool, 100, "Show", None, None, None, "WATCHING").await.is_err());
+}
+
+#[tokio::test]
+async fn test_account_status_chosen_while_anilist_is_down_is_pushed_on_recovery() {
+    let (remote, server) = remote_with(vec![(100, Anime::new(Some(5100), Some(24), "FINISHED").on_anilist("PLANNING", 0))]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    db::add_to_watchlist(&world.pool, 100, "Show", None, None, None).await.unwrap();
+
+    remote.lock().unwrap().broken = Some(503);
+    sync::set_status(&world.pool, 100, "Show", None, None, None, "CURRENT").await.unwrap();
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!((report.updated, report.failed), (0, 1));
+    assert_eq!(local_status(&world, 100).await, Some(("CURRENT".to_string(), false)));
+    // The watchlist's status is shown meanwhile, and a pull does not overwrite it.
+    let shown = sync::list_status(&world.ctx(), 100).await.unwrap();
+    assert_eq!(shown, sync::ListStatus { status: Some("CURRENT".to_string()), synced: false, source: "local" });
+    assert!(world.store.is_connected(Service::AniList));
+
+    remote.lock().unwrap().broken = None;
+    assert_eq!(sync::pull_statuses(&world.ctx()).await.unwrap(), 0);
+    assert_eq!(local_status(&world, 100).await, Some(("CURRENT".to_string(), false)));
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!(report.updated, 1);
+    assert_eq!(anilist_entry(&remote, 100), some("CURRENT", 0));
+    assert_eq!(local_status(&world, 100).await, Some(("CURRENT".to_string(), true)));
+}
+
+#[tokio::test]
+async fn test_account_status_without_account_stays_local_until_connected() {
+    let (remote, server) = remote_with(vec![(100, Anime::new(Some(5100), Some(24), "FINISHED"))]);
+    let world = World::new(&server.base).await;
+
+    // Not on the watchlist yet: choosing a status puts it there.
+    sync::set_status(&world.pool, 100, "Show", Some("c.jpg"), Some("TV"), Some(80), "COMPLETED").await.unwrap();
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!(report, sync::DrainReport::default());
+    assert!(server.requests().is_empty());
+    let shown = sync::list_status(&world.ctx(), 100).await.unwrap();
+    assert_eq!(shown, sync::ListStatus { status: Some("COMPLETED".to_string()), synced: false, source: "local" });
+    assert_eq!(sync::pull_statuses(&world.ctx()).await.unwrap(), 0);
+    let row = &db::get_watchlist(&world.pool).await.unwrap()[0];
+    assert_eq!((row.title.as_str(), row.status.as_str(), row.synced), ("Show", "COMPLETED", false));
+
+    // Connected later: the waiting status is sent.
+    connect_anilist(&world);
+    sync::drain(&world.ctx()).await;
+    assert_eq!(anilist_entry(&remote, 100), some("COMPLETED", 0));
+    assert_eq!(local_status(&world, 100).await, Some(("COMPLETED".to_string(), true)));
+}
+
+// ---- Stand-in ids ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_account_stand_in_with_mal_id_syncs_to_mal_only() {
+    // -(1 × 100 000 000 + 5300): an anime known by its MyAnimeList id 5300 only.
+    let stand_in = -100_005_300;
+    assert_eq!(sync::stand_in_mal_id(stand_in), Some(5300));
+    let (remote, server) = remote_with(vec![(1, Anime::new(Some(5300), Some(12), "FINISHED"))]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    connect_mal(&world);
+
+    assert!(sync::queue_watched_episode(&world.pool, stand_in, 3.0).await.unwrap());
+    assert!(queued(&world, Service::AniList).await.is_empty());
+    assert_eq!(queued(&world, Service::Mal).await, vec![(stand_in, PendingKind::Progress, 3, 0)]);
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!((report.updated, report.failed), (1, 0));
+    assert_eq!(mal_entry(&remote, 1), some("watching", 3));
+    assert_eq!(mal_updates(&server)[0].url, "/v2/anime/5300/my_list_status");
+
+    // A status goes to MAL as well; AniList is never asked about a stand-in.
+    sync::set_status(&world.pool, stand_in, "Stand-in", None, None, None, "PAUSED").await.unwrap();
+    sync::drain(&world.ctx()).await;
+    assert_eq!(mal_entry(&remote, 1), some("on_hold", 3));
+    assert!(server.requests_to("/graphql").is_empty());
+    assert_eq!(local_status(&world, stand_in).await, Some(("PAUSED".to_string(), true)));
+
+    // Stand-ins without a MyAnimeList id (Kitsu 77 here), and id 0, are still skipped.
+    for no_mal in [-200_000_077, 0, -5] {
+        assert_eq!(sync::stand_in_mal_id(no_mal), None);
+        assert!(!sync::queue_watched_episode(&world.pool, no_mal, 1.0).await.unwrap());
+        assert!(!sync::queue_watchlist_addition(&world.ctx(), no_mal).await.unwrap());
+    }
 }

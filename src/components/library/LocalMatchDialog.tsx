@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { Button, Modal, Spinner, errorMessage } from '../ui';
 import { CoverThumb } from './CoverThumb';
 import { INPUT_CLASS, mediaFormatLabel } from './format';
+import { t, tn } from '../../i18n';
 import {
   candidateTitle,
   matchRequest,
@@ -28,7 +29,7 @@ export function candidateDetails(candidate: MatchCandidate): string {
   return [
     mediaFormatLabel(candidate.format),
     year ? String(year) : null,
-    candidate.episodes ? `${candidate.episodes} ${candidate.episodes === 1 ? 'episode' : 'episodes'}` : null,
+    candidate.episodes ? t('common.episodeCount', { count: candidate.episodes }) : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -56,17 +57,17 @@ const CandidateRow: React.FC<{
         )}
         <span className="text-xs text-text-muted tabular-nums">
           {candidateDetails(candidate)}
-          {candidate.score > 0 && ` · ${Math.round(candidate.score * 100)}% fit`}
+          {candidate.score > 0 && ` · ${t('localMatchDialog.fit', { percent: Math.round(candidate.score * 100) })}`}
         </span>
       </div>
       {current ? (
         <span className="flex flex-shrink-0 items-center gap-1 text-xs text-accent-300">
           <Check className="h-3.5 w-3.5" aria-hidden="true" />
-          Current
+          {t('localMatchDialog.current')}
         </span>
       ) : (
         <Button size="sm" variant="neutral" disabled={disabled} onClick={onPick} className="flex-shrink-0">
-          Use this
+          {t('localMatchDialog.useThis')}
         </Button>
       )}
     </li>
@@ -98,14 +99,16 @@ export const LocalMatchDialog: React.FC<LocalMatchDialogProps> = ({
     <Modal
       isOpen={series !== null}
       onClose={onClose}
-      title="Choose the title"
+      title={t('localMatchDialog.title')}
       size="xl"
       header={
         series && (
           <p className="text-xs text-text-muted">
-            For <span className="select-text text-text-secondary">{series.title}</span>
-            {series.season ? `, season ${series.season}` : ''} ({series.files.length}{' '}
-            {series.files.length === 1 ? 'file' : 'files'})
+            {tn(
+              series.season ? 'localMatchDialog.forSeriesSeason' : 'localMatchDialog.forSeries',
+              { title: <span className="select-text text-text-secondary">{series.title}</span> },
+              { count: series.files.length, season: series.season ?? '' }
+            )}
           </p>
         )
       }
@@ -114,10 +117,10 @@ export const LocalMatchDialog: React.FC<LocalMatchDialogProps> = ({
           <>
             <Button variant="ghost" disabled={busy} onClick={() => onResearch(series)}>
               <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Match again</span>
+              <span>{t('localMatchDialog.matchAgain')}</span>
             </Button>
             <Button variant="secondary" onClick={onClose}>
-              Close
+              {t('common.close')}
             </Button>
           </>
         )
@@ -126,11 +129,11 @@ export const LocalMatchDialog: React.FC<LocalMatchDialogProps> = ({
       {series && (
         <div className="flex flex-col gap-3">
           <label htmlFor="local-match-search" className="sr-only">
-            Search AniList
+            {t('localMatchDialog.searchAniList')}
           </label>
           <div className="relative">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+              className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
               aria-hidden="true"
             />
             <input
@@ -138,16 +141,16 @@ export const LocalMatchDialog: React.FC<LocalMatchDialogProps> = ({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search AniList"
+              placeholder={t('localMatchDialog.searchAniList')}
               spellCheck={false}
               autoComplete="off"
-              className={`${INPUT_CLASS} w-full pl-9`}
+              className={`${INPUT_CLASS} w-full ps-9`}
             />
           </div>
 
           {searchingOther && (search.typing || search.isFetching) ? (
             <div className="flex justify-center py-8">
-              <Spinner label="Searching AniList" className="text-text-muted" />
+              <Spinner label={t('localMatchDialog.searching')} className="text-text-muted" />
             </div>
           ) : searchingOther && search.isError ? (
             <p role="alert" className="py-6 text-center text-xs text-state-error select-text">
@@ -157,9 +160,9 @@ export const LocalMatchDialog: React.FC<LocalMatchDialogProps> = ({
             <p className="py-6 text-center text-xs text-text-muted">
               {searchingOther
                 ? search.debouncedQuery.length < 2
-                  ? 'Type at least two characters.'
-                  : 'AniList found nothing for this search.'
-                : 'No results yet. Search for the title above.'}
+                  ? t('localMatchDialog.typeMore')
+                  : t('localMatchDialog.nothingFound')
+                : t('localMatchDialog.noResults')}
             </p>
           ) : (
             <ul className="flex max-h-[55vh] flex-col gap-1 overflow-y-auto">

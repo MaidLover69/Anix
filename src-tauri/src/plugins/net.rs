@@ -39,6 +39,30 @@ pub const SESSION_START_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_DECODED_TEXT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_NOTES: usize = 64;
 const MAX_WAITS: usize = 64;
+/// A connection the network resets is tried this many more times, after these pauses.
+pub const RESET_RETRY_PAUSES: [Duration; 3] =
+    [Duration::from_millis(400), Duration::from_millis(900), Duration::from_millis(1800)];
+
+/// An error with every cause it wraps, for telling what happened underneath.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut current = error.source();
+    while let Some(cause) = current {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        current = cause.source();
+    }
+    text
+}
+
+/// True for a failed request the network cut off (a reset or a connection closed before the
+/// answer), which is worth repeating after a pause, unlike a refusal or a timeout.
+pub fn is_connection_reset(reason: &str) -> bool {
+    let lower = reason.to_ascii_lowercase();
+    ["connection reset", "reset by peer", "os error 104", "connection closed before message completed", "broken pipe"]
+        .iter()
+        .any(|sign| lower.contains(sign))
+}
 
 /// Request headers the HTTP client sets itself.
 const CLIENT_OWNED_HEADERS: [&str; 6] = [
@@ -326,10 +350,33 @@ impl NetContext {
         if let Some(body) = body {
             builder = builder.body(body.to_vec());
         }
-        let mut response = builder.send().await.map_err(|e| {
+        let started = Instant::now();
+        let mut pauses = RESET_RETRY_PAUSES.iter();
+        let mut response = loop {
+            let Some(request) = builder.try_clone() else {
+                break builder.send().await;
+            };
+            // Every try shares the one time limit.
+            match request.timeout(timeout.saturating_sub(started.elapsed())).send().await {
+                // A request that changes something is not sent twice.
+                Err(e) if method.is_idempotent() && is_connection_reset(&error_chain(&e)) => match pauses.next() {
+                    // Some networks reset about every other connection to a site; the next one
+                    // usually gets through.
+                    Some(pause) if started.elapsed() + *pause < timeout => {
+                        crate::clients::http::note_unreachable_host(url.host_str().unwrap_or_default(), "connection reset");
+                        tracing::info!("{}: connection reset, trying again", url.host_str().unwrap_or_default());
+                        tokio::time::sleep(*pause).await;
+                    }
+                    _ => break Err(e),
+                },
+                other => break other,
+            }
+        }
+        .map_err(|e| {
             let error = AppError::from(e);
             if error.is_connection_failure() {
                 self.note(NetNote::Unreachable(error.reason()));
+                crate::clients::http::note_unreachable_host(url.host_str().unwrap_or_default(), &error.reason());
             }
             error.reason()
         })?;
@@ -478,6 +525,9 @@ impl NetContext {
             let head = String::from_utf8_lossy(&response.body[..response.body.len().min(32 * 1024)]);
             if detect_barrier(response.meta.status, &lowered, &head).is_none() {
                 self.note(NetNote::Answered);
+                if let Some(site) = site {
+                    web_session::clear_plain_refusal(site);
+                }
                 return Ok(response);
             }
             match site {
@@ -506,7 +556,13 @@ impl NetContext {
         };
 
         match web_session::choose(self.session.as_ref(), site, access) {
-            SessionChoice::Keep => return give_up(self, NetNote::Blocked, "blocked by anti-bot check"),
+            SessionChoice::Keep => {
+                // Listed for Verify, so the user can get the site going again by hand.
+                if let Some(origin) = web_session::origin_of(&url) {
+                    web_session::note_plain_refusal(site, &origin, &asked);
+                }
+                return give_up(self, NetNote::Blocked, "blocked by anti-bot check");
+            }
             SessionChoice::Refused(AppError::VerificationRequired { site, origin }) => {
                 return give_up(self, NetNote::NeedsVerification { site, origin }, "needs verification");
             }

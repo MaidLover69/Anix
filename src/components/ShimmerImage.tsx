@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { t } from '../i18n';
 
 interface ShimmerImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> {
   src?: string | null;
@@ -50,7 +51,7 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
     <div ref={ref} className={`relative overflow-hidden ${className}`}>
       {!src || failed ? (
         <div className="absolute inset-0 flex items-center justify-center bg-bg-elevated text-text-muted">
-          {fallbackIcon || <span className="text-[11px]">No image</span>}
+          {fallbackIcon || <span className="text-[11px]">{t('shimmerImage.noImage')}</span>}
         </div>
       ) : (
         <>

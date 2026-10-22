@@ -640,6 +640,7 @@ fn download(id: &str, episode: f64) -> DownloadRecord {
         error_msg: None,
         created_at: 0,
         updated_at: 0,
+        ..Default::default()
     }
 }
 
@@ -810,4 +811,105 @@ async fn startup_reconciliation_requeues_interrupted_downloads_only() {
     assert_eq!((broken.status.as_str(), broken.error_msg.as_deref()), ("FAILED", Some("HTTP 403")));
 
     assert_eq!(db::reconcile_stale_downloads(&pool).await.unwrap(), 0, "nothing left to reconcile");
+}
+
+// ---------------------------------------------------------------------------------------
+// List statuses on the watchlist
+// ---------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn watchlist_rows_from_1_2_0_become_plan_to_watch() {
+    let tmp = TempDir::new("watchlist-status");
+    let path = tmp.db_path();
+    let old = raw_pool(&path).await;
+    sqlx::query(
+        r#"
+        CREATE TABLE watchlist (
+            anilist_id      INTEGER PRIMARY KEY,
+            title           TEXT NOT NULL,
+            cover           TEXT,
+            format          TEXT,
+            average_score   INTEGER,
+            added_at        INTEGER NOT NULL
+        );
+        INSERT INTO watchlist VALUES (1, 'One', NULL, 'TV', 70, 1000), (2, 'Two', 'c.jpg', NULL, NULL, 2000);
+        "#,
+    )
+    .execute(&old)
+    .await
+    .unwrap();
+    old.close().await;
+
+    let pool = db::init_db_at(&path).await.expect("migrate");
+    let list = db::get_watchlist(&pool).await.unwrap();
+    assert_eq!(list.len(), 2);
+    for row in &list {
+        assert_eq!((row.status.as_str(), row.synced), ("PLANNING", true), "{}", row.title);
+    }
+    assert_eq!(db::get_watchlist_status(&pool, 2).await.unwrap(), Some(("PLANNING".to_string(), true)));
+    pool.close().await;
+
+    // Running the migration again changes nothing.
+    let pool = db::init_db_at(&path).await.expect("reopen");
+    assert_eq!(db::get_watchlist(&pool).await.unwrap().len(), 2);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn watchlist_status_set_get_and_sync_flag() {
+    let pool = memory_db().await;
+    assert_eq!(db::get_watchlist_status(&pool, 5).await.unwrap(), None);
+
+    db::set_watchlist_status(&pool, 5, "Five", None, Some("TV"), Some(60), "CURRENT", false).await.unwrap();
+    assert_eq!(db::get_watchlist_status(&pool, 5).await.unwrap(), Some(("CURRENT".to_string(), false)));
+    assert!(db::is_in_watchlist(&pool, 5).await.unwrap());
+    assert_eq!(db::unsynced_watchlist(&pool).await.unwrap(), vec![(5, "CURRENT".to_string())]);
+
+    // A remote status does not overwrite one still waiting to be sent.
+    assert!(!db::take_remote_status(&pool, 5, "DROPPED").await.unwrap());
+    // Marking an older status as sent does nothing once it changed again.
+    db::set_watchlist_status(&pool, 5, "Five", None, None, None, "COMPLETED", false).await.unwrap();
+    db::mark_watchlist_synced(&pool, 5, "CURRENT").await.unwrap();
+    assert_eq!(db::get_watchlist_status(&pool, 5).await.unwrap(), Some(("COMPLETED".to_string(), false)));
+    db::mark_watchlist_synced(&pool, 5, "COMPLETED").await.unwrap();
+    assert!(db::unsynced_watchlist(&pool).await.unwrap().is_empty());
+    assert!(db::take_remote_status(&pool, 5, "PAUSED").await.unwrap());
+    // Remote statuses never add anime to the watchlist.
+    assert!(!db::take_remote_status(&pool, 6, "PAUSED").await.unwrap());
+
+    // The row keeps its title and added time; an unknown status is refused.
+    let row = &db::get_watchlist(&pool).await.unwrap()[0];
+    assert_eq!((row.title.as_str(), row.status.as_str(), row.average_score), ("Five", "PAUSED", Some(60)));
+    assert!(db::set_watchlist_status(&pool, 5, "Five", None, None, None, "REPEATING", false).await.is_err());
+    // A plain bookmark is Plan to watch and in sync.
+    db::add_to_watchlist(&pool, 7, "Seven", None, None, None).await.unwrap();
+    assert_eq!(db::get_watchlist_status(&pool, 7).await.unwrap(), Some(("PLANNING".to_string(), true)));
+}
+
+#[tokio::test]
+async fn watch_times_keep_the_days_a_rewatch_moves() {
+    let pool = memory_db().await;
+    // Episode 1 was watched on an earlier day (a recorded watch, then the row's time moved).
+    let earlier = 1_700_000_000_000_i64;
+    sqlx::query("INSERT INTO watch_events (anilist_id, episode_number, day, watched_at) VALUES (101, 1.0, ?1, ?2)")
+        .bind(earlier / 86_400_000)
+        .bind(earlier)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Rewatched now, twice (progress saves near the end): one new event for today.
+    let now = db::current_unix_millis();
+    db::update_watch_progress(&pool, &history(101, 1.0, 1_400_000, 1_440_000, now)).await.unwrap();
+    db::update_watch_progress(&pool, &history(101, 1.0, 1_430_000, 1_440_000, now)).await.unwrap();
+    // Not finished: no event.
+    db::update_watch_progress(&pool, &history(101, 2.0, 30_000, 1_440_000, now)).await.unwrap();
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_events").await, 2);
+
+    let times = db::get_watch_times(&pool).await.unwrap();
+    assert!(times.contains(&earlier), "the earlier day is kept");
+    assert!(times.iter().any(|t| *t >= now), "today's watch is there");
+
+    // Marking by hand counts as watching today, once.
+    db::set_episodes_watched(&pool, 202, "Other", None, &[1.0, 2.0], true).await.unwrap();
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_events WHERE anilist_id = 202").await, 2);
 }

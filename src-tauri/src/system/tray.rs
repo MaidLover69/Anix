@@ -7,7 +7,7 @@
 //! never be lost.
 
 use crate::db;
-use crate::notifier::{AniListSchedule, ScheduleSource, OPEN_ANIME_EVENT};
+use crate::notifier::{ScheduleSource, OPEN_ANIME_EVENT};
 use crate::state::AppState;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -111,11 +111,14 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     if window.label() != MAIN_WINDOW {
         return;
     }
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        if hide_on_close() {
+    match event {
+        WindowEvent::CloseRequested { api, .. } if hide_on_close() => {
             api.prevent_close();
             let _ = window.hide();
         }
+        // Hidden helper windows (site sessions) would otherwise keep the process alive.
+        WindowEvent::Destroyed => window.app_handle().exit(0),
+        _ => {}
     }
 }
 
@@ -175,7 +178,8 @@ pub fn upcoming_label(item: &Upcoming, now: i64) -> String {
     } else {
         item.title.clone()
     };
-    format!("{} · Ep {} · {}", title, item.episode, when_label(item.airing_at, now))
+    let episode = crate::i18n::fill(crate::i18n::current(), "tray_episode", &[("episode", &item.episode.to_string())]);
+    format!("{} · {} · {}", title, episode, when_label(item.airing_at, now))
 }
 
 /// "today 18:30", "tomorrow 09:00" or "Tue 18:30", in local time.
@@ -185,13 +189,13 @@ fn when_label(at: i64, now: i64) -> String {
     };
     let time = format!("{:02}:{:02}", at_tm.tm_hour, at_tm.tm_min);
     let same_year = at_tm.tm_year == now_tm.tm_year;
+    let lang = crate::i18n::current();
     if same_year && at_tm.tm_yday == now_tm.tm_yday {
-        format!("today {}", time)
+        crate::i18n::fill(lang, "today", &[("time", &time)])
     } else if same_year && at_tm.tm_yday == now_tm.tm_yday + 1 {
-        format!("tomorrow {}", time)
+        crate::i18n::fill(lang, "tomorrow", &[("time", &time)])
     } else {
-        const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        format!("{} {}", DAYS[at_tm.tm_wday.rem_euclid(7) as usize], time)
+        format!("{} {}", crate::i18n::weekday(lang, at_tm.tm_wday.rem_euclid(7) as usize), time)
     }
 }
 
@@ -210,10 +214,11 @@ fn local_tm(at: i64) -> Option<libc::tm> {
 
 fn menu(app: &AppHandle, upcoming: &[Upcoming]) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::new(app)?;
-    menu.append(&MenuItem::with_id(app, MENU_OPEN, "Open Anix", true, None::<&str>)?)?;
+    let lang = crate::i18n::current();
+    menu.append(&MenuItem::with_id(app, MENU_OPEN, crate::i18n::text(lang, "tray_open"), true, None::<&str>)?)?;
     if !upcoming.is_empty() {
         let now = db::current_unix_timestamp();
-        let submenu = Submenu::new(app, "Airing next", true)?;
+        let submenu = Submenu::new(app, crate::i18n::text(lang, "tray_airing_next"), true)?;
         for item in upcoming {
             let id = format!("{}{}", MENU_ANIME_PREFIX, item.media_id);
             submenu.append(&MenuItem::with_id(app, id, upcoming_label(item, now), true, None::<&str>)?)?;
@@ -221,7 +226,7 @@ fn menu(app: &AppHandle, upcoming: &[Upcoming]) -> tauri::Result<Menu<tauri::Wry
         menu.append(&submenu)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, MENU_QUIT, "Quit Anix", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, MENU_QUIT, crate::i18n::text(lang, "tray_quit"), true, None::<&str>)?)?;
     Ok(menu)
 }
 
@@ -285,18 +290,23 @@ async fn refresh_upcoming(app: &AppHandle) {
         Vec::new()
     } else {
         let ids: Vec<i64> = bells.iter().map(|b| b.media_id).collect();
-        match AniListSchedule::new(state.client.clone())
-            .fetch(&ids, now, now + UPCOMING_WINDOW_S)
-            .await
-        {
-            Ok(airings) => pick_upcoming(&airings, &bells, now, UPCOMING_COUNT),
+        // Through the catalogue, so the list keeps working while AniList is down and also covers
+        // anime with only a stand-in id.
+        match state.catalogue.fetch_marked(&ids, now, now + UPCOMING_WINDOW_S).await {
+            Ok(marked) => pick_upcoming(&marked.airings, &bells, now, UPCOMING_COUNT),
             // Offline: keep what the menu shows.
             Err(_) => return,
         }
     };
-    *UPCOMING.lock().unwrap_or_else(|p| p.into_inner()) = upcoming.clone();
+    *UPCOMING.lock().unwrap_or_else(|p| p.into_inner()) = upcoming;
     // Rebuilt every time: the "today"/"tomorrow" labels change with the clock.
+    relabel(app);
+}
+
+/// Rebuilds the menu from the last "Airing next" list, e.g. after the interface language changed.
+pub fn relabel(app: &AppHandle) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let upcoming = UPCOMING.lock().unwrap_or_else(|p| p.into_inner()).clone();
         match menu(app, &upcoming) {
             Ok(menu) => {
                 let _ = tray.set_menu(Some(menu));

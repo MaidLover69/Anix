@@ -55,7 +55,15 @@ pub async fn set_plugin_config(
 /// Runs a quick test search through one plugin; nothing is played.
 #[tauri::command]
 pub async fn test_plugin(state: State<'_, AppState>, id: String) -> Result<PluginHealth, String> {
-    Ok(health::test_plugin(&state.plugins, &id).await)
+    let result = health::test_plugin(&state.plugins, &id).await;
+    health::remember(&result);
+    Ok(result)
+}
+
+/// The latest test result of every plugin, from Test, Test all or the background check.
+#[tauri::command]
+pub async fn get_plugin_health() -> Result<Vec<PluginHealth>, String> {
+    Ok(health::remembered())
 }
 
 /// The test search through every enabled plugin at once.
@@ -80,6 +88,9 @@ pub async fn test_all_plugins(state: State<'_, AppState>) -> Result<Vec<PluginHe
         }
     }
     results.sort_by_key(|(order, _)| *order);
+    for (_, health) in &results {
+        health::remember(health);
+    }
     Ok(results.into_iter().map(|(_, health)| health).collect())
 }
 

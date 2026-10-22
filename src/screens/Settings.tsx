@@ -1,17 +1,24 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useId, useState } from 'react';
 import { Puzzle, RefreshCw, Trash2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CustomSelect } from '../components/CustomSelect';
 import { ThemePicker } from '../components/ThemePicker';
 import { AppearanceExtras } from '../components/settings/AppearanceExtras';
-import { Row, Section } from '../components/settings/SettingsLayout';
+import { HomeRowOrder } from '../components/settings/HomeRowOrder';
+import { Row, Section, SettingsShell } from '../components/settings/SettingsLayout';
+import { DownloadSettings } from '../components/settings/DownloadSettings';
 import { SystemSection } from '../components/settings/SystemSection';
+import { BackupSection } from '../components/settings/BackupSection';
+import { ReleaseCheckSettings } from '../components/settings/ReleaseCheckSettings';
 import { LanguagePreferences } from '../components/settings/LanguagePreferences';
-import { pluginLanguageSummary } from '../lib/languages';
+import { AppLanguageRow } from '../components/setup/AppLanguage';
+import { audioOnlyLabel, pluginLanguageSummary } from '../lib/languages';
 import { HealthBadge, PluginDirectory, UpdateBadge } from '../components/settings/PluginTools';
+import { PluginConfigDialog } from '../components/settings/PluginConfigDialog';
+import { ServerOrder } from '../components/settings/ServerOrder';
 import { usePluginHealth, usePluginUpdates, PLUGIN_UPDATES_KEY, type HealthState } from '../hooks/usePluginHealth';
 import { useTheme } from '../hooks/useTheme';
+import { useSiteVerification } from '../hooks/useSiteVerification';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
 import { Modal } from '../components/ui/Modal';
@@ -39,7 +46,9 @@ import { invalidateAdultFilteredQueries } from '../hooks/useAniList';
 import { ACCOUNT_LABELS, ACCOUNT_SERVICES, isAccountAvailable, useAccountStatus } from '../hooks/useAccounts';
 import { AccountAction, accountSummary } from '../components/AuthDialog';
 import { useUIStore } from '../stores/uiStore';
-import type { AppSettings, DohProvider, ExternalPlayer, PluginInfo, PluginRepo, PluginUpdate } from '../types';
+import type { AppSettings, CatalogueSource, DohMode, DohProvider, ExternalPlayer, PluginInfo, PluginRepo, PluginUpdate } from '../types';
+import { PlayerEngineSettings } from '../components/settings/PlayerEngineSettings';
+import { locale, t } from '../i18n';
 
 // Episodes always open in the built-in player; this picks the program used outside it.
 const PLAYER_OPTIONS: { value: ExternalPlayer; label: string }[] = [
@@ -47,10 +56,26 @@ const PLAYER_OPTIONS: { value: ExternalPlayer; label: string }[] = [
   { value: 'vlc', label: 'VLC' },
 ];
 
+// Functions, not constants: the labels follow the interface language.
+const dohModeOptions = (): { value: DohMode; label: string }[] => [
+  { value: 'auto', label: t('settings.dohAutomatic') },
+  { value: 'on', label: t('common.on') },
+  { value: 'off', label: t('common.off') },
+];
+
 const DOH_OPTIONS: { value: DohProvider; label: string }[] = [
   { value: 'cloudflare', label: 'Cloudflare (1.1.1.1)' },
   { value: 'google', label: 'Google (8.8.8.8)' },
   { value: 'adguard', label: 'AdGuard DNS' },
+];
+
+const catalogueOptions = (): { value: CatalogueSource; label: string }[] => [
+  { value: 'auto', label: t('settings.catalogueAuto') },
+  { value: 'anilist', label: t('settings.preferAniList') },
+  { value: 'myanimelist', label: 'MyAnimeList' },
+  { value: 'kitsu', label: 'Kitsu' },
+  { value: 'shikimori', label: 'Shikimori' },
+  { value: 'comick', label: 'Comick' },
 ];
 
 function isOneOf<T extends string>(value: unknown, options: { value: T }[]): value is T {
@@ -60,23 +85,23 @@ function isOneOf<T extends string>(value: unknown, options: { value: T }[]): val
 /** The link to send to `add_plugin_repo`, or why what was typed cannot be one. */
 function parseRepoLink(input: string): { url: string } | { problem: string } {
   const text = input.trim();
-  if (!text) return { problem: 'Paste a repository link first.' };
+  if (!text) return { problem: t('settings.pasteLinkFirst') };
   const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return { problem: 'This does not look like a link. It should start with https://' };
+    return { problem: t('settings.notALink') };
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return { problem: 'The link has to start with https://' };
+    return { problem: t('settings.mustStartHttps') };
   }
   if (!parsed.hostname.includes('.') || /\s/.test(text)) {
-    return { problem: 'This does not look like a link. It should start with https://' };
+    return { problem: t('settings.notALink') };
   }
   const isGitHub = /^(www\.)?github\.com$/i.test(parsed.hostname);
   if (isGitHub && parsed.pathname.split('/').filter(Boolean).length < 2) {
-    return { problem: 'A GitHub link needs the owner and the repository: https://github.com/owner/repository' };
+    return { problem: t('settings.githubNeedsRepo') };
   }
   return { url };
 }
@@ -92,15 +117,17 @@ function repoLinkKey(url: string): string {
 }
 
 function pluginCountLabel(count: number): string {
-  return count === 1 ? '1 plugin' : `${count} plugins`;
+  return t('settings.pluginCount', { count });
 }
 
 function updatedLabel(updatedAtMs: number): string {
-  if (!Number.isFinite(updatedAtMs) || updatedAtMs <= 0) return 'Not downloaded yet';
-  return `Updated ${new Date(updatedAtMs).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  })}`;
+  if (!Number.isFinite(updatedAtMs) || updatedAtMs <= 0) return t('settings.notDownloadedYet');
+  return t('settings.updatedAt', {
+    date: new Date(updatedAtMs).toLocaleString(locale(), {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }),
+  });
 }
 
 const PluginIcon: React.FC<{ src: string | null }> = ({ src }) => {
@@ -123,23 +150,50 @@ const PluginIcon: React.FC<{ src: string | null }> = ({ src }) => {
   );
 };
 
+/**
+ * "Verify" for a plugin whose test hit a site check. Mounted per result, so each new test
+ * reads the list of blocked sites again; shows nothing when the site is not listed.
+ */
+const PluginVerifyButton: React.FC<{ provider: string; name: string; onVerified: () => void }> = ({
+  provider,
+  name,
+  onVerified,
+}) => {
+  const { sites, verify } = useSiteVerification({ enabled: true, attempt: 0, provider, onVerified });
+  const site = sites[0];
+  if (!site) return null;
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      className="mt-0.5"
+      aria-label={t('settings.verifyAt', { name, site: site.label })}
+      onClick={() => verify(site.site)}
+    >
+      {t('settings.verify')}
+    </Button>
+  );
+};
+
 const PluginRow: React.FC<{
   plugin: PluginInfo;
   onToggle: (plugin: PluginInfo, enabled: boolean) => void;
   health?: HealthState;
   update?: PluginUpdate;
   onTest?: (plugin: PluginInfo) => void;
-}> = ({ plugin, onToggle, health, update, onTest }) => {
+  onConfigure?: (plugin: PluginInfo) => void;
+}> = ({ plugin, onToggle, health, update, onTest, onConfigure }) => {
   const nameId = useId();
   const name = plugin.name.trim() || plugin.id;
   const version = plugin.version.trim();
   const meta = [
     version ? (/^v/i.test(version) ? version : `v${version}`) : null,
-    plugin.author.trim() ? `by ${plugin.author.trim()}` : null,
+    plugin.author.trim() ? t('settings.byAuthor', { author: plugin.author.trim() }) : null,
   ]
     .filter(Boolean)
     .join(' · ');
   const languages = pluginLanguageSummary(plugin);
+  const only = audioOnlyLabel(plugin);
   const failed = plugin.status === 'error';
 
   return (
@@ -152,7 +206,7 @@ const PluginRow: React.FC<{
               {name}
             </span>
             {meta && <span className="text-xs text-text-muted select-text">{meta}</span>}
-            <UpdateBadge update={update} />
+            <UpdateBadge update={update} name={name} />
             <HealthBadge state={health} />
           </p>
           {plugin.description.trim() && (
@@ -160,18 +214,36 @@ const PluginRow: React.FC<{
               {plugin.description.trim()}
             </p>
           )}
-          {languages && <p className="mt-0.5 text-xs text-text-secondary select-text">{languages}</p>}
+          {(languages || only) && (
+            <p className="mt-0.5 text-xs text-text-secondary select-text">
+              {[languages, only].filter(Boolean).join(' · ')}
+            </p>
+          )}
         </div>
+        {onTest && plugin.enabled && health && health !== 'testing' && health.status === 'verification' && (
+          <PluginVerifyButton provider={plugin.id} name={name} onVerified={() => onTest(plugin)} />
+        )}
+        {onConfigure && plugin.configurable && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-0.5"
+            aria-label={t('settings.settingsOf', { name })}
+            onClick={() => onConfigure(plugin)}
+          >
+            {t('common.settings')}
+          </Button>
+        )}
         {onTest && plugin.enabled && (
           <Button
             variant="ghost"
             size="sm"
             className="mt-0.5"
-            aria-label={`Test ${name}`}
+            aria-label={t('settings.testName', { name })}
             disabled={health === 'testing'}
             onClick={() => onTest(plugin)}
           >
-            Test
+            {t('settings.test')}
           </Button>
         )}
         <Switch
@@ -184,15 +256,15 @@ const PluginRow: React.FC<{
       {failed && (
         <div role="alert" className="mt-2 rounded-md bg-state-error/10 px-3 py-2">
           <p className="text-xs font-medium text-state-error">
-            This plugin could not be loaded{plugin.enabled ? ', so it is not used' : ''}
+            {t(plugin.enabled ? 'settings.loadFailedNotUsed' : 'settings.loadFailed')}
           </p>
           <p className="mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary select-text">
-            {plugin.error?.trim() || 'The plugin did not report a reason.'}
+            {plugin.error?.trim() || t('settings.noReason')}
           </p>
         </div>
       )}
       {health && health !== 'testing' && health.error && health.status !== 'ok' && (
-        <p className="mt-2 break-words text-xs text-text-muted select-text">Test: {health.error}</p>
+        <p className="mt-2 break-words text-xs text-text-muted select-text">{t('settings.testResult', { error: health.error })}</p>
       )}
     </li>
   );
@@ -201,19 +273,6 @@ const PluginRow: React.FC<{
 /** Settings → Plugins: the repositories streaming plugins are downloaded from, and their plugins. */
 const PluginsSection: React.FC = () => {
   const showToast = useUIStore((s) => s.showToast);
-  const [searchParams] = useSearchParams();
-  const linkedTo = searchParams.get('section') === 'plugins';
-  const sectionRef = useRef<HTMLElement>(null);
-
-  // Followed from a "no plugin" state elsewhere in the app. This runs after the layout has
-  // put a newly opened screen at the top.
-  useEffect(() => {
-    const section = sectionRef.current;
-    if (!linkedTo || !section) return;
-    section.focus({ preventScroll: true });
-    section.scrollIntoView({ block: 'start' });
-  }, [linkedTo]);
-
   const reposQuery = usePluginRepos();
   const pluginsQuery = usePlugins();
   const repos = reposQuery.data ?? [];
@@ -232,6 +291,9 @@ const PluginsSection: React.FC = () => {
   const [link, setLink] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [repoToRemove, setRepoToRemove] = useState<PluginRepo | null>(null);
+  const [configuring, setConfiguring] = useState<PluginInfo | null>(null);
+  const settings = useSettings().data;
+  const saveSettings = useSaveSettings();
 
   const handleAdd = (event: React.FormEvent) => {
     event.preventDefault();
@@ -242,25 +304,29 @@ const PluginsSection: React.FC = () => {
       return;
     }
     if (repos.some((repo) => repoLinkKey(repo.url) === repoLinkKey(parsed.url))) {
-      setLinkError('This repository is already added. Use Refresh all to pick up new versions.');
+      setLinkError(t('settings.alreadyAdded'));
       return;
     }
     setLinkError(null);
     addRepo.mutate(parsed.url, {
       onSuccess: (repo) => {
         setLink('');
-        const name = repo.name?.trim() || 'the repository';
+        const name = repo.name?.trim();
         if (repo.error) {
-          showToast({ type: 'warning', title: `Added ${name}, with a problem`, message: repo.error });
+          showToast({
+            type: 'warning',
+            title: name ? t('settings.addedNameWithProblem', { name }) : t('settings.addedRepoWithProblem'),
+            message: repo.error,
+          });
         } else {
           showToast({
             type: 'success',
-            title: `Added ${name}`,
-            message: `${pluginCountLabel(repo.plugin_count)} installed.`,
+            title: name ? t('settings.addedName', { name }) : t('settings.addedRepo'),
+            message: t('settings.pluginsInstalled', { count: repo.plugin_count }),
           });
         }
       },
-      onError: (err) => setLinkError(errorMessage(err, 'The repository could not be added.')),
+      onError: (err) => setLinkError(errorMessage(err, t('settings.couldNotAddRepo'))),
     });
   };
 
@@ -272,18 +338,15 @@ const PluginsSection: React.FC = () => {
         if (failed > 0) {
           showToast({
             type: 'warning',
-            title:
-              failed === 1
-                ? '1 repository could not be refreshed'
-                : `${failed} repositories could not be refreshed`,
-            message: 'The reason is shown next to it.',
+            title: t('settings.reposNotRefreshed', { count: failed }),
+            message: t('settings.reasonShown'),
           });
         } else {
-          showToast({ type: 'success', title: 'Plugins are up to date' });
+          showToast({ type: 'success', title: t('settings.pluginsUpToDate') });
         }
       },
       onError: (err) =>
-        showToast({ type: 'error', title: 'Could not refresh the plugins', message: errorMessage(err) }),
+        showToast({ type: 'error', title: t('settings.couldNotRefresh'), message: errorMessage(err) }),
     });
   };
 
@@ -294,7 +357,7 @@ const PluginsSection: React.FC = () => {
         onError: (err) =>
           showToast({
             type: 'error',
-            title: `Could not turn ${plugin.name.trim() || plugin.id} ${enabled ? 'on' : 'off'}`,
+            title: t(enabled ? 'settings.couldNotTurnOn' : 'settings.couldNotTurnOff', { name: plugin.name.trim() || plugin.id }),
             message: errorMessage(err),
           }),
       }
@@ -307,10 +370,10 @@ const PluginsSection: React.FC = () => {
     removeRepo.mutate(repoToRemove.url, {
       onSuccess: () => {
         setRepoToRemove(null);
-        showToast({ type: 'info', title: `Removed ${name}` });
+        showToast({ type: 'info', title: t('settings.removedName', { name }) });
       },
       onError: (err) =>
-        showToast({ type: 'error', title: `Could not remove ${name}`, message: errorMessage(err) }),
+        showToast({ type: 'error', title: t('settings.couldNotRemove', { name }), message: errorMessage(err) }),
     });
   };
 
@@ -330,16 +393,17 @@ const PluginsSection: React.FC = () => {
           health={pluginHealth.results[plugin.id]}
           update={updates.get(plugin.id)}
           onTest={(p) => pluginHealth.test(p.id)}
+          onConfigure={setConfiguring}
         />
       ))}
     </ul>
   );
 
   return (
-    <Section title="Plugins" sectionRef={sectionRef}>
+    <Section title={t('settingsLayout.plugins')} id="plugins">
       <form onSubmit={handleAdd} noValidate className="py-3">
         <label htmlFor={fieldId} className="text-[13px] font-medium text-text-primary">
-          Add a plugin repository
+          {t('settings.addRepo')}
         </label>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -348,7 +412,7 @@ const PluginsSection: React.FC = () => {
             inputMode="url"
             autoComplete="off"
             spellCheck={false}
-            placeholder="Paste the link of a plugin list"
+            placeholder={t('settings.repoPlaceholder')}
             value={link}
             onChange={(e) => {
               setLink(e.target.value);
@@ -360,8 +424,8 @@ const PluginsSection: React.FC = () => {
             className="h-9 min-w-0 flex-1 rounded-md border border-border bg-bg-input px-3 text-[13px] text-text-primary placeholder:text-text-muted select-text disabled:opacity-60"
           />
           <Button type="submit" variant="primary" disabled={addRepo.isPending || !link.trim()}>
-            {addRepo.isPending && <Spinner size="sm" label="Adding the repository" />}
-            {addRepo.isPending ? 'Adding…' : 'Add'}
+            {addRepo.isPending && <Spinner size="sm" label={t('settings.addingRepo')} />}
+            {addRepo.isPending ? t('settings.adding') : t('common.add')}
           </Button>
         </div>
         <div id={`${fieldId}-help`} className="mt-1.5 text-xs">
@@ -370,10 +434,10 @@ const PluginsSection: React.FC = () => {
               {linkError}
             </p>
           ) : addRepo.isPending ? (
-            <p className="text-text-muted">Downloading the repository and its plugins…</p>
+            <p className="text-text-muted">{t('settings.downloadingRepo')}</p>
           ) : (
             <p className="text-text-muted">
-              The link from the Anix website, a Google Drive share link, a GitHub repository, or a direct link to a plugin list.
+              {t('settings.repoLinkHelp')}
             </p>
           )}
         </div>
@@ -381,13 +445,13 @@ const PluginsSection: React.FC = () => {
 
       {loading ? (
         <div aria-busy="true" className="flex items-center gap-2 py-4 text-xs text-text-muted">
-          <Spinner size="sm" label="Loading plugins" />
-          Loading plugins…
+          <Spinner size="sm" label={t('settings.loadingPlugins')} />
+          {t('settings.loadingPluginsEllipsis')}
         </div>
       ) : reposQuery.isError && nothingAdded ? (
         <ErrorState
           compact
-          title="The plugin repositories could not be loaded"
+          title={t('settings.reposLoadFailed')}
           error={reposQuery.error ?? undefined}
           onRetry={() => {
             reposQuery.refetch();
@@ -399,18 +463,16 @@ const PluginsSection: React.FC = () => {
         <EmptyState
           className="py-10"
           icon={<Puzzle aria-hidden="true" />}
-          title="No plugins yet"
-          description="Streaming sources come from plugins. Paste the link of a plugin repository above to install the ones it offers. Until then anime and episode lists still show, but nothing can be played."
+          title={t('settings.noPlugins')}
+          description={t('settings.noPluginsHint')}
         />
         <PluginDirectory repos={repos} />
         </>
       ) : (
         <>
           <Row
-            label="Repositories"
-            hint={`${repos.length === 1 ? '1 repository' : `${repos.length} repositories`}, ${pluginCountLabel(
-              plugins.length
-            )}`}
+            label={t('settings.repositories')}
+            hint={`${t('settings.repositoryCount', { count: repos.length })}, ${pluginCountLabel(plugins.length)}`}
           >
             {() => (
               <div className="flex items-center gap-2">
@@ -420,8 +482,8 @@ const PluginsSection: React.FC = () => {
                 onClick={() => pluginHealth.testAll(plugins.filter((p) => p.enabled).map((p) => p.id))}
                 disabled={pluginHealth.testingAll || !plugins.some((p) => p.enabled)}
               >
-                {pluginHealth.testingAll && <Spinner size="sm" label="Testing plugins" />}
-                Test all
+                {pluginHealth.testingAll && <Spinner size="sm" label={t('settings.testingPlugins')} />}
+                {t('settings.testAll')}
               </Button>
               <Button
                 variant="secondary"
@@ -430,23 +492,45 @@ const PluginsSection: React.FC = () => {
                 disabled={refreshRepos.isPending || repos.length === 0}
               >
                 {refreshRepos.isPending ? (
-                  <Spinner size="sm" label="Refreshing plugins" />
+                  <Spinner size="sm" label={t('settings.refreshingPlugins')} />
                 ) : (
                   <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
                 )}
-                Refresh all
+                {t('settings.refreshAll')}
               </Button>
               </div>
+            )}
+          </Row>
+
+          <Row
+            label={t('settings.backgroundChecks')}
+            hint={t('settings.backgroundChecksHint')}
+          >
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings?.plugin_health_checks !== false}
+                onChange={(checked) =>
+                  saveSettings.mutate(
+                    { plugin_health_checks: checked },
+                    {
+                      onError: (err) =>
+                        showToast({ type: 'error', title: t('common.couldNotSaveSettings'), message: errorMessage(err) }),
+                    }
+                  )
+                }
+              />
             )}
           </Row>
 
           {pluginsQuery.isError && (
             <div role="alert" className="flex items-center justify-between gap-4 py-3">
               <p className="min-w-0 break-words text-xs text-state-error select-text">
-                The plugin list could not be loaded: {errorMessage(pluginsQuery.error)}
+                {t('settings.pluginListFailed', { error: errorMessage(pluginsQuery.error) })}
               </p>
               <Button variant="ghost" size="sm" onClick={() => pluginsQuery.refetch()}>
-                Retry
+                {t('common.retry')}
               </Button>
             </div>
           )}
@@ -468,11 +552,11 @@ const PluginsSection: React.FC = () => {
                   <Button
                     variant="ghost"
                     size="sm"
-                    aria-label={`Remove ${repo.name?.trim() || repo.url}`}
+                    aria-label={t('settings.removeName', { name: repo.name?.trim() || repo.url })}
                     onClick={() => setRepoToRemove(repo)}
                   >
                     <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-                    Remove
+                    {t('common.remove')}
                   </Button>
                 </div>
                 {repo.error && (
@@ -488,7 +572,7 @@ const PluginsSection: React.FC = () => {
                   : !repo.error &&
                     !pluginsQuery.isError && (
                       <p className="mt-2 text-xs text-text-muted">
-                        This repository has no streaming plugins.
+                        {t('settings.noStreamingPlugins')}
                       </p>
                     )}
               </div>
@@ -499,29 +583,31 @@ const PluginsSection: React.FC = () => {
 
           {strayPlugins.length > 0 && (
             <div className="py-3">
-              <p className="text-[13px] font-medium text-text-primary">Other plugins</p>
-              <p className="mt-0.5 text-xs text-text-muted">Installed, but not part of a repository above.</p>
+              <p className="text-[13px] font-medium text-text-primary">{t('settings.otherPlugins')}</p>
+              <p className="mt-0.5 text-xs text-text-muted">{t('settings.otherPluginsHint')}</p>
               {pluginList(strayPlugins)}
             </div>
           )}
         </>
       )}
 
+      <PluginConfigDialog plugin={configuring} onClose={() => setConfiguring(null)} />
+
       <Modal
         isOpen={repoToRemove !== null}
         onClose={() => {
           if (!removeRepo.isPending) setRepoToRemove(null);
         }}
-        title="Remove this repository?"
+        title={t('settings.removeRepoTitle')}
         size="md"
         footer={
           <>
             <Button variant="ghost" onClick={() => setRepoToRemove(null)} disabled={removeRepo.isPending}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="danger" onClick={handleRemove} disabled={removeRepo.isPending}>
-              {removeRepo.isPending && <Spinner size="sm" label="Removing the repository" />}
-              Remove
+              {removeRepo.isPending && <Spinner size="sm" label={t('settings.removingRepo')} />}
+              {t('common.remove')}
             </Button>
           </>
         }
@@ -533,9 +619,9 @@ const PluginsSection: React.FC = () => {
             </p>
             <p>
               {repoToRemove.plugin_count > 0
-                ? `Its ${pluginCountLabel(repoToRemove.plugin_count)} will be removed and can no longer be used for streaming or downloads.`
-                : 'It will no longer be checked for plugins.'}{' '}
-              You can add the repository again at any time.
+                ? t('settings.removeRepoPlugins', { count: repoToRemove.plugin_count })
+                : t('settings.removeRepoNoPlugins')}{' '}
+              {t('settings.addAgain')}
             </p>
           </div>
         )}
@@ -575,7 +661,7 @@ export const Settings: React.FC = () => {
   if (!settings) {
     return (
       <ErrorState
-        title="Could not load settings"
+        title={t('settings.couldNotLoad')}
         error={settingsQuery.error ?? undefined}
         onRetry={() => settingsQuery.refetch()}
       />
@@ -592,7 +678,7 @@ export const Settings: React.FC = () => {
       onError: (err) =>
         showToast({
           type: 'error',
-          title: 'Could not save settings',
+          title: t('common.couldNotSaveSettings'),
           message: errorMessage(err),
         }),
     });
@@ -605,7 +691,7 @@ export const Settings: React.FC = () => {
       if (result.isError) {
         showToast({
           type: 'error',
-          title: 'Could not check for updates',
+          title: t('settings.couldNotCheckUpdates'),
           message: errorMessage(result.error),
         });
       } else if (result.data) {
@@ -613,8 +699,8 @@ export const Settings: React.FC = () => {
       } else {
         showToast({
           type: 'info',
-          title: 'No newer release found',
-          message: appVersion ? `You are running version ${appVersion}.` : undefined,
+          title: t('settings.noNewerRelease'),
+          message: appVersion ? t('settings.runningVersion', { version: appVersion }) : undefined,
         });
       }
     } finally {
@@ -630,199 +716,239 @@ export const Settings: React.FC = () => {
   // Older settings files hold 'builtin', which has always launched mpv.
   const externalPlayer = settings.external_player === 'vlc' ? 'vlc' : 'mpv';
   const dohProvider = isOneOf(settings.doh_provider, DOH_OPTIONS) ? settings.doh_provider : 'cloudflare';
+  const dohMode = isOneOf(settings.doh_mode, dohModeOptions()) ? settings.doh_mode : 'auto';
+  const catalogueSource = isOneOf(settings.catalogue_source, catalogueOptions()) ? settings.catalogue_source : 'auto';
 
   return (
-    <div className="flex max-w-2xl flex-col gap-8 pb-16 animate-fade-in">
-      <h1 className="text-xl font-semibold text-text-primary">Settings</h1>
-
-      <Section title="Appearance">
-        <Row label="Theme" hint="Changes the look of the whole app. The player stays dark over the video." stacked>
-          {({ labelId, hintId }) => (
-            <ThemePicker
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              value={theme}
-              onChange={(next) =>
-                setTheme(next, (err) =>
-                  showToast({
-                    type: 'error',
-                    title: 'Could not save settings',
-                    message: errorMessage(err),
-                  })
-                )
-              }
-            />
-          )}
-        </Row>
-        <AppearanceExtras settings={settings} onChange={(key, value) => updateSetting(key, value)} />
-      </Section>
-
-      <Section title="Playback">
-        <Row label="Autoplay" hint="Start playing as soon as an episode opens.">
-          {({ labelId, hintId }) => (
-            <Switch
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              checked={settings.autoplay}
-              onChange={(checked) => updateSetting('autoplay', checked)}
-            />
-          )}
-        </Row>
-        <Row label="Skip intros and outros" hint="Jump past openings and endings when skip times are known.">
-          {({ labelId, hintId }) => (
-            <Switch
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              checked={settings.auto_skip_intro_outro}
-              onChange={(checked) => updateSetting('auto_skip_intro_outro', checked)}
-            />
-          )}
-        </Row>
-        <Row label="Preferred audio" hint="Used when an anime has no watch history yet.">
-          {() => (
-            <SegmentedControl
-              aria-label="Preferred audio"
-              value={settings.prefer_dub ? 'dub' : 'sub'}
-              onChange={(value) => updateSetting('prefer_dub', value === 'dub')}
-              options={[
-                { value: 'sub', label: 'Sub' },
-                { value: 'dub', label: 'Dub' },
-              ]}
-            />
-          )}
-        </Row>
-        <Row
-          label="External player"
-          hint="Opens local files, finished downloads and “Open in external player”. It must be installed."
-        >
-          {({ labelId }) => (
-            <CustomSelect
-              aria-labelledby={labelId}
-              className="w-52"
-              value={externalPlayer}
-              onChange={(value) => {
-                if (isOneOf(value, PLAYER_OPTIONS)) updateSetting('external_player', value);
-              }}
-              options={PLAYER_OPTIONS}
-            />
-          )}
-        </Row>
-      </Section>
-
-      <Section title="Sources">
-        <Row
-          label="Preferred provider"
-          hint={
-            providers.none
-              ? 'Providers come from plugins. Enable one under Plugins to choose it here.'
-              : 'Tried first for streams and downloads. Auto tries the plugins in your languages below.'
-          }
-        >
-          {({ labelId }) => (
-            <CustomSelect
-              aria-labelledby={labelId}
-              className="w-52"
-              disabled={providers.none}
-              value={preferredProvider}
-              onChange={(value) => updateSetting('preferred_provider', value)}
-              options={providers.options}
-            />
-          )}
-        </Row>
-        <LanguagePreferences />
-        <Row label="Hide adult content" hint="Leave 18+ titles out of search, rails and the schedule.">
-          {({ labelId, hintId }) => (
-            <Switch
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              checked={settings.hide_adult_content}
-              onChange={(checked) =>
-                // The backend applies the filter; lists fetched under the old value are stale.
-                updateSetting('hide_adult_content', checked, () =>
-                  invalidateAdultFilteredQueries(queryClient)
-                )
-              }
-            />
-          )}
-        </Row>
-      </Section>
-
-      <PluginsSection />
-
-      <SystemSection />
-
-      <Section title="Network">
-        <Row
-          label="DNS over HTTPS"
-          hint="Resolve provider domains through an encrypted resolver instead of your ISP's DNS."
-        >
-          {({ labelId, hintId }) => (
-            <Switch
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              checked={settings.enable_doh}
-              onChange={(checked) => updateSetting('enable_doh', checked)}
-            />
-          )}
-        </Row>
-        <Row label="Resolver">
-          {({ labelId }) => (
-            <CustomSelect
-              aria-labelledby={labelId}
-              className="w-52"
-              disabled={!settings.enable_doh}
-              value={dohProvider}
-              onChange={(value) => {
-                if (isOneOf(value, DOH_OPTIONS)) updateSetting('doh_provider', value);
-              }}
-              options={DOH_OPTIONS}
-            />
-          )}
-        </Row>
-      </Section>
-
-      <Section title="Notifications">
-        <Row
-          label="Release notifications"
-          hint="Show a desktop notification when a new episode airs for an anime you have a bell on. Turning this off keeps your bells."
-        >
-          {({ labelId, hintId }) => (
-            <Switch
-              aria-labelledby={labelId}
-              aria-describedby={hintId}
-              checked={settings.release_notifications}
-              onChange={(checked) => updateSetting('release_notifications', checked)}
-            />
-          )}
-        </Row>
-      </Section>
-
-      <Section title="Account">
-        {ACCOUNT_SERVICES.map((service) => (
-          <Row
-            key={service}
-            label={ACCOUNT_LABELS[service]}
-            hint={accountSummary(
-              accountsQuery.data?.[service],
-              accountsQuery.isError,
-              isAccountAvailable(service, accountsQuery.data),
+    <SettingsShell>
+        <Section title={t('settingsLayout.appearance')} id="appearance">
+          <AppLanguageRow />
+          <Row label={t('settings.theme')} hint={t('settings.themeHint')} stacked>
+            {({ labelId, hintId }) => (
+              <ThemePicker
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                value={theme}
+                onChange={(next) =>
+                  setTheme(next, (err) =>
+                    showToast({
+                      type: 'error',
+                      title: t('common.couldNotSaveSettings'),
+                      message: errorMessage(err),
+                    })
+                  )
+                }
+              />
             )}
-          >
-            {() => <AccountAction service={service} />}
           </Row>
-        ))}
-      </Section>
+          <AppearanceExtras settings={settings} onChange={(key, value) => updateSetting(key, value)} />
+          <HomeRowOrder value={settings.home_row_order} onChange={(order) => updateSetting('home_row_order', order)} />
+        </Section>
 
-      <Section title="About">
-        <Row label="Anix" hint={appVersion ? `Version ${appVersion}` : undefined}>
-          {() => (
-            <Button variant="secondary" size="sm" onClick={handleCheckUpdate} disabled={isCheckingUpdate}>
-              {isCheckingUpdate && <Spinner size="sm" label="Checking for updates" />}
-              Check for updates
-            </Button>
-          )}
-        </Row>
-      </Section>
-    </div>
+        <Section title={t('settingsLayout.playback')} id="playback">
+          <Row label={t('settings.autoplay')} hint={t('settings.autoplayHint')}>
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings.autoplay}
+                onChange={(checked) => updateSetting('autoplay', checked)}
+              />
+            )}
+          </Row>
+          <Row label={t('settings.skipIntros')} hint={t('settings.skipIntrosHint')}>
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings.skip_intro}
+                onChange={(checked) => updateSetting('skip_intro', checked)}
+              />
+            )}
+          </Row>
+          <Row label={t('settings.skipEndings')} hint={t('settings.skipEndingsHint')}>
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings.skip_outro}
+                onChange={(checked) => updateSetting('skip_outro', checked)}
+              />
+            )}
+          </Row>
+          <Row label={t('settings.preferredAudio')} hint={t('settings.preferredAudioHint')}>
+            {() => (
+              <SegmentedControl
+                aria-label={t('settings.preferredAudio')}
+                value={settings.prefer_dub ? 'dub' : 'sub'}
+                onChange={(value) => updateSetting('prefer_dub', value === 'dub')}
+                options={[
+                  { value: 'sub', label: t('common.sub') },
+                  { value: 'dub', label: t('common.dub') },
+                ]}
+              />
+            )}
+          </Row>
+          <Row
+            label={t('settings.externalPlayer')}
+            hint={t('settings.externalPlayerHint')}
+          >
+            {({ labelId, hintId }) => (
+              <CustomSelect
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-52"
+                value={externalPlayer}
+                onChange={(value) => {
+                  if (isOneOf(value, PLAYER_OPTIONS)) updateSetting('external_player', value);
+                }}
+                options={PLAYER_OPTIONS}
+              />
+            )}
+          </Row>
+          <PlayerEngineSettings settings={settings} onChange={updateSetting} />
+        </Section>
+
+        <Section title={t('settingsLayout.sources')} id="sources">
+          <Row
+            label={t('settings.preferredProvider')}
+            hint={providers.none ? t('settings.providerNoneHint') : t('settings.providerHint')}
+          >
+            {({ labelId, hintId }) => (
+              <CustomSelect
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-52"
+                disabled={providers.none}
+                value={preferredProvider}
+                onChange={(value) => updateSetting('preferred_provider', value)}
+                options={providers.options}
+              />
+            )}
+          </Row>
+          <ServerOrder value={settings.provider_order} onChange={(order) => updateSetting('provider_order', order)} />
+          <LanguagePreferences />
+          <Row label={t('settings.hideAdult')} hint={t('settings.hideAdultHint')}>
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings.hide_adult_content}
+                onChange={(checked) =>
+                  // The backend applies the filter; lists fetched under the old value are stale.
+                  updateSetting('hide_adult_content', checked, () =>
+                    invalidateAdultFilteredQueries(queryClient)
+                  )
+                }
+              />
+            )}
+          </Row>
+        </Section>
+
+        <DownloadSettings />
+
+        <SystemSection />
+
+        <Section title={t('settingsLayout.network')} id="network">
+          <Row
+            label="DNS over HTTPS" // i18n-ignore: protocol name
+            hint={t('settings.dohHint')}
+          >
+            {({ labelId, hintId }) => (
+              <CustomSelect
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-52"
+                value={dohMode}
+                onChange={(value) => {
+                  if (isOneOf(value, dohModeOptions())) updateSetting('doh_mode', value);
+                }}
+                options={dohModeOptions()}
+              />
+            )}
+          </Row>
+          <Row label={t('settings.resolver')}>
+            {({ labelId, hintId }) => (
+              <CustomSelect
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-52"
+                disabled={dohMode === 'off'}
+                value={dohProvider}
+                onChange={(value) => {
+                  if (isOneOf(value, DOH_OPTIONS)) updateSetting('doh_provider', value);
+                }}
+                options={DOH_OPTIONS}
+              />
+            )}
+          </Row>
+          <Row
+            label={t('settings.catalogueSource')}
+            hint={t('settings.catalogueSourceHint')}
+          >
+            {({ labelId, hintId }) => (
+              <CustomSelect
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-52"
+                value={catalogueSource}
+                onChange={(value) => {
+                  if (isOneOf(value, catalogueOptions())) updateSetting('catalogue_source', value);
+                }}
+                options={catalogueOptions()}
+              />
+            )}
+          </Row>
+        </Section>
+
+        <Section title={t('settingsLayout.notifications')} id="notifications">
+          <Row
+            label={t('settings.releaseNotifications')}
+            hint={t('settings.releaseNotificationsHint')}
+          >
+            {({ labelId, hintId }) => (
+              <Switch
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                checked={settings.release_notifications}
+                onChange={(checked) => updateSetting('release_notifications', checked)}
+              />
+            )}
+          </Row>
+          <ReleaseCheckSettings />
+        </Section>
+
+        <Section title={t('settingsLayout.account')} id="account">
+          {ACCOUNT_SERVICES.map((service) => (
+            <Row
+              key={service}
+              label={ACCOUNT_LABELS[service]}
+              hint={accountSummary(
+                accountsQuery.data?.[service],
+                accountsQuery.isError,
+                isAccountAvailable(service, accountsQuery.data),
+              )}
+            >
+              {() => <AccountAction service={service} />}
+            </Row>
+          ))}
+        </Section>
+
+        <BackupSection />
+
+        <Section title={t('settingsLayout.about')} id="about">
+          <Row label="Anix" hint={appVersion ? t('settings.version', { version: appVersion }) : undefined}>
+            {() => (
+              <Button variant="secondary" size="sm" onClick={handleCheckUpdate} disabled={isCheckingUpdate}>
+                {isCheckingUpdate && <Spinner size="sm" label={t('settings.checkingUpdates')} />}
+                {t('settings.checkForUpdates')}
+              </Button>
+            )}
+          </Row>
+        </Section>
+
+        {/* Last: with many plugins this list is long and would bury the sections above. */}
+        <PluginsSection />
+    </SettingsShell>
   );
 };

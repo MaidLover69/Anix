@@ -43,6 +43,7 @@ fn snapshot(fetched_at: i64, media_ids: &[i64], airings: Vec<Airing>) -> Snapsho
         fetched_at,
         media_ids: media_ids.iter().copied().collect(),
         airings,
+        estimated: Default::default(),
     }
 }
 
@@ -394,6 +395,7 @@ fn notification_body_wording() {
         title: "Show".to_string(),
         cover_image: None,
         episodes: episodes.iter().map(|e| airing(SHOW_A, *e, T)).collect(),
+        note: None,
     };
     assert_eq!(with(&[12]).body(), "Episode 12 is out");
     assert_eq!(with(&[2, 1]).body(), "Episodes 1 and 2 are out");
@@ -459,8 +461,9 @@ fn only_a_click_opens_the_anime() {
 
 #[test]
 fn schedule_ids_are_valid_distinct_and_sorted() {
+    // Stand-in (negative) ids are asked about too; only 0 is not an anime.
     let bells: Vec<Bell> = [9, 0, 7, 2, 9, -1].iter().map(|id| bell(*id, T)).collect();
-    assert_eq!(notifier::schedule_media_ids(&bells), vec![2, 7, 9]);
+    assert_eq!(notifier::schedule_media_ids(&bells), vec![-1, 2, 7, 9]);
 }
 
 #[test]
@@ -775,6 +778,55 @@ async fn notifier_announces_an_episode_exactly_once() {
     restarted.step(&pool, &schedule, &display, true, moved + REFRESH_INTERVAL_S).await;
     assert_eq!(display.shown().len(), 1);
     assert_eq!(recorded(&pool, SHOW_A, 12).await, Some((true, air)));
+}
+
+struct SubOnly;
+
+#[async_trait]
+impl anix_lib::release_check::ReleaseProbe for SubOnly {
+    async fn find(
+        &self,
+        _bell: &Bell,
+        _episode: i32,
+        tracks: &[anix_lib::models::Category],
+    ) -> Vec<(anix_lib::models::Category, Option<anix_lib::release_check::Hit>)> {
+        use anix_lib::models::Category;
+        let hit = anix_lib::release_check::Hit { provider: "site".into(), language: Some("en".into()) };
+        tracks.iter().map(|t| (t.clone(), (*t == Category::Sub).then(|| hit.clone()))).collect()
+    }
+}
+
+#[tokio::test]
+async fn alerts_are_kept_in_the_notification_centre() {
+    use anix_lib::notices;
+    let pool = memory_db().await;
+    let schedule = FakeSchedule::default();
+    let display = FakeDisplay::default();
+    let air = T + 600;
+    set_bell(&pool, SHOW_A, true, T - 100).await;
+    schedule.set(vec![airing(SHOW_A, 12, air)]);
+
+    let mut notifier = Notifier::load(&pool).await.unwrap();
+    notifier.set_release_checks(Some(anix_lib::release_check::ReleaseChecks {
+        probe: Arc::new(SubOnly),
+        settings: Default::default(),
+        prefs: Default::default(),
+    }));
+    notifier.step(&pool, &schedule, &display, true, T).await;
+    notifier.step(&pool, &schedule, &display, true, air).await;
+    notifier.step(&pool, &schedule, &display, true, air + anix_lib::release_check::FIRST_CHECK_DELAY_S).await;
+    assert_eq!(display.shown().len(), 2, "air time and release check");
+
+    let kept: Vec<_> = notices::list(&pool, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|n| (n.kind, n.title, n.body, n.link))
+        .collect();
+    let row = |body: String| (notices::AIRING.to_string(), "Show 101".to_string(), body, Some("/detail/101".to_string()));
+    let found = anix_lib::release_check::found_body(12, &anix_lib::models::Category::Sub, Some("en"));
+    // Newest first.
+    assert_eq!(kept, vec![row(found), row("Episode 12 is out".into())]);
 }
 
 #[tokio::test]
@@ -1138,4 +1190,178 @@ async fn anilist_schedule_reports_rate_limits_and_failures() {
     // Nothing listens on this port.
     let source = AniListSchedule::with_url(reqwest::Client::new(), "http://127.0.0.1:9/");
     assert!(source.fetch(&[1], T - 100, T + 100).await.is_err());
+}
+
+// ---------------------------------------------------------------------------------------
+// Estimated times, stand-in ids and release checks
+// ---------------------------------------------------------------------------------------
+
+use anix_lib::models::Category;
+use anix_lib::providers::languages::LanguagePrefs;
+use anix_lib::release_check::{CheckSettings, Hit, ReleaseChecks, ReleaseProbe};
+use notifier::MarkedAirings;
+
+/// A MyAnimeList-only stand-in id.
+const STAND_IN: i64 = -100_052_991;
+
+#[test]
+fn plan_never_announces_an_estimated_time() {
+    let mut case = Case::at(T).with_snapshot(T, vec![airing(SHOW_A, 12, T - 60)]);
+    case.snapshot.as_mut().unwrap().estimated.insert(SHOW_A);
+    let plan = case.plan();
+    assert!(plan.fire.is_empty());
+    assert_eq!(plan.mark_seen, vec![airing(SHOW_A, 12, T - 60)]);
+}
+
+/// A schedule whose times are all estimates (Shikimori/MAL slots), or all AniList's.
+struct MarkedSchedule {
+    inner: FakeSchedule,
+    estimated: bool,
+}
+
+#[async_trait]
+impl ScheduleSource for MarkedSchedule {
+    async fn fetch(&self, media_ids: &[i64], from_ts: i64, to_ts: i64) -> Result<Vec<Airing>, AppError> {
+        self.inner.fetch(media_ids, from_ts, to_ts).await
+    }
+
+    async fn fetch_marked(&self, media_ids: &[i64], from_ts: i64, to_ts: i64) -> Result<MarkedAirings, AppError> {
+        let airings = self.fetch(media_ids, from_ts, to_ts).await?;
+        let estimated = if self.estimated { media_ids.iter().copied().collect() } else { Default::default() };
+        Ok(MarkedAirings { airings, estimated })
+    }
+}
+
+/// Extensions that have whatever the test says, by track.
+#[derive(Default)]
+struct FakeProbe {
+    sub: Mutex<Option<Hit>>,
+    dub: Mutex<Option<Hit>>,
+    /// `(media_id, episode, track)` of every search.
+    asked: Mutex<Vec<(i64, i32, Category)>>,
+}
+
+#[async_trait]
+impl ReleaseProbe for FakeProbe {
+    async fn find(&self, bell: &Bell, episode: i32, tracks: &[Category]) -> Vec<(Category, Option<Hit>)> {
+        tracks
+            .iter()
+            .map(|track| {
+                self.asked.lock().unwrap().push((bell.media_id, episode, track.clone()));
+                let hit = match track {
+                    Category::Sub => self.sub.lock().unwrap().clone(),
+                    Category::Dub => self.dub.lock().unwrap().clone(),
+                };
+                (track.clone(), hit)
+            })
+            .collect()
+    }
+}
+
+impl FakeProbe {
+    fn searches(&self, track: Category) -> usize {
+        self.asked.lock().unwrap().iter().filter(|(_, _, t)| *t == track).count()
+    }
+}
+
+fn hit(language: &str) -> Option<Hit> {
+    Some(Hit { provider: "site".to_string(), language: Some(language.to_string()) })
+}
+
+async fn checking_notifier(pool: &SqlitePool, probe: &Arc<FakeProbe>) -> Notifier {
+    let mut notifier = Notifier::load(pool).await.unwrap();
+    notifier.set_release_checks(Some(ReleaseChecks {
+        probe: probe.clone(),
+        settings: CheckSettings::default(),
+        prefs: LanguagePrefs::default(),
+    }));
+    notifier
+}
+
+#[tokio::test]
+async fn a_stand_in_bell_is_announced_once_an_extension_has_each_track() {
+    let pool = memory_db().await;
+    let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: true };
+    let display = FakeDisplay::default();
+    let probe = Arc::new(FakeProbe::default());
+    let air = T + 600;
+
+    set_bell(&pool, STAND_IN, true, T - 100).await;
+    schedule.inner.set(vec![airing(STAND_IN, 3, air)]);
+    let mut notifier = checking_notifier(&pool, &probe).await;
+
+    notifier.step(&pool, &schedule, &display, true, T).await;
+    assert_eq!(schedule.inner.last_read().0, vec![STAND_IN]);
+    // The estimated air time passes: no alert, and nothing asked before ten minutes.
+    let outcome = notifier.step(&pool, &schedule, &display, true, air).await;
+    assert!(display.shown().is_empty());
+    assert!(probe.asked.lock().unwrap().is_empty());
+    assert_eq!(outcome.wake_at, air + 600);
+
+    // First check: the sub is out, the dub is not.
+    *probe.sub.lock().unwrap() = hit("en");
+    notifier.step(&pool, &schedule, &display, true, air + 600).await;
+    assert_eq!(
+        display.shown(),
+        vec![out("Show -100052991", "Episode 3 is out — Japanese audio · English subtitles")]
+    );
+
+    // The next check only asks about the dub, which has turned up now.
+    *probe.dub.lock().unwrap() = hit("hi");
+    notifier.step(&pool, &schedule, &display, true, air + 1500).await;
+    assert_eq!(display.shown()[1], out("Show -100052991", "Episode 3 is out — Hindi audio"));
+    assert_eq!(probe.searches(Category::Sub), 1);
+    assert_eq!(probe.searches(Category::Dub), 2);
+
+    // Nothing more, also after the limit and from a second notifier on the same database.
+    let mut other = checking_notifier(&pool, &probe).await;
+    for now in [air + 2 * HOUR, air + 4 * HOUR] {
+        notifier.step(&pool, &schedule, &display, true, now).await;
+        other.step(&pool, &schedule, &display, true, now).await;
+    }
+    assert_eq!(display.shown().len(), 2);
+}
+
+#[tokio::test]
+async fn an_estimated_episode_no_source_has_gets_only_the_final_note() {
+    let pool = memory_db().await;
+    let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: true };
+    let display = FakeDisplay::default();
+    let probe = Arc::new(FakeProbe::default());
+    let air = T + 600;
+
+    set_bell(&pool, STAND_IN, true, T - 100).await;
+    schedule.inner.set(vec![airing(STAND_IN, 3, air)]);
+    let mut notifier = checking_notifier(&pool, &probe).await;
+    let mut now = T;
+    while now <= air + 4 * HOUR {
+        notifier.step(&pool, &schedule, &display, true, now).await;
+        now += 300;
+    }
+    assert_eq!(
+        display.shown(),
+        vec![out("Show -100052991", "Episode 3 has aired, but no source has it yet — English subtitles")]
+    );
+    assert_eq!(probe.searches(Category::Sub), 12);
+    assert_eq!(probe.searches(Category::Dub), 12);
+}
+
+#[tokio::test]
+async fn an_anilist_air_time_is_still_announced_and_then_the_release() {
+    let pool = memory_db().await;
+    let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: false };
+    let display = FakeDisplay::default();
+    let probe = Arc::new(FakeProbe::default());
+    let air = T + 600;
+
+    set_bell(&pool, SHOW_A, true, T - 100).await;
+    schedule.inner.set(vec![airing(SHOW_A, 12, air)]);
+    let mut notifier = checking_notifier(&pool, &probe).await;
+    notifier.step(&pool, &schedule, &display, true, T).await;
+    notifier.step(&pool, &schedule, &display, true, air).await;
+    assert_eq!(display.shown(), vec![out("Show 101", "Episode 12 is out")]);
+
+    *probe.sub.lock().unwrap() = hit("en");
+    notifier.step(&pool, &schedule, &display, true, air + 600).await;
+    assert_eq!(display.shown()[1], out("Show 101", "Episode 12 is out — Japanese audio · English subtitles"));
 }

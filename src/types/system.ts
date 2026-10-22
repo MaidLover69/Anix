@@ -3,6 +3,8 @@ export interface OfflineStatus {
   offline: boolean;
   /** Unix seconds: when the oldest saved data on screen was saved. */
   saved_at: number | null;
+  /** The catalogue answering while AniList is unavailable, e.g. "MyAnimeList". */
+  fallback?: string | null;
 }
 
 /** `get_desktop_status`: tray and autostart, for Settings › System. */
@@ -62,6 +64,8 @@ export interface PluginHealth {
   latency_ms: number;
   results: number;
   error: string | null;
+  /** When the test ran (Unix ms); 0 when unknown. */
+  checked_at_ms?: number;
 }
 
 /** `check_plugin_updates`. */
@@ -69,6 +73,8 @@ export interface PluginUpdate {
   id: string;
   installed: string;
   available: string;
+  /** What changed in the available version, when the repository says. */
+  changelog?: string | null;
 }
 
 /** One entry of `get_plugin_directory`. */

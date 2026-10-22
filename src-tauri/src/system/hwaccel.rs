@@ -149,7 +149,7 @@ pub fn session_kind(
 }
 
 /// WebKitGTK's own version, read from the library loaded into this process.
-fn webkitgtk_version() -> Option<String> {
+pub(crate) fn webkitgtk_version() -> Option<String> {
     type VersionFn = unsafe extern "C" fn() -> libc::c_uint;
     let lookup = |name: &str| -> Option<VersionFn> {
         let c_name = std::ffi::CString::new(name).ok()?;

@@ -34,7 +34,7 @@ const MAX_ID_CHARS: usize = 64;
 const MAX_TEXT_CHARS: usize = 600;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// Set to `1` to let a repository link be a `file://` directory (for developing plugins
-/// before they are published). The directory holds `index.json`; a plugin's code is taken from
+/// before they are published). The directory holds `index.json`; a plugin's code is read from
 /// `src/<id>/<file named like the end of payloadURI>` when that file exists.
 pub const DEV_REPOS_ENV: &str = "ANIX_DEV_PLUGIN_REPOS";
 /// The name the variable had before the app was renamed; still honoured.
@@ -1322,6 +1322,17 @@ pub struct PluginUpdate {
     pub id: String,
     pub installed: String,
     pub available: String,
+    /// What changed in the available version: the manifest's optional `changelog`.
+    pub changelog: Option<String>,
+}
+
+/// Longest release note kept from a manifest.
+const MAX_CHANGELOG_CHARS: usize = 2000;
+
+/// A manifest's `changelog`, trimmed; `None` when it has none.
+pub fn changelog_of(manifest: &Value) -> Option<String> {
+    let text: String = manifest.get("changelog")?.as_str()?.trim().chars().take(MAX_CHANGELOG_CHARS).collect();
+    (!text.is_empty()).then_some(text)
 }
 
 impl PluginRegistry {
@@ -1345,6 +1356,7 @@ impl PluginRegistry {
                         id: plugin.id.clone(),
                         installed: plugin.version.clone(),
                         available,
+                        changelog: changelog_of(&want.manifest),
                     });
                 }
             }

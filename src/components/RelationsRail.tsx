@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { useOpenExternal } from '../hooks/useOpenExternal';
 import { mediaFormatLabel } from './library/format';
 import type { RelationEdge } from '../types';
+import { t, type TKey } from '../i18n';
 
 interface RelationsRailProps {
   relations?: RelationEdge[];
@@ -19,6 +20,27 @@ function sentenceCase(value: string | null | undefined): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
+const RELATION_KEYS: Record<string, TKey> = {
+  ADAPTATION: 'relationsRail.adaptation',
+  PREQUEL: 'relationsRail.prequel',
+  SEQUEL: 'relationsRail.sequel',
+  PARENT: 'relationsRail.parent',
+  SIDE_STORY: 'relationsRail.sideStory',
+  CHARACTER: 'relationsRail.character',
+  SUMMARY: 'relationsRail.summary',
+  ALTERNATIVE: 'relationsRail.alternative',
+  SPIN_OFF: 'relationsRail.spinOff',
+  OTHER: 'relationsRail.other',
+  SOURCE: 'relationsRail.source',
+  COMPILATION: 'relationsRail.compilation',
+  CONTAINS: 'relationsRail.contains',
+};
+
+function relationLabel(type: string | null | undefined): string {
+  const key = type ? RELATION_KEYS[type] : undefined;
+  return key ? t(key) : sentenceCase(type);
+}
+
 export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) => {
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -27,18 +49,22 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
   if (!relations || relations.length === 0) return null;
 
   const scroll = (direction: 'left' | 'right') => {
-    scrollRef.current?.scrollBy({ left: direction === 'left' ? -528 : 528, behavior: 'smooth' });
+    scrollRef.current?.scrollBy({
+      left: direction === 'left' ? -528 : 528,
+      // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
   };
 
   return (
     <section className="group/rail flex flex-col gap-3">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-xl font-semibold text-text-primary">Related</h2>
-        <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
-          <Button icon variant="ghost" size="sm" aria-label="Scroll related titles left" onClick={() => scroll('left')}>
+        <h2 className="text-xl font-semibold text-text-primary">{t('relationsRail.related')}</h2>
+        <div dir="ltr" className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
+          <Button icon variant="ghost" size="sm" aria-label={t('relationsRail.scrollLeft')} onClick={() => scroll('left')}>
             <ChevronLeft aria-hidden="true" className="h-4 w-4" />
           </Button>
-          <Button icon variant="ghost" size="sm" aria-label="Scroll related titles right" onClick={() => scroll('right')}>
+          <Button icon variant="ghost" size="sm" aria-label={t('relationsRail.scrollRight')} onClick={() => scroll('right')}>
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </Button>
         </div>
@@ -53,7 +79,7 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
           if (!item) return null;
 
           const title =
-            item.title?.english || item.title?.userPreferred || item.title?.romaji || 'Untitled';
+            item.title?.english || item.title?.userPreferred || item.title?.romaji || t('relationsRail.untitled');
           const cover = item.coverImage?.extraLarge || item.coverImage?.large || null;
 
           const formatUpper = item.format?.toUpperCase() || '';
@@ -73,7 +99,7 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
           };
 
           const caption = [
-            sentenceCase(edge.relationType) || 'Related',
+            relationLabel(edge.relationType) || t('relationsRail.related'),
             mediaFormatLabel(item.format),
             item.averageScore ? `${item.averageScore}%` : null,
           ]
@@ -85,8 +111,8 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
               key={`${item.id ?? index}-${edge.relationType ?? ''}`}
               type="button"
               onClick={handleClick}
-              title={isPrint ? `Open ${title} in the browser` : title}
-              className="group flex w-40 flex-shrink-0 cursor-pointer snap-start flex-col rounded-xl text-left"
+              title={isPrint ? t('relationsRail.openInBrowser', { title }) : title}
+              className="group flex w-40 flex-shrink-0 cursor-pointer snap-start flex-col rounded-xl text-start"
             >
               <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl ui-card bg-bg-card">
                 <ShimmerImage

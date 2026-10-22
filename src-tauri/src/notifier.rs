@@ -1,8 +1,8 @@
 //! Release notifications: a desktop notification when a new episode airs for an anime the
 //! user has a bell on.
 //!
-//! One background task ([`start`]) keeps a snapshot of AniList's airing schedule for the
-//! belled anime. It re-reads the schedule every [`REFRESH_INTERVAL_S`], right after a bell
+//! One background task ([`start`]) keeps a snapshot of the airing schedule (AniList's, or
+//! the catalogue fallback's while AniList is unavailable) for the belled anime. It re-reads the schedule every [`REFRESH_INTERVAL_S`], right after a bell
 //! changes ([`replan`]) and once more when an air time passes, and sleeps until the nearest of
 //! those moments. The sleep is cut into slices of at most [`WATCH_TICK_S`]; between slices only
 //! the clock, the bells and the setting are looked at, never the network, so a suspended
@@ -10,7 +10,10 @@
 //!
 //! An episode is announced only once a schedule read made at or after its air time still lists
 //! it as aired, so a delay or a hiatus never produces a false notification, and being offline
-//! at the air time only postpones it. Every episode that was announced or deliberately skipped
+//! at the air time only postpones it. Times from a catalogue other than AniList are estimates
+//! (weekly slots), so those episodes are never announced at their air time: only the release
+//! checks ([`crate::release_check`]) announce them, once an extension has the episode. Anime
+//! known only by a stand-in (negative) id get their times that way too. Every episode that was announced or deliberately skipped
 //! is recorded in `notified_episodes`, which is what makes a notification fire at most once
 //! across restarts, repeated checks and schedule shifts.
 //!
@@ -26,6 +29,8 @@ use crate::clients::anilist::{interpret_graphql_response, ANILIST_GRAPHQL_URL};
 use crate::commands::schedule::BELLS_CHANGED;
 use crate::db;
 use crate::error::AppError;
+use crate::models::Category;
+use crate::release_check::{self, ReleaseChecks};
 use crate::state::AppState;
 use async_trait::async_trait;
 use notify_rust::{Hint, NotificationHandle, NotificationResponse, Timeout};
@@ -104,6 +109,15 @@ pub struct Snapshot {
     /// The anime the read asked about.
     pub media_ids: BTreeSet<i64>,
     pub airings: Vec<Airing>,
+    /// Anime whose times are estimates, not AniList's.
+    pub estimated: BTreeSet<i64>,
+}
+
+/// A schedule read, with the anime whose times are estimates.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MarkedAirings {
+    pub airings: Vec<Airing>,
+    pub estimated: BTreeSet<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,18 +127,34 @@ pub struct ReleaseNotification {
     pub cover_image: Option<String>,
     /// The episodes this notification announces; more than one when several became due together.
     pub episodes: Vec<Airing>,
+    /// The text in place of "Episode N is out" (release checks say which version is out).
+    pub note: Option<String>,
 }
 
 impl ReleaseNotification {
+    /// The text in English (log lines and tests); `body_in` for what the user sees.
     pub fn body(&self) -> String {
+        self.body_in("en")
+    }
+
+    /// The text in an interface language (`crate::i18n`).
+    pub fn body_in(&self, lang: &str) -> String {
+        use crate::i18n::fill;
+        if let Some(note) = &self.note {
+            return note.clone();
+        }
         let mut numbers: Vec<i32> = self.episodes.iter().map(|a| a.episode).collect();
         numbers.sort_unstable();
         numbers.dedup();
         match numbers.as_slice() {
             [] => String::new(),
-            [only] => format!("Episode {} is out", only),
-            [first, second] => format!("Episodes {} and {} are out", first, second),
-            [first, .., last] => format!("Episodes {}–{} are out", first, last),
+            [only] => fill(lang, "episode_out", &[("episode", &only.to_string())]),
+            [first, second] => {
+                fill(lang, "two_out", &[("first", &first.to_string()), ("second", &second.to_string())])
+            }
+            [first, .., last] => {
+                fill(lang, "range_out", &[("first", &first.to_string()), ("last", &last.to_string())])
+            }
         }
     }
 }
@@ -208,7 +238,9 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
                 }
                 continue;
             }
-            let silent = airing.airing_at < bell.enabled_at
+            // Estimated times are announced by the release checks, once a source has the episode.
+            let silent = snapshot.estimated.contains(&airing.media_id)
+                || airing.airing_at < bell.enabled_at
                 || airing.airing_at <= input.silenced_until
                 || now - airing.airing_at > CATCH_UP_WINDOW_S;
             if silent {
@@ -231,6 +263,7 @@ pub fn plan(input: &PlanInput<'_>) -> Plan {
                     title: bell.media_title.clone(),
                     cover_image: bell.cover_image.clone(),
                     episodes: vec![airing.clone()],
+                    note: None,
                 });
             }
         }
@@ -268,9 +301,10 @@ pub fn retry_delay_s(failures: u32, error: &AppError) -> i64 {
     }
 }
 
-/// The ids to ask the schedule about: valid, without duplicates, in ascending order.
+/// The ids to ask the schedule about: valid (stand-in ids included), without duplicates, in
+/// ascending order.
 pub fn schedule_media_ids(bells: &[Bell]) -> Vec<i64> {
-    let ids: BTreeSet<i64> = bells.iter().map(|b| b.media_id).filter(|id| *id > 0).collect();
+    let ids: BTreeSet<i64> = bells.iter().map(|b| b.media_id).filter(|id| *id != 0).collect();
     ids.into_iter().collect()
 }
 
@@ -286,6 +320,11 @@ pub fn release_notifications_enabled(settings: &Value) -> bool {
 pub trait ScheduleSource: Send + Sync {
     /// Every airing of `media_ids` between `from_ts` and `to_ts` (Unix seconds, exclusive).
     async fn fetch(&self, media_ids: &[i64], from_ts: i64, to_ts: i64) -> Result<Vec<Airing>, AppError>;
+
+    /// `fetch`, saying which anime's times are estimates; none, unless a source says so.
+    async fn fetch_marked(&self, media_ids: &[i64], from_ts: i64, to_ts: i64) -> Result<MarkedAirings, AppError> {
+        Ok(MarkedAirings { airings: self.fetch(media_ids, from_ts, to_ts).await?, estimated: BTreeSet::new() })
+    }
 }
 
 #[async_trait]
@@ -408,9 +447,16 @@ pub struct Notifier {
     next_fetch_allowed_at: i64,
     failures: u32,
     storage_failing: bool,
+    /// Without it, nothing is asked of the extensions.
+    checks: Option<ReleaseChecks>,
 }
 
 impl Notifier {
+    /// Turns the release checks on (or off with `None`) from the next step on.
+    pub fn set_release_checks(&mut self, checks: Option<ReleaseChecks>) {
+        self.checks = checks;
+    }
+
     pub async fn load(pool: &SqlitePool) -> Result<Self, AppError> {
         let notified = db::list_notified_episodes(pool).await?.into_iter().collect();
         let silenced_until = db::get_notifier_state(pool, SILENCED_UNTIL_KEY).await?.unwrap_or(0);
@@ -501,13 +547,142 @@ impl Notifier {
                 let notification = ReleaseNotification { episodes: fresh, ..notification };
                 info!("Release notification: {} ({})", notification.title, notification.body());
                 sink.show(&notification).await;
+                keep_notice(pool, &notification).await;
             }
             if let Some(e) = failure {
                 return Err(e);
             }
         }
 
-        Ok(StepOutcome { wake_at: plan.wake_at, watching: true })
+        let mut wake_at = plan.wake_at;
+        if let Some(at) = self.run_release_checks(pool, sink, &bells, now).await? {
+            wake_at = wake_at.min(at.max(now));
+        }
+        if let Some(at) = self.run_reminders(pool, sink, &bells, now).await? {
+            wake_at = wake_at.min(at.max(now));
+        }
+        Ok(StepOutcome { wake_at, watching: true })
+    }
+
+    /// Shows "airs in N minutes" reminders for bells with a lead time. Returns when the next
+    /// reminder is due.
+    async fn run_reminders(
+        &mut self,
+        pool: &SqlitePool,
+        sink: &dyn NotificationSink,
+        bells: &[Bell],
+        now: i64,
+    ) -> Result<Option<i64>, AppError> {
+        let Some(snapshot) = self.snapshot.as_ref() else { return Ok(None) };
+        let leads = crate::reminders::lead_minutes(pool).await?;
+        if leads.is_empty() {
+            return Ok(None);
+        }
+        let sent = crate::reminders::sent(pool).await?;
+        for reminder in crate::reminders::due(&leads, &snapshot.airings, &sent, now) {
+            let Some(bell) = bells.iter().find(|b| b.media_id == reminder.media_id) else { continue };
+            // Recorded before it is shown, like airing notifications.
+            if !crate::reminders::record_sent(pool, &reminder, now).await? {
+                continue;
+            }
+            let notification = ReleaseNotification {
+                media_id: bell.media_id,
+                title: bell.media_title.clone(),
+                cover_image: bell.cover_image.clone(),
+                episodes: vec![Airing { media_id: reminder.media_id, episode: reminder.episode, airing_at: reminder.airing_at }],
+                note: Some(reminder.body_in(crate::i18n::current(), now)),
+            };
+            info!("Reminder: {} ({})", notification.title, reminder.body(now));
+            sink.show(&notification).await;
+            keep_notice(pool, &notification).await;
+        }
+        let sent = crate::reminders::sent(pool).await?;
+        Ok(crate::reminders::next_due_at(&leads, &snapshot.airings, &sent, now))
+    }
+
+    /// Starts checks for newly aired episodes, asks the extensions about what is due, and
+    /// announces hits and final misses. Returns when a check is next due.
+    async fn run_release_checks(
+        &mut self,
+        pool: &SqlitePool,
+        sink: &dyn NotificationSink,
+        bells: &[Bell],
+        now: i64,
+    ) -> Result<Option<i64>, AppError> {
+        let Some(checks) = self.checks.clone() else {
+            return Ok(None);
+        };
+        let limit_s = checks.settings.limit_s;
+        if let Some(snapshot) = self.snapshot.as_ref().filter(|s| s.fetched_at <= now) {
+            for airing in release_check::starts(snapshot, bells, self.silenced_until, now, limit_s) {
+                for track in &release_check::TRACKS {
+                    release_check::start(pool, &airing, track).await?;
+                }
+            }
+        }
+
+        let rows = release_check::pending(pool).await?;
+        let plan = release_check::plan(&rows, now, limit_s);
+        let bell_of = |media_id: i64| bells.iter().find(|b| b.media_id == media_id);
+
+        // Both tracks of an episode are looked for in one search, which lists each provider once.
+        let mut episodes: Vec<(i64, i32)> = plan.check.iter().map(|r| (r.media_id, r.episode)).collect();
+        episodes.dedup();
+        for (media_id, episode) in episodes {
+            let Some(bell) = bell_of(media_id) else { continue };
+            let due: Vec<&release_check::CheckRow> =
+                plan.check.iter().filter(|r| r.media_id == media_id && r.episode == episode).collect();
+            let tracks: Vec<Category> = due.iter().map(|r| r.track.clone()).collect();
+            let found = checks.probe.find(bell, episode, &tracks).await;
+            for row in due {
+                release_check::note_check(pool, row, now).await?;
+                let hit = found.iter().find(|(track, _)| *track == row.track).and_then(|(_, hit)| hit.as_ref());
+                let Some(hit) = hit else {
+                    info!(
+                        "Release check: {} episode {} ({}) not found yet, check {} of at most {}",
+                        bell.media_title,
+                        episode,
+                        row.track.as_str(),
+                        row.checks + 1,
+                        release_check::MAX_CHECKS
+                    );
+                    continue;
+                };
+                if release_check::finish(pool, row, Some(hit), now).await? {
+                    let note = release_check::found_body_in(
+                        crate::i18n::current(),
+                        episode,
+                        &row.track,
+                        hit.language.as_deref(),
+                    );
+                    info!(
+                        "Release check: {} episode {} found on {}: {}",
+                        bell.media_title,
+                        episode,
+                        hit.provider,
+                        release_check::found_body(episode, &row.track, hit.language.as_deref())
+                    );
+                    announce(pool, sink, bell, row, note).await;
+                }
+            }
+        }
+
+        for (row, announce_it) in &plan.give_up {
+            let Some(bell) = bell_of(row.media_id) else { continue };
+            if !release_check::finish(pool, row, None, now).await? {
+                continue;
+            }
+            if *announce_it && row.track == checks.settings.main_track {
+                let note = release_check::missing_body_in(crate::i18n::current(), row.episode, &row.track, &checks.prefs);
+                info!(
+                    "Release check: {} — {}",
+                    bell.media_title,
+                    release_check::missing_body(row.episode, &row.track, &checks.prefs)
+                );
+                announce(pool, sink, bell, row, note).await;
+            }
+        }
+        Ok(plan.wake_at)
     }
 
     fn plan(&self, bells: &[Bell], now: i64) -> Plan {
@@ -524,8 +699,8 @@ impl Notifier {
 
     async fn refresh(&mut self, source: &dyn ScheduleSource, bells: &[Bell], now: i64) {
         let ids = schedule_media_ids(bells);
-        match source.fetch(&ids, now - LOOKBACK_S, now + LOOKAHEAD_S).await {
-            Ok(airings) => {
+        match source.fetch_marked(&ids, now - LOOKBACK_S, now + LOOKAHEAD_S).await {
+            Ok(marked) => {
                 if self.failures > 0 {
                     info!("The airing schedule is reachable again");
                 }
@@ -534,7 +709,8 @@ impl Notifier {
                 self.snapshot = Some(Snapshot {
                     fetched_at: now,
                     media_ids: bells.iter().map(|b| b.media_id).collect(),
-                    airings,
+                    airings: marked.airings,
+                    estimated: marked.estimated,
                 });
             }
             Err(e) => {
@@ -570,6 +746,28 @@ impl Notifier {
         db::set_notifier_state(pool, SILENCED_UNTIL_KEY, self.silenced_until).await?;
         self.silenced_saved = self.silenced_until;
         Ok(())
+    }
+}
+
+/// Shows a release-check alert and keeps it for the notification centre.
+async fn announce(pool: &SqlitePool, sink: &dyn NotificationSink, bell: &Bell, row: &release_check::CheckRow, note: String) {
+    let notification = ReleaseNotification {
+        media_id: bell.media_id,
+        title: bell.media_title.clone(),
+        cover_image: bell.cover_image.clone(),
+        episodes: vec![Airing { media_id: row.media_id, episode: row.episode, airing_at: row.airing_at }],
+        note: Some(note),
+    };
+    sink.show(&notification).await;
+    keep_notice(pool, &notification).await;
+}
+
+/// Keeps an alert for the in-app notification centre, so alerts sent while the window was
+/// closed (or by `--background`) are listed when the app opens.
+async fn keep_notice(pool: &SqlitePool, n: &ReleaseNotification) {
+    let link = format!("/detail/{}", n.media_id);
+    if let Err(e) = crate::notices::push(pool, crate::notices::AIRING, &n.title, &n.body_in(crate::i18n::current()), Some(&link)).await {
+        warn!("Could not keep the alert for {} in the notification centre: {}", n.title, e);
     }
 }
 
@@ -689,7 +887,7 @@ fn act_on_click(app: &tauri::AppHandle, click: Click) {
 /// Waits until the notification is clicked or closed. Holding `handle` keeps the session-bus
 /// connection the click is reported on; `_slot` is given back when the wait ends.
 async fn wait_for_click(
-    app: tauri::AppHandle,
+    on_click: OnClick,
     handle: NotificationHandle,
     media_id: i64,
     _slot: OwnedSemaphorePermit,
@@ -704,13 +902,16 @@ async fn wait_for_click(
         // Nothing listens from here on, so the notification must not stay clickable.
         let _ = tokio::time::timeout(SERVICE_TIMEOUT, handle.close_async()).await;
     }
-    act_on_click(&app, click);
+    on_click(click);
 }
+
+/// What a click on a notification does.
+pub type OnClick = Arc<dyn Fn(Click) + Send + Sync>;
 
 /// Shows notifications on the desktop, with the cover as the icon when a local copy can be
 /// had quickly and the app's own icon otherwise.
-struct DesktopSink {
-    app: tauri::AppHandle,
+pub struct DesktopSink {
+    on_click: OnClick,
     client: reqwest::Client,
     cover_dir: Option<PathBuf>,
     /// The product name: what the desktop shows as the sender, and the name of the installed
@@ -720,14 +921,9 @@ struct DesktopSink {
 }
 
 impl DesktopSink {
-    fn new(app: tauri::AppHandle, client: reqwest::Client, cover_dir: Option<PathBuf>) -> Self {
-        let app_name = app
-            .config()
-            .product_name
-            .clone()
-            .unwrap_or_else(|| app.package_info().name.clone());
+    pub fn new(app_name: String, client: reqwest::Client, cover_dir: Option<PathBuf>, on_click: OnClick) -> Self {
         Self {
-            app,
+            on_click,
             client,
             cover_dir,
             app_name,
@@ -753,7 +949,7 @@ impl NotificationSink for DesktopSink {
         popup
             .appname(&self.app_name)
             .summary(&notification.title)
-            .body(&notification.body())
+            .body(&notification.body_in(crate::i18n::current()))
             .hint(Hint::DesktopEntry(self.app_name.clone()))
             .timeout(Timeout::Milliseconds(POPUP_TIMEOUT_MS));
         match &icon {
@@ -762,7 +958,7 @@ impl NotificationSink for DesktopSink {
             None => popup.auto_icon(),
         };
         if slot.is_some() {
-            popup.action(OPEN_ACTION, "Open");
+            popup.action(OPEN_ACTION, crate::i18n::text(crate::i18n::current(), "open"));
         }
 
         let handle = match tokio::time::timeout(SERVICE_TIMEOUT, popup.show_async()).await {
@@ -780,7 +976,7 @@ impl NotificationSink for DesktopSink {
             }
         };
         if let Some(slot) = slot {
-            tauri::async_runtime::spawn(wait_for_click(self.app.clone(), handle, notification.media_id, slot));
+            tokio::spawn(wait_for_click(self.on_click.clone(), handle, notification.media_id, slot));
         }
     }
 }
@@ -800,18 +996,23 @@ pub fn start(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(run(app));
 }
 
-fn read_setting(settings_path: Option<&Path>) -> bool {
-    // An unreadable settings file counts as the default, on.
+/// The settings file's object; an unreadable file counts as empty, so every setting has its
+/// default (release notifications on).
+fn read_settings(settings_path: Option<&Path>) -> Value {
     settings_path
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .map(|settings| release_notifications_enabled(&settings))
-        != Some(false)
+        .unwrap_or_else(|| json!({}))
+}
+
+/// Where notification icons are kept.
+pub fn cover_dir() -> Option<PathBuf> {
+    dirs::cache_dir().map(|dir| dir.join(db::APP_DIR_NAME).join("notification-covers"))
 }
 
 async fn run(app: tauri::AppHandle) {
-    let (pool, client) = match app.try_state::<AppState>() {
-        Some(state) => (state.pool.clone(), state.client.clone()),
+    let (pool, client, catalogue, plugins) = match app.try_state::<AppState>() {
+        Some(state) => (state.pool.clone(), state.client.clone(), state.catalogue.clone(), state.plugins.clone()),
         None => {
             error!("Release notifications cannot start: the app state is not available");
             STARTED.store(false, Ordering::SeqCst);
@@ -819,37 +1020,92 @@ async fn run(app: tauri::AppHandle) {
         }
     };
 
-    let mut logged = false;
-    let mut notifier = loop {
-        match Notifier::load(&pool).await {
-            Ok(notifier) => break notifier,
-            Err(e) => {
-                if !logged {
-                    warn!("Release notifications cannot read their state yet: {}", e);
-                    logged = true;
-                }
-                tokio::time::sleep(Duration::from_secs(STORAGE_RETRY_S as u64)).await;
-            }
-        }
-    };
+    // The app does the checking while it runs; `--background` stands down until it quits.
+    let _owner = crate::system::background::claim_for_app().await;
 
-    info!("Release notifications are running");
-    let settings_path = db::get_config_dir().ok().map(|dir| dir.join("settings.json"));
-    let cover_dir = dirs::cache_dir().map(|dir| dir.join(db::APP_DIR_NAME).join("notification-covers"));
-    if let (Some(dir), Ok(bells)) = (&cover_dir, db::list_notification_bells(&pool).await) {
-        prune_covers(dir, &bells);
-    }
-
-    let source = AniListSchedule::new(client.clone());
-    let sink = DesktopSink::new(app, client, cover_dir);
+    let app_name = app
+        .config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| app.package_info().name.clone());
+    let on_click: OnClick = Arc::new(move |click| act_on_click(&app, click));
+    let sink = DesktopSink::new(app_name, client, cover_dir(), on_click);
 
     #[cfg(debug_assertions)]
     show_test_notification(&pool, &sink).await;
 
+    // AniList's schedule, or Shikimori's next episodes while AniList is unavailable.
+    drive(&pool, &*catalogue, extension_probe(plugins), &sink, || true).await;
+}
+
+/// The release checks' view of the installed extensions.
+pub fn extension_probe(plugins: crate::plugins::registry::PluginRegistry) -> Arc<dyn release_check::ReleaseProbe> {
+    Arc::new(release_check::ExtensionProbe::new(
+        Arc::new(move || plugins.providers()),
+        Arc::new(crate::commands::settings::language_prefs),
+    ))
+}
+
+/// Runs the notifier and the release checks for good. `may_check` is asked before every
+/// step: while it says no, nothing is checked (another process is checking), and the state is
+/// read again from the database when it says yes again.
+pub async fn drive(
+    pool: &SqlitePool,
+    source: &dyn ScheduleSource,
+    probe: Arc<dyn release_check::ReleaseProbe>,
+    sink: &dyn NotificationSink,
+    mut may_check: impl FnMut() -> bool,
+) {
+    let load = || async {
+        let mut logged = false;
+        loop {
+            match Notifier::load(pool).await {
+                Ok(notifier) => break notifier,
+                Err(e) => {
+                    if !logged {
+                        warn!("Release notifications cannot read their state yet: {}", e);
+                        logged = true;
+                    }
+                    tokio::time::sleep(Duration::from_secs(STORAGE_RETRY_S as u64)).await;
+                }
+            }
+        }
+    };
+    let mut notifier = load().await;
+
+    info!("Release notifications are running");
+    let settings_path = db::get_config_dir().ok().map(|dir| dir.join("settings.json"));
+    if let (Some(dir), Ok(bells)) = (cover_dir(), db::list_notification_bells(pool).await) {
+        prune_covers(&dir, &bells);
+    }
+    if let Err(e) = release_check::prune(pool, db::current_unix_timestamp()).await {
+        warn!("Old release checks could not be pruned: {}", e);
+    }
+
+    let mut standing_by = false;
     loop {
-        let enabled = read_setting(settings_path.as_deref());
+        if !may_check() {
+            if !standing_by {
+                info!("Release notifications stand by: Anix is open and does the checking");
+                standing_by = true;
+            }
+            tokio::time::sleep(Duration::from_secs(WATCH_TICK_S as u64)).await;
+            continue;
+        }
+        if standing_by {
+            info!("Release notifications take over again");
+            notifier = load().await;
+            standing_by = false;
+        }
+
+        let settings = read_settings(settings_path.as_deref());
+        notifier.set_release_checks(Some(ReleaseChecks {
+            probe: probe.clone(),
+            settings: release_check::CheckSettings::from_settings(&settings),
+            prefs: crate::providers::languages::LanguagePrefs::from_settings(&settings),
+        }));
         let outcome = notifier
-            .step(&pool, &source, &sink, enabled, db::current_unix_timestamp())
+            .step(pool, source, sink, release_notifications_enabled(&settings), db::current_unix_timestamp())
             .await;
 
         let sleep_s = sleep_seconds(outcome, db::current_unix_timestamp());
@@ -866,7 +1122,7 @@ async fn run(app: tauri::AppHandle) {
 /// Debug builds only: with `ANIX_TEST_NOTIFICATION` (or the earlier `ANILILI_TEST_NOTIFICATION`) set, shows one sample notification at
 /// startup (for the first bell, if there is one) without recording anything.
 #[cfg(debug_assertions)]
-async fn show_test_notification(pool: &SqlitePool, sink: &DesktopSink) {
+async fn show_test_notification(pool: &SqlitePool, sink: &dyn NotificationSink) {
     if crate::env_var_os("ANIX_TEST_NOTIFICATION", "ANILILI_TEST_NOTIFICATION").is_none() {
         return;
     }
@@ -883,6 +1139,7 @@ async fn show_test_notification(pool: &SqlitePool, sink: &DesktopSink) {
         title,
         cover_image,
         episodes: vec![Airing { media_id, episode: 1, airing_at: db::current_unix_timestamp() }],
+        note: None,
     })
     .await;
 }

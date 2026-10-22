@@ -5,6 +5,7 @@ import { AnimeCard } from './AnimeCard';
 import { SkeletonCard } from './SkeletonCard';
 import { Button } from './ui/Button';
 import { distinctEpisodeTitle, historyProgressPercent } from '../hooks/watchProgress';
+import { t } from '../i18n';
 import type { Media, HistoryEntry } from '../types';
 
 interface HorizontalRailProps {
@@ -62,7 +63,11 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
     const el = scrollRef.current;
     if (!el) return;
     const distance = Math.max(el.clientWidth - 176, 176);
-    el.scrollBy({ left: direction === 'left' ? -distance : distance, behavior: 'smooth' });
+    el.scrollBy({
+      left: direction === 'left' ? -distance : distance,
+      // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
   };
 
   const hasContent = (items && items.length > 0) || (historyItems && historyItems.length > 0);
@@ -74,11 +79,11 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
         <h2 className="text-xl font-semibold text-text-primary">{title}</h2>
 
         <div className="flex items-center gap-1">
-          <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
-            <Button icon variant="ghost" size="sm" aria-label={`Scroll ${title} left`} onClick={() => handleScroll('left')}>
+          <div dir="ltr" className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
+            <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollLeft', { title })} onClick={() => handleScroll('left')}>
               <ChevronLeft aria-hidden="true" className="h-4 w-4" />
             </Button>
-            <Button icon variant="ghost" size="sm" aria-label={`Scroll ${title} right`} onClick={() => handleScroll('right')}>
+            <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollRight', { title })} onClick={() => handleScroll('right')}>
               <ChevronRight aria-hidden="true" className="h-4 w-4" />
             </Button>
           </div>
@@ -86,9 +91,9 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
             <Link
               to={viewAllLink}
               draggable={false}
-              className="-mr-3 flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-ink/10 hover:text-text-primary"
+              className="-me-3 flex h-8 items-center rounded-md px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-ink/10 hover:text-text-primary"
             >
-              View all
+              {t('horizontalRail.viewAll')}
             </Link>
           )}
         </div>
@@ -111,7 +116,7 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
                     className="w-full"
                   />
                   <span className="mt-0.5 truncate text-xs text-text-muted">
-                    Episode {hist.episode_number}
+                    {t('common.episodeNumber', { number: hist.episode_number })}
                     {episodeTitle ? ` · ${episodeTitle}` : ''}
                   </span>
                 </div>

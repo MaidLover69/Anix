@@ -97,6 +97,7 @@ async fn fixture() -> Fixture {
                     "description": "A site that exists only in tests", "type": "onlinestream-provider",
                     "language": "javascript", "lang": "en", "icon": "https://example.org/icon.png",
                     "payloadURI": "plugins/fixture.js",
+                    "changelog": if version == "1.0.0" { "" } else { "  Adds the gamma server.  " },
                     "userConfig": { "fields": [{ "name": "base", "default": base }] }
                 },
                 { "id": "broken", "name": "Broken", "version": "0.1.0", "type": "onlinestream-provider", "language": "javascript", "payloadURI": "plugins/broken.js" },
@@ -306,8 +307,13 @@ async fn a_repository_is_added_refreshed_and_removed() {
     registry.refresh_repos().await;
     assert_eq!(fx.site.count("/repo/plugins/fixture.js"), payload_hits);
 
-    // A new version is picked up.
+    // A new version is announced with its notes, then picked up.
+    assert!(registry.available_updates().await.is_empty());
     *fx.version.lock().unwrap() = "1.1.0".to_string();
+    let updates = registry.available_updates().await;
+    assert_eq!(updates.len(), 1);
+    assert_eq!((updates[0].installed.as_str(), updates[0].available.as_str()), ("1.0.0", "1.1.0"));
+    assert_eq!(updates[0].changelog.as_deref(), Some("Adds the gamma server."));
     let refreshed = registry.refresh_repos().await;
     assert_eq!(refreshed.len(), 1);
     assert_eq!(fx.site.count("/repo/plugins/fixture.js"), payload_hits + 1);

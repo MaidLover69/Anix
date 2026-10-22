@@ -4,6 +4,7 @@ import { Layers, Play, Search, Square, SquareCheck, Trash2, X } from 'lucide-rea
 import { Button } from './ui/Button';
 import { sameEpisode } from './player/format';
 import type { EpisodeItem } from '../types';
+import { t } from '../i18n';
 
 interface PlayerPlaylistDrawerProps {
   isOpen: boolean;
@@ -93,16 +94,17 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
       ref={panelRef}
       role="dialog"
       aria-modal="true"
-      aria-label="Episodes"
+      aria-label={t('common.episodes')}
       tabIndex={-1}
+      dir={document.documentElement.dir || 'ltr'}
       onClick={(e) => e.stopPropagation()}
       className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-pop outline-none animate-slide-left"
     >
       <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-text-primary">Episodes</h2>
+          <h2 className="text-base font-semibold text-text-primary">{t('common.episodes')}</h2>
           <p className="text-xs text-text-muted">
-            {episodes.length} {episodes.length === 1 ? 'episode' : 'episodes'}
+            {t('common.episodeCount', { count: episodes.length })}
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -110,14 +112,14 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
             icon
             size="sm"
             variant={multiSelect ? 'secondary' : 'ghost'}
-            aria-label="Select episodes to queue"
+            aria-label={t('playerPlaylistDrawer.selectToQueue')}
             aria-pressed={multiSelect}
-            title="Select episodes to queue"
+            title={t('playerPlaylistDrawer.selectToQueue')}
             onClick={() => setMultiSelect((prev) => !prev)}
           >
             <Layers aria-hidden="true" className="h-4 w-4" />
           </Button>
-          <Button icon size="sm" variant="ghost" aria-label="Close" title="Close" onClick={onClose}>
+          <Button icon size="sm" variant="ghost" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}>
             <X aria-hidden="true" className="h-4 w-4" />
           </Button>
         </div>
@@ -125,14 +127,14 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
 
       {multiSelect && (
         <div className="flex items-center justify-between gap-2 bg-accent-tint px-4 py-2">
-          <span className="text-xs font-medium text-accent-300">{queuedEpisodes.length} queued</span>
+          <span className="text-xs font-medium text-accent-300">{t('playerPlaylistDrawer.queuedCount', { count: queuedEpisodes.length })}</span>
           <div className="flex items-center gap-1">
             <Button
               icon
               size="sm"
               variant="ghost"
-              aria-label="Clear the queue"
-              title="Clear the queue"
+              aria-label={t('playerPlaylistDrawer.clearQueue')}
+              title={t('playerPlaylistDrawer.clearQueue')}
               disabled={queuedEpisodes.length === 0}
               onClick={onClearQueue}
             >
@@ -148,7 +150,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
               }}
             >
               <Play aria-hidden="true" className="h-3 w-3 fill-current" />
-              Play queue
+              {t('playerPlaylistDrawer.playQueue')}
             </Button>
           </div>
         </div>
@@ -158,15 +160,15 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
         <div className="relative">
           <Search
             aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
+            className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
           />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by number or title"
-            aria-label="Search episodes"
-            className="h-9 w-full rounded-md border border-border bg-bg-input pl-9 pr-3 text-[13px] text-text-primary placeholder:text-text-muted"
+            placeholder={t('playerPlaylistDrawer.searchPlaceholder')}
+            aria-label={t('playerPlaylistDrawer.searchEpisodes')}
+            className="h-9 w-full rounded-md border border-border bg-bg-input ps-9 pe-3 text-[13px] text-text-primary placeholder:text-text-muted"
           />
         </div>
       </div>
@@ -174,7 +176,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4 pt-1">
         {filteredEpisodes.length === 0 ? (
           <p className="py-10 text-center text-[13px] text-text-muted">
-            {episodes.length === 0 ? 'The episode list is not available.' : 'No episode matches the search.'}
+            {episodes.length === 0 ? t('playerPlaylistDrawer.listUnavailable') : t('playerPlaylistDrawer.noMatch')}
           </p>
         ) : (
           filteredEpisodes.map((ep) => {
@@ -197,7 +199,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
                     onClose();
                   }
                 }}
-                className={`flex min-h-[2.75rem] flex-shrink-0 items-center gap-3 rounded-md px-3 py-1.5 text-left cursor-pointer transition-colors ${
+                className={`flex min-h-[2.75rem] flex-shrink-0 items-center gap-3 rounded-md px-3 py-1.5 text-start cursor-pointer transition-colors ${
                   isCurrent
                     ? 'bg-accent-tint text-accent-300'
                     : 'ui-inset bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
@@ -211,14 +213,14 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
                   ))}
                 <span className="w-8 flex-shrink-0 text-[13px] font-semibold tabular-nums">{ep.number}</span>
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[13px]">{title ?? `Episode ${ep.number}`}</span>
-                  {ep.filler && <span className="text-[11px] text-state-warning">Filler</span>}
+                  <span className="truncate text-[13px]">{title ?? t('common.episodeNumber', { number: ep.number })}</span>
+                  {ep.filler && <span className="text-[11px] text-state-warning">{t('playerPlaylistDrawer.filler')}</span>}
                 </span>
                 {isCurrent ? (
-                  <span className="flex-shrink-0 text-[11px] font-semibold">Playing</span>
+                  <span className="flex-shrink-0 text-[11px] font-semibold">{t('playerPlaylistDrawer.playing')}</span>
                 ) : (
                   isQueued && !multiSelect && (
-                    <span className="flex-shrink-0 text-[11px] text-text-muted">Queued</span>
+                    <span className="flex-shrink-0 text-[11px] text-text-muted">{t('playerPlaylistDrawer.queued')}</span>
                   )
                 )}
               </button>
@@ -238,7 +240,9 @@ export const PlayerPlaylistDrawer: React.FC<PlayerPlaylistDrawerProps> = ({
   if (!isOpen) return null;
 
   return createPortal(
+    // Left to right like the player, so the panel sits on its right in every language.
     <div
+      dir="ltr"
       className="absolute inset-0 z-[60] flex justify-end bg-black/60 animate-fade-in"
       onClick={panelProps.onClose}
     >

@@ -1,4 +1,4 @@
-import React, { useId, useRef } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bookmark } from 'lucide-react';
 import clsx from 'clsx';
@@ -6,6 +6,8 @@ import { ShimmerImage } from './ShimmerImage';
 import type { Media } from '../types';
 import { useWatchlist, useToggleWatchlist } from '../hooks/useLibrary';
 import { QuickPeekCard, useQuickPeek } from './QuickPeek';
+import { PosterContextMenu } from './PosterContextMenu';
+import { t } from '../i18n';
 
 interface AnimeCardProps {
   media: Media;
@@ -33,14 +35,16 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   const peekOpen = peek && quickPeek.isOpen;
   // One shared query for every card on screen instead of a lookup per card.
   const { data: watchlist = [] } = useWatchlist();
-  const inWatchlist = watchlist.some((entry) => entry.anilist_id === media.id);
+  const listEntry = watchlist.find((entry) => entry.anilist_id === media.id);
+  const inWatchlist = listEntry !== undefined;
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const toggleWatchlistMutation = useToggleWatchlist();
 
   const title =
     media.title.english ||
     media.title.user_preferred ||
     media.title.romaji ||
-    'Untitled';
+    t('animeCard.untitled');
 
   const coverUrl =
     media.cover_image.extra_large ||
@@ -58,6 +62,19 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
     });
   };
 
+  // Right-click opens the menu at the pointer; Shift+F10 and the menu key open it on the poster.
+  const openMenu = (event: React.MouseEvent | React.KeyboardEvent) => {
+    event.preventDefault();
+    quickPeek.closeNow();
+    const fromKeyboard = !('clientX' in event) || (event.clientX === 0 && event.clientY === 0);
+    if (fromKeyboard) {
+      const rect = linkRef.current?.getBoundingClientRect();
+      setMenuAt({ x: (rect?.left ?? 0) + 8, y: (rect?.top ?? 0) + 8 });
+    } else {
+      setMenuAt({ x: event.clientX, y: event.clientY });
+    }
+  };
+
   const caption = [media.season_year, media.genres?.[0]].filter(Boolean).join(' · ');
   const format = media.format && media.format !== 'TV' ? media.format.replace(/_/g, ' ') : null;
 
@@ -66,6 +83,7 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
       ref={rootRef}
       className={`group relative flex flex-col flex-shrink-0 select-none ${className}`}
       style={style}
+      onContextMenu={openMenu}
       onPointerEnter={peek ? (e) => e.pointerType !== 'touch' && quickPeek.requestOpen() : undefined}
       onPointerLeave={peek ? quickPeek.requestClose : undefined}
       onPointerDown={
@@ -108,6 +126,10 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
         to={`/detail/${media.id}`}
         draggable={false}
         aria-describedby={peekOpen ? peekId : undefined}
+        aria-haspopup="menu"
+        onKeyDown={(e) => {
+          if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') openMenu(e);
+        }}
         className="flex flex-col rounded-xl"
       >
         <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card">
@@ -117,16 +139,16 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
             className="w-full h-full transition-transform duration-150 group-hover:scale-[1.04]"
           />
 
-          {format && <span className={clsx(BADGE_CLASS, 'absolute left-2 top-2')}>{format}</span>}
+          {format && <span className={clsx(BADGE_CLASS, 'absolute start-2 top-2')}>{format}</span>}
 
           {media.average_score !== null && media.average_score !== undefined && (
-            <span className={clsx(BADGE_CLASS, 'absolute right-2 top-2 tabular-nums')}>
+            <span className={clsx(BADGE_CLASS, 'absolute end-2 top-2 tabular-nums')}>
               {media.average_score}%
             </span>
           )}
 
           {showProgress !== undefined && showProgress > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+            <div className="absolute bottom-0 start-0 end-0 h-1 bg-white/20">
               <div
                 className="h-full bg-accent-500"
                 style={{ width: `${Math.min(100, Math.max(0, showProgress))}%` }}
@@ -145,18 +167,35 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
       <button
         type="button"
         onClick={handleWatchlistClick}
-        aria-label={inWatchlist ? `Remove ${title} from watchlist` : `Add ${title} to watchlist`}
+        aria-label={t(inWatchlist ? 'animeCard.removeFromWatchlist' : 'animeCard.addToWatchlist', { title })}
         aria-pressed={inWatchlist}
         className={clsx(
-          'absolute left-2 flex h-8 w-8 items-center justify-center rounded-md bg-black/70 cursor-pointer transition-[opacity,background-color] hover:bg-black/90',
+          'absolute start-2 flex h-8 w-8 items-center justify-center rounded-md bg-black/70 cursor-pointer transition-[opacity,background-color] hover:bg-black/90',
           format ? 'top-9' : 'top-2',
+          // The chip is always black, so the saved state uses a fixed light colour in every theme.
           inWatchlist
-            ? 'text-accent-300'
+            ? 'text-white'
             : 'text-white opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
         )}
       >
         <Bookmark aria-hidden="true" className={clsx('h-4 w-4', inWatchlist && 'fill-current')} />
       </button>
+
+      {menuAt && (
+        <PosterContextMenu
+          target={{
+            id: media.id,
+            title,
+            cover: coverUrl,
+            format: media.format,
+            averageScore: media.average_score,
+          }}
+          status={listEntry?.status ?? null}
+          at={menuAt}
+          onClose={() => setMenuAt(null)}
+          returnFocusTo={linkRef.current}
+        />
+      )}
 
       {peekOpen && (
         <QuickPeekCard

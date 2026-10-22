@@ -19,6 +19,7 @@ import type { CustomPlaylist, CustomPlaylistItem } from '../../types';
 import { categoryLabel, episodeLabel, formatDate, playerLabel, watchCategory } from './format';
 import { CoverThumb } from './CoverThumb';
 import { PlaylistCollage } from './PlaylistCollage';
+import { t, tn } from '../../i18n';
 
 type ExternalPlayer = 'mpv' | 'vlc';
 
@@ -43,11 +44,7 @@ interface PlaylistDetailProps {
 }
 
 function itemName(item: CustomPlaylistItem): string {
-  return `${item.series_title}, ${episodeLabel(item.episode_num)}`;
-}
-
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? '' : 's'}`;
+  return t('playlistDetail.itemName', { title: item.series_title, episode: episodeLabel(item.episode_num) });
 }
 
 export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack, onDeleted }) => {
@@ -112,35 +109,35 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
       });
       if (result.cancelled) return;
 
-      const failureLines = result.failures.map(({ item, reason }) => `${itemName(item)}: ${reason}`);
+      const failureLines = result.failures.map(({ item, reason }) =>
+        t('playlistDetail.failureLine', { item: itemName(item), reason })
+      );
 
       if (result.resolved.length === 0) {
-        setIssues({ title: `No episode could be resolved, so ${name} was not started`, lines: failureLines });
-        showToast({ type: 'error', title: 'No streams could be resolved for this playlist' });
+        setIssues({ title: t('playlistDetail.noneResolved', { player: name }), lines: failureLines });
+        showToast({ type: 'error', title: t('playlistDetail.noStreams') });
         return;
       }
 
-      await launchPlaylistExternalPlayer(player, playlist.name || 'Anix playlist', result.resolved);
+      await launchPlaylistExternalPlayer(player, playlist.name || t('playlistDetail.defaultName'), result.resolved);
 
       if (result.failures.length > 0) {
         setIssues({
-          title: `${plural(result.failures.length, 'episode')} could not be resolved and ${
-            result.failures.length === 1 ? 'was' : 'were'
-          } left out`,
+          title: t('playlistDetail.someUnresolved', { count: result.failures.length }),
           lines: failureLines,
         });
         showToast({
           type: 'warning',
-          title: `Opened ${result.resolved.length} of ${items.length} episodes in ${name}`,
+          title: t('playlistDetail.openedSome', { opened: result.resolved.length, count: items.length, player: name }),
         });
       } else {
         showToast({
           type: 'success',
-          title: `Opened ${plural(result.resolved.length, 'episode')} in ${name}`,
+          title: t('playlistDetail.openedAll', { count: result.resolved.length, player: name }),
         });
       }
     } catch (err) {
-      showToast({ type: 'error', title: `Could not start ${name}`, message: errorMessage(err) });
+      showToast({ type: 'error', title: t('playlistDetail.startError', { player: name }), message: errorMessage(err) });
     } finally {
       resolvingRef.current = false;
       setResolving(null);
@@ -178,30 +175,33 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
 
       if (failed > 0) {
         setIssues({
-          title: `${plural(failed, 'download')} could not be queued`,
+          title: t('playlistDetail.queueFailed', { count: failed }),
           lines: result.failures.map(
             ({ record, reason }) =>
-              `${record.series_title}, ${episodeLabel(record.episode_num)}: ${reason}`
+              t('playlistDetail.failureLine', {
+                item: t('playlistDetail.itemName', { title: record.series_title, episode: episodeLabel(record.episode_num) }),
+                reason,
+              })
           ),
           // Only the failed ones, so the episodes that were queued are not queued twice.
-          retry: { label: `Retry ${failed} failed`, run: () => queueItems(failedItems) },
+          retry: { label: t('playlistDetail.retryFailed', { count: failed }), run: () => queueItems(failedItems) },
         });
       }
 
       if (result.queued === 0) {
-        showToast({ type: 'error', title: 'No downloads were queued' });
+        showToast({ type: 'error', title: t('playlistDetail.noneQueued') });
       } else {
         showToast({
           type: failed > 0 ? 'warning' : 'success',
           title:
             failed > 0
-              ? `Queued ${result.queued} of ${records.length} downloads`
-              : `Queued ${plural(result.queued, 'download')}`,
-          message: 'Track them in the Downloads tab.',
+              ? t('playlistDetail.queuedSome', { queued: result.queued, count: records.length })
+              : t('playlistDetail.queuedAll', { count: result.queued }),
+          message: t('playlistDetail.trackThem'),
         });
       }
     } catch (err) {
-      showToast({ type: 'error', title: 'Could not queue the downloads', message: errorMessage(err) });
+      showToast({ type: 'error', title: t('playlistDetail.queueError'), message: errorMessage(err) });
     } finally {
       queueingRef.current = false;
     }
@@ -215,7 +215,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
     } catch (err) {
       showToast({
         type: 'error',
-        title: 'Could not remove the episode from the playlist',
+        title: t('playlistDetail.removeError'),
         message: errorMessage(err),
       });
     } finally {
@@ -234,10 +234,10 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
     setDeleteError(null);
     try {
       await deletePlaylist.mutateAsync(playlist.id);
-      showToast({ type: 'success', title: `Deleted playlist "${playlist.name}"` });
+      showToast({ type: 'success', title: t('playlistDetail.deleted', { name: playlist.name }) });
       onDeleted();
     } catch (err) {
-      setDeleteError(errorMessage(err, 'The playlist could not be deleted.'));
+      setDeleteError(errorMessage(err, t('playlistDetail.deleteError')));
     }
   };
 
@@ -248,17 +248,17 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
         variant="secondary"
         onClick={() => handleLaunchExternal(player)}
         disabled={!hasItems || resolving !== null}
-        title={`Resolve every episode and open the playlist in ${playerLabel(player)}`}
+        title={t('playlistDetail.resolveTitle', { player: playerLabel(player) })}
       >
         {active && resolving ? (
           <>
-            <Spinner size="sm" label="Resolving streams" />
+            <Spinner size="sm" label={t('playlistDetail.resolvingStreams')} />
             <span className="tabular-nums">
-              Resolving {Math.min(resolving.done + 1, resolving.total)} of {resolving.total}
+              {t('playlistDetail.resolvingProgress', { done: Math.min(resolving.done + 1, resolving.total), total: resolving.total })}
             </span>
           </>
         ) : (
-          <span>Play in {playerLabel(player)}</span>
+          <span>{t('playlistDetail.playIn', { player: playerLabel(player) })}</span>
         )}
       </Button>
     );
@@ -267,20 +267,20 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" size="sm" className="-ml-3" onClick={onBack}>
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          <span>All playlists</span>
+        <Button variant="ghost" size="sm" className="-ms-3" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 rtl:-scale-x-100" aria-hidden="true" />
+          <span>{t('playlistDetail.allPlaylists')}</span>
         </Button>
         <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
           <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Delete playlist</span>
+          <span>{t('playlistDetail.deletePlaylist')}</span>
         </Button>
       </div>
 
       <header className="flex items-center gap-5 min-w-0">
         <PlaylistCollage covers={playlist.covers} className="w-24 h-24 rounded-xl flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Playlist</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t('playlistDetail.playlist')}</p>
           <h2 className="mt-1 text-xl font-semibold text-text-primary truncate select-text">
             {playlist.name}
           </h2>
@@ -290,8 +290,8 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
             </p>
           )}
           <p className="mt-2 text-xs text-text-muted">
-            {plural(episodeCount, 'episode')}
-            {created ? ` · Created ${created}` : ''}
+            {t('common.episodeCount', { count: episodeCount })}
+            {created ? ` · ${t('playlistDetail.created', { date: created })}` : ''}
           </p>
         </div>
       </header>
@@ -299,13 +299,13 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={() => handlePlayInApp(0)} disabled={!hasItems}>
           <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-          <span>Play</span>
+          <span>{t('common.play')}</span>
         </Button>
         {externalButton('mpv')}
         {externalButton('vlc')}
         {resolving && (
           <Button variant="ghost" onClick={handleCancelResolve} disabled={resolving.cancelling}>
-            {resolving.cancelling ? 'Cancelling…' : 'Cancel'}
+            {resolving.cancelling ? t('playlistDetail.cancelling') : t('common.cancel')}
           </Button>
         )}
         <Button
@@ -315,13 +315,13 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
         >
           {queueDownloads.isPending ? (
             <>
-              <Spinner size="sm" label="Queuing downloads" />
-              <span>Queuing…</span>
+              <Spinner size="sm" label={t('playlistDetail.queuingDownloads')} />
+              <span>{t('playlistDetail.queuing')}</span>
             </>
           ) : (
             <>
               <Download className="w-4 h-4" aria-hidden="true" />
-              <span>Download all</span>
+              <span>{t('playlistDetail.downloadAll')}</span>
             </>
           )}
         </Button>
@@ -352,7 +352,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
               </Button>
             )}
           </div>
-          <Button icon variant="ghost" size="sm" aria-label="Dismiss" onClick={() => setIssues(null)}>
+          <Button icon variant="ghost" size="sm" aria-label={t('playlistDetail.dismiss')} onClick={() => setIssues(null)}>
             <X className="w-4 h-4" aria-hidden="true" />
           </Button>
         </div>
@@ -360,19 +360,19 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
 
       {itemsQuery.isLoading ? (
         <div className="flex justify-center py-16">
-          <Spinner size="lg" label="Loading playlist" className="text-text-muted" />
+          <Spinner size="lg" label={t('playlistDetail.loading')} className="text-text-muted" />
         </div>
       ) : itemsQuery.isError ? (
         <ErrorState
-          title="Could not load this playlist"
+          title={t('playlistDetail.loadError')}
           error={itemsQuery.error}
           onRetry={() => itemsQuery.refetch()}
         />
       ) : !hasItems ? (
         <EmptyState
           icon={<ListVideo className="w-8 h-8" aria-hidden="true" />}
-          title="This playlist is empty"
-          description="Open an anime and use Add to playlist on an episode to put it here."
+          title={t('playlistDetail.empty')}
+          description={t('playlistDetail.emptyHint')}
         />
       ) : (
         <ol className="flex flex-col gap-2">
@@ -382,7 +382,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
             return (
               <li
                 key={item.id}
-                className="flex items-center gap-3 p-2 pr-3 rounded-md ui-card bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_80px]"
+                className="flex items-center gap-3 p-2 pe-3 rounded-md ui-card bg-bg-card [content-visibility:auto] [contain-intrinsic-size:auto_80px]"
               >
                 <span className="w-6 flex-shrink-0 text-center text-xs text-text-muted tabular-nums">
                   {index + 1}
@@ -402,10 +402,10 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
                     variant="secondary"
                     size="sm"
                     onClick={() => handlePlayInApp(index)}
-                    aria-label={`Play from ${itemName(item)}`}
+                    aria-label={t('playlistDetail.playFrom', { item: itemName(item) })}
                   >
                     <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
-                    <span>Play</span>
+                    <span>{t('common.play')}</span>
                   </Button>
                   <Button
                     icon
@@ -413,7 +413,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
                     size="sm"
                     onClick={() => handleRemoveItem(item)}
                     disabled={removingId !== null}
-                    aria-label={`Remove ${itemName(item)} from the playlist`}
+                    aria-label={t('playlistDetail.removeItem', { item: itemName(item) })}
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </Button>
@@ -427,24 +427,26 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
       <Modal
         isOpen={confirmDelete}
         onClose={closeDeleteDialog}
-        title="Delete this playlist?"
+        title={t('playlistDetail.deleteTitle')}
         size="md"
         footer={
           <>
             <Button variant="ghost" onClick={closeDeleteDialog} disabled={deletePlaylist.isPending}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDeletePlaylist} disabled={deletePlaylist.isPending}>
-              {deletePlaylist.isPending ? 'Deleting…' : 'Delete playlist'}
+              {deletePlaylist.isPending ? t('playlistDetail.deleting') : t('playlistDetail.deletePlaylist')}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3 text-sm text-text-secondary">
           <p>
-            <span className="text-text-primary">{playlist.name}</span>
-            {episodeCount > 0 ? ` and its list of ${plural(episodeCount, 'episode')}` : ''} will be
-            deleted. Watch history and downloads are not affected. This cannot be undone.
+            {tn(
+              episodeCount > 0 ? 'playlistDetail.deleteBodyWithEpisodes' : 'playlistDetail.deleteBody',
+              { name: <span className="text-text-primary">{playlist.name}</span> },
+              { count: episodeCount }
+            )}
           </p>
           {deleteError && (
             <p role="alert" className="text-xs text-state-error select-text">

@@ -6,11 +6,15 @@ import { Captions, Download, ExternalLink, LoaderCircle } from 'lucide-react';
 import { formatTime, sameEpisode } from './format';
 import { IconButton } from './IconButton';
 import { MiniPlayerChrome } from './MiniPlayerChrome';
+import { MpvMedia } from './mpvMedia';
 import { AUDIO_MODES, PlayerControls } from './PlayerControls';
 import type { EpisodeStep } from './PlayerControls';
+import { PlayerSettingsPanel } from './PlayerSettingsPanel';
+import { PauseDetails, PlayerClock } from './PlayerTopBar';
+import { countdownLabel, HOLD_RATE, mpvSubtitlePositions, objectFitClass, PAUSE_DETAILS_MS, stepSpeed } from './playerLogic';
 import { SecondarySubtitle } from './SecondarySubtitle';
 import type { FeedbackMessage } from './PlayerFeedback';
-import type { PlayerMenuOption } from './PlayerMenu';
+import type { PlayerMenuOption } from './PlayerSettingsPanel';
 import { PlayerStatus } from './PlayerStatus';
 import type { PlayerStatusAction } from './PlayerStatus';
 import { PlayerTopBar } from './PlayerTopBar';
@@ -18,22 +22,26 @@ import { SubtitleSettingsModal } from '../SubtitleSettingsModal';
 import { errorMessage } from '../ui/ErrorState';
 import { useAutoHide } from '../../hooks/useAutoHide';
 import { useDialogueBoost } from '../../hooks/useDialogueBoost';
+import { sendMpv, useMpvEngine } from '../../hooks/useEmbeddedMpv';
+import { useLanguagePrefs } from '../../hooks/useLanguagePrefs';
 import { exitFullscreen } from '../../hooks/useFullscreen';
 import { useResumePosition } from '../../hooks/useLibrary';
 import { useMediaState } from '../../hooks/useMediaState';
 import { supportsPictureInPicture, useMiniPlayer } from '../../hooks/useMiniPlayer';
 import { useMpris } from '../../hooks/useMpris';
 import { usePlayerEngine } from '../../hooks/usePlayerEngine';
-import type { QualityLevel } from '../../hooks/usePlayerEngine';
+import type { PlayerEngine, QualityLevel } from '../../hooks/usePlayerEngine';
 import { usePlayerShortcuts } from '../../hooks/usePlayerShortcuts';
 import { useSkipTimes } from '../../hooks/useProviders';
 import { useSettings } from '../../hooks/useSettings';
 import { useStoredChoice } from '../../hooks/useStoredChoice';
 import { useSubtitleDrop } from '../../hooks/useSubtitleDrop';
 import { hasSkipTimes, useSkipSegments } from '../../hooks/useSkipSegments';
+import type { AutoSkip } from '../../hooks/useSkipSegments';
 import { SUBTITLES_OFF, useSubtitleTracks } from '../../hooks/useSubtitleTracks';
 import { useWatchProgress } from '../../hooks/useWatchProgress';
 import { usePlayerStore } from '../../stores/playerStore';
+import { t } from '../../i18n';
 import type { SourcesResult } from '../../types';
 
 export interface VideoPlayerProps {
@@ -57,8 +65,14 @@ export interface VideoPlayerProps {
   loadKey: string | number;
 
   autoplay: boolean;
-  autoSkip: boolean;
+  autoSkip: AutoSkip;
   externalPlayer: 'mpv' | 'vlc';
+  /** Embedded mpv draws the video under the page; 'web' plays it in a `<video>`. */
+  engineKind: 'web' | 'mpv';
+  /** No stream would play in embedded mpv: the screen switches to the web player. */
+  onEngineFail: (message: string) => void;
+  /** The "External player" engine: hand the episode to mpv/VLC as soon as its stream is known. */
+  openExternally: boolean;
 
   previous: EpisodeStep | null;
   next: EpisodeStep | null;
@@ -117,13 +131,13 @@ function qualityMenu(levels: QualityLevel[], activeLevel: number): PlayerMenuOpt
   const active = levels.find((level) => level.id === activeLevel);
   const heights = levels.map((level) => level.height);
   const label = (level: QualityLevel) => {
-    const mbps = `${(level.bitrate / 1_000_000).toFixed(1)} Mbps`;
-    if (!level.height) return level.bitrate ? mbps : `Level ${level.id + 1}`;
+    const mbps = t('videoPlayer.mbps', { value: (level.bitrate / 1_000_000).toFixed(1) });
+    if (!level.height) return level.bitrate ? mbps : t('videoPlayer.qualityLevel', { number: level.id + 1 });
     const ambiguous = heights.filter((h) => h === level.height).length > 1;
     return ambiguous && level.bitrate ? `${level.height}p · ${mbps}` : `${level.height}p`;
   };
   return [
-    { value: '-1', label: active?.height ? `Auto (${active.height}p)` : 'Auto' },
+    { value: '-1', label: active?.height ? t('videoPlayer.autoQuality', { height: active.height }) : t('common.auto') },
     ...[...levels]
       .sort((a, b) => b.height - a.height || b.bitrate - a.bitrate)
       .map((level) => ({ value: String(level.id), label: label(level) })),
@@ -147,6 +161,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   autoplay,
   autoSkip,
   externalPlayer,
+  engineKind,
+  onEngineFail,
+  openExternally,
   previous,
   next,
   queuedCount,
@@ -166,23 +183,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const queryClient = useQueryClient();
+  // With embedded mpv, `videoRef` holds a stand-in with the element's members and events, so
+  // progress, skip times, MPRIS and the controls work unchanged. Hooks that need a real
+  // `<video>` (hls.js, `<track>`s, Web Audio) get `elementRef`, which then stays empty.
+  const isMpv = engineKind === 'mpv';
+  const [mpvMedia] = useState(() => (isMpv ? new MpvMedia(sendMpv) : null));
+  if (mpvMedia) (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = mpvMedia as unknown as HTMLVideoElement;
+  const noElementRef = useRef<HTMLVideoElement>(null);
+  const elementRef = isMpv ? noElementRef : videoRef;
+  const regionRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const languagePrefs = useLanguagePrefs();
 
   // The saved position has to be known before the stream is loaded.
   const resume = useResumePosition(anilistId, episodeNumber, loadKey);
   const start = useMemo(() => resumeStart(resume.data), [resume.data]);
 
   const { data: settings } = useSettings();
-  const engine = usePlayerEngine({
-    videoRef,
+  // A dub starts in the first preferred dub language the stream has, a sub in Japanese.
+  const preferredAudioLanguages = category === 'dub' ? settings?.preferred_dub_languages ?? [] : ['ja'];
+  const webEngine = usePlayerEngine({
+    videoRef: elementRef,
     streams: sources.streams,
     proxyBase,
-    enabled: !resume.isPending,
+    enabled: !isMpv && !resume.isPending,
     startAt: start.time,
     startVerified: start.verified,
     autoplay,
-    // A dub starts in the first preferred dub language the stream has, a sub in Japanese.
-    preferredAudioLanguages: category === 'dub' ? settings?.preferred_dub_languages ?? [] : ['ja'],
+    preferredAudioLanguages,
   });
+  const mpvEngine = useMpvEngine({
+    media: mpvMedia,
+    streams: sources.streams,
+    subtitles: sources.subtitles,
+    proxyBase,
+    enabled: isMpv && !resume.isPending,
+    startAt: start.time,
+    startVerified: start.verified,
+    autoplay,
+    preferredAudioLanguages,
+    subtitleLanguages: languagePrefs.sub,
+    startSubtitlesOff: category === 'dub',
+    onFail: onEngineFail,
+  });
+  const engine: PlayerEngine = isMpv ? mpvEngine : webEngine;
   const media = useMediaState(videoRef);
 
   const subtitleFontSize = usePlayerStore((s) => s.subtitleFontSize);
@@ -191,19 +235,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const subtitleBackground = usePlayerStore((s) => s.subtitleBackground);
   const subtitleDelayMs = usePlayerStore((s) => s.subtitleDelayMs);
   const secondaryFontSize = usePlayerStore((s) => s.secondarySubtitleFontSize);
+  const screenFit = usePlayerStore((s) => s.screenFit);
+  const anime4k = usePlayerStore((s) => s.anime4k);
 
   // A dropped subtitle file becomes a track and is switched on straight away.
   const selectSubtitleRef = useRef<(id: string) => void>(() => {});
   const dropped = useSubtitleDrop(
     (file, index) => {
+      if (isMpv) {
+        notify({ text: t('videoPlayer.droppedSubtitlesWebOnly'), tone: 'error' });
+        return;
+      }
       selectSubtitleRef.current(`file:${index}`);
-      notify({ text: `Subtitles: ${file.label}` });
+      notify({ text: t('videoPlayer.subtitlesNamed', { name: file.label }) });
     },
     (message) => notify({ text: message, tone: 'error' })
   );
 
-  const subtitles = useSubtitleTracks({
-    videoRef,
+  const webSubtitles = useSubtitleTracks({
+    videoRef: elementRef,
     subtitles: sources.subtitles,
     stream: engine.stream,
     proxyBase,
@@ -215,19 +265,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     startOff: category === 'dub',
     localFiles: dropped.files,
   });
+  const subtitles = isMpv
+    ? { options: mpvEngine.subtitleOptions, selectedId: mpvEngine.selectedSubtitle, select: mpvEngine.selectSubtitle }
+    : webSubtitles;
   const selectSubtitle = subtitles.select;
   selectSubtitleRef.current = selectSubtitle;
 
   // The optional second subtitle, from the same files, drawn at the top of the picture.
-  const [secondaryId, setSecondaryId] = useState(SUBTITLES_OFF);
+  const [webSecondaryId, setWebSecondaryId] = useState(SUBTITLES_OFF);
+  const secondaryId = isMpv ? mpvEngine.selectedSecondary : webSecondaryId;
+  const setSecondaryId = isMpv ? mpvEngine.selectSecondary : setWebSecondaryId;
   const secondaryOptions = useMemo(
-    () => subtitles.options.filter((o) => o.id.startsWith('ext:') || o.id.startsWith('file:')),
-    [subtitles.options]
+    () =>
+      isMpv
+        ? subtitles.options.filter((o) => o.id !== subtitles.selectedId)
+        : subtitles.options.filter((o) => o.id.startsWith('ext:') || o.id.startsWith('file:')),
+    [isMpv, subtitles.options, subtitles.selectedId]
   );
-  const secondarySrc = secondaryId === SUBTITLES_OFF ? null : subtitles.fileSrc(secondaryId);
+  const secondarySrc = isMpv || webSecondaryId === SUBTITLES_OFF ? null : webSubtitles.fileSrc(webSecondaryId);
 
   const [audioMode, setAudioMode] = useStoredChoice('player-audio-mode', AUDIO_MODES, 'normal');
-  useDialogueBoost(videoRef, audioMode === 'boost');
+  useDialogueBoost(elementRef, !isMpv && audioMode === 'boost');
 
   const miniPlayer = useMiniPlayer();
   const [pictureInPicture] = useState(() => supportsPictureInPicture(document.createElement('video')));
@@ -239,14 +297,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (episodeLength === 0 && media.duration > 60) setEpisodeLength(Math.round(media.duration));
   }, [episodeLength, media.duration]);
-  const aniSkip = useSkipTimes(
-    malId,
-    episodeNumber,
-    episodeLength,
-    !providerSkip && Number.isInteger(episodeNumber)
-  );
-  const skip = useSkipSegments(videoRef, providerSkip ?? aniSkip.data, autoSkip, (kind) =>
-    notify({ text: kind === 'intro' ? 'Skipped the intro' : 'Skipped the ending' })
+  const aniSkipPossible = !providerSkip && Number.isInteger(episodeNumber) && malId !== null;
+  const aniSkip = useSkipTimes(malId, episodeNumber, episodeLength, aniSkipPossible);
+  // The fixed jump is only offered once it is clear that no skip times will come.
+  const skipLookupDone = !aniSkipPossible || aniSkip.isFetched;
+  const skip = useSkipSegments(videoRef, providerSkip ?? aniSkip.data, autoSkip, skipLookupDone, (kind) =>
+    notify({ text: kind === 'intro' ? t('videoPlayer.skippedIntro') : t('videoPlayer.skippedEnding') })
   );
 
   useWatchProgress(videoRef, {
@@ -260,10 +316,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   const [subtitleSettingsOpen, setSubtitleSettingsOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const chrome = useAutoHide(
-    (media.playing || engine.rebuffering) && engine.phase === 'ready' && !menuOpen && !subtitleSettingsOpen && !overlayOpen
-  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const panelOpen = subtitleSettingsOpen || settingsOpen || overlayOpen;
+  const chrome = useAutoHide((media.playing || engine.rebuffering) && engine.phase === 'ready' && !panelOpen);
 
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
@@ -293,7 +348,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
       video.currentTime = Math.min(video.duration, Math.max(0, video.currentTime + seconds));
       notify({
-        text: `${seconds > 0 ? '+' : '−'}${Math.abs(seconds)}s`,
+        text: t(seconds > 0 ? 'videoPlayer.seekForward' : 'videoPlayer.seekBack', { seconds: Math.abs(seconds) }),
         side: seconds > 0 ? 'right' : 'left',
       });
     },
@@ -315,7 +370,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (!video) return;
       const next = Math.min(1, Math.max(0, (video.muted ? 0 : video.volume) + delta));
       setVolume(next);
-      notify({ text: `Volume ${Math.round(next * 100)}%` });
+      notify({ text: t('videoPlayer.volumePercent', { percent: Math.round(next * 100) }) });
     },
     [notify, setVolume]
   );
@@ -326,10 +381,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (video.muted || video.volume === 0) {
       video.muted = false;
       if (video.volume === 0) video.volume = 0.5;
-      notify({ text: `Volume ${Math.round(video.volume * 100)}%` });
+      notify({ text: t('videoPlayer.volumePercent', { percent: Math.round(video.volume * 100) }) });
     } else {
       video.muted = true;
-      notify({ text: 'Muted' });
+      notify({ text: t('videoPlayer.muted') });
     }
   }, [notify]);
 
@@ -341,18 +396,51 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.playbackRate = rate;
   }, []);
 
+  const speedBy = useCallback(
+    (direction: 1 | -1) => {
+      const next = stepSpeed(videoRef.current?.playbackRate ?? 1, direction);
+      setRate(next);
+      notify({ text: t('videoPlayer.speed', { rate: Number(next.toFixed(2)) }) });
+    },
+    [setRate, notify]
+  );
+
+  // Holding Space plays at 2x and lets go back to the speed from before.
+  const heldFrom = useRef<number | null>(null);
+  const holdStart = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || heldFrom.current !== null) return;
+    heldFrom.current = video.playbackRate || 1;
+    if (video.paused) engine.play();
+    video.playbackRate = HOLD_RATE;
+    notify({ text: t('videoPlayer.holdSpeed', { rate: HOLD_RATE }) });
+  }, [engine, notify]);
+  const holdEnd = useCallback(() => {
+    const video = videoRef.current;
+    const previousRate = heldFrom.current;
+    heldFrom.current = null;
+    if (video && previousRate !== null) video.playbackRate = previousRate;
+  }, []);
+
   const handleSelectSubtitle = useCallback(
     (id: string) => {
       selectSubtitle(id);
       const option = subtitles.options.find((o) => o.id === id);
-      notify({ text: id === SUBTITLES_OFF ? 'Subtitles off' : `Subtitles: ${option?.label ?? 'on'}` });
+      notify({
+        text:
+          id === SUBTITLES_OFF
+            ? t('videoPlayer.subtitlesOff')
+            : option
+              ? t('videoPlayer.subtitlesNamed', { name: option.label })
+              : t('videoPlayer.subtitlesOn'),
+      });
     },
     [selectSubtitle, subtitles.options, notify]
   );
 
   const handleSubtitleError = useCallback(() => {
     selectSubtitle(SUBTITLES_OFF);
-    notify({ text: 'That subtitle track could not be loaded', tone: 'error' });
+    notify({ text: t('videoPlayer.subtitleLoadFailed'), tone: 'error' });
   }, [selectSubtitle, notify]);
 
   const handleDownload = () => {
@@ -387,11 +475,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       streamType: stream.stream_type || null,
     })
       .then(() => {
-        notify({ text: `Download started: Episode ${episodeNumber}. See Library › Downloads.` });
+        notify({ text: t('videoPlayer.downloadStarted', { number: episodeNumber }) });
         queryClient.invalidateQueries({ queryKey: ['allDownloads'] });
       })
       .catch((err) =>
-        notify({ text: `Download failed: ${errorMessage(err)}`, tone: 'error' })
+        notify({ text: t('videoPlayer.downloadFailed', { error: errorMessage(err) }), tone: 'error' })
       );
   };
 
@@ -427,10 +515,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     })
       .then(() => {
         engine.pause();
-        notify({ text: `Opened in ${externalPlayer === 'vlc' ? 'VLC' : 'mpv'}` });
+        notify({ text: t('videoPlayer.openedIn', { player: externalPlayer === 'vlc' ? 'VLC' : 'mpv' }) });
       })
       .catch((err) =>
-        notify({ text: `Could not open the external player: ${errorMessage(err)}`, tone: 'error' })
+        notify({ text: t('videoPlayer.externalPlayerFailed', { error: errorMessage(err) }), tone: 'error' })
       );
   };
 
@@ -445,12 +533,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       queryClient.invalidateQueries({ queryKey: ['watchedEpisodes', anilistId] });
       if (payload.running) return;
       if (payload.ended) {
-        notify({ text: `Episode ${episodeNumber} finished in mpv` });
+        notify({ text: t('videoPlayer.finishedInMpv', { number: episodeNumber }) });
       } else if (payload.positionMs > 0) {
         const seconds = payload.positionMs / 1000;
         const video = videoRef.current;
         if (video && video.readyState > 0) video.currentTime = seconds;
-        notify({ text: `Back from mpv at ${formatTime(seconds)}` });
+        notify({ text: t('videoPlayer.backFromMpv', { time: formatTime(seconds) }) });
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -465,7 +553,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useMpris(
     videoRef,
     {
-      title: `${animeTitle} – Episode ${episodeNumber}`,
+      title: t('videoPlayer.titleWithEpisode', { title: animeTitle, number: episodeNumber }),
       album: animeTitle,
       artUrl: animeCover,
       track: `${anilistId}-${episodeNumber}-${category}`,
@@ -495,10 +583,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const request = document.pictureInPictureElement === video
       ? document.exitPictureInPicture()
       : video.requestPictureInPicture();
-    Promise.resolve(request).catch(() => notify({ text: 'Picture in picture is not available', tone: 'error' }));
+    Promise.resolve(request).catch(() => notify({ text: t('videoPlayer.pipUnavailable'), tone: 'error' }));
   }, [notify]);
 
   usePlayerShortcuts({
+    speedBy,
+    holdStart,
+    holdEnd,
+    confirmSkip: () => {
+      if (skip.countdown === null) return false;
+      skip.skipActive();
+      return true;
+    },
+    cancelSkip: skip.cancelCountdown,
     togglePlay: engine.togglePlay,
     seekBy,
     volumeBy,
@@ -507,9 +604,71 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     exitFullscreen,
     nextEpisode: () => next?.onClick(),
     previousEpisode: () => previous?.onClick(),
-    skipSegment: skip.skipActive,
+    skipSegment: skip.active ? skip.skipActive : skip.skipFallback,
     toggleMiniPlayer: miniPlayer.toggle,
   });
+
+  // Embedded mpv: the page's choices applied to mpv.
+  useEffect(() => {
+    if (isMpv) sendMpv({ action: 'set_sub_delay', seconds: subtitleDelayMs / 1000 });
+  }, [isMpv, subtitleDelayMs]);
+  useEffect(() => {
+    // The web player's default text size is 20 px.
+    if (isMpv) sendMpv({ action: 'set_sub_scale', value: subtitleFontSize / 20 });
+  }, [isMpv, subtitleFontSize]);
+  useEffect(() => {
+    if (isMpv) sendMpv({ action: 'set_audio_preset', preset: audioMode === 'boost' ? 'dialogue' : 'none' });
+  }, [isMpv, audioMode]);
+  useEffect(() => {
+    if (isMpv) sendMpv({ action: 'set_fit', fit: screenFit });
+  }, [isMpv, screenFit]);
+  useEffect(() => {
+    if (isMpv) sendMpv({ action: 'set_shaders', preset: anime4k });
+  }, [isMpv, anime4k]);
+
+  // Embedded mpv: keep the video inside the player's region, and its subtitles clear of the
+  // bars while they show (raised by the "Subtitle height" setting otherwise).
+  useEffect(() => {
+    const region = regionRef.current;
+    const root = rootRef.current;
+    if (!isMpv || !region || !root) return;
+    let lastPositions = '';
+    const report = () => {
+      const r = region.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      sendMpv({
+        action: 'set_video_rect',
+        x: r.left,
+        y: r.top,
+        width: r.width,
+        height: r.height,
+        viewport_width: window.innerWidth,
+        viewport_height: window.innerHeight,
+      });
+      const bar = (name: string) =>
+        root.querySelector<HTMLElement>(`[data-player-bar="${name}"]`)?.getBoundingClientRect().height ?? 0;
+      const positions = mpvSubtitlePositions({
+        regionHeight: r.height,
+        bottomBar: bar('bottom'),
+        topBar: bar('top'),
+        raisePercent: subtitleRaise,
+        chromeVisible: chrome.visible,
+      });
+      const key = `${positions.primary}:${positions.secondary}`;
+      if (key === lastPositions) return;
+      lastPositions = key;
+      sendMpv({ action: 'set_sub_pos', value: positions.primary });
+      sendMpv({ action: 'set_secondary_sub_pos', value: positions.secondary });
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(region);
+    window.addEventListener('resize', report);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', report);
+    };
+  }, [isMpv, subtitleRaise, chrome.visible, miniPlayer.mini]);
 
   const qualityOptions = useMemo(
     () => qualityMenu(engine.levels, engine.activeLevel),
@@ -517,9 +676,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 
   const errorActions: PlayerStatusAction[] = [
-    { label: 'Retry', onClick: onReload, primary: true },
-    { label: 'Change server', onClick: onOpenServers },
-    ...(onTryOtherServers ? [{ label: 'Try other servers', onClick: onTryOtherServers }] : []),
+    { label: t('common.retry'), onClick: onReload, primary: true },
+    { label: t('videoPlayer.changeServer'), onClick: onOpenServers },
+    ...(onTryOtherServers ? [{ label: t('videoPlayer.tryOtherServers'), onClick: onTryOtherServers }] : []),
     ...(extraErrorActions ?? []),
   ];
 
@@ -527,27 +686,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const loading = engine.phase === 'loading';
   const hasStream = engine.stream !== null && !failed;
 
+  // The "External player" engine hands each episode over as soon as its stream is known.
+  const openExternalRef = useRef(handleOpenExternal);
+  openExternalRef.current = handleOpenExternal;
+  const openedExternally = useRef(false);
+  useEffect(() => {
+    if (!openExternally || !hasStream || openedExternally.current) return;
+    openedExternally.current = true;
+    openExternalRef.current();
+  }, [openExternally, hasStream]);
+
+  // A long pause shows what is playing over the picture; playing hides it again.
+  const pausedNow = !media.playing && !engine.rebuffering && engine.phase === 'ready' && !failed;
+  const [pausedLong, setPausedLong] = useState(false);
+  useEffect(() => {
+    setPausedLong(false);
+    if (!pausedNow) return;
+    const timer = window.setTimeout(() => setPausedLong(true), PAUSE_DETAILS_MS);
+    return () => window.clearTimeout(timer);
+  }, [pausedNow]);
+
   return (
     <div
+      ref={rootRef}
+      // Time, seek bar and the left/right seek zones read left to right in every language.
+      dir="ltr"
       className={`absolute inset-0 select-none ${chrome.visible ? '' : 'cursor-none'}`}
       onMouseMove={chrome.poke}
+      onKeyDownCapture={chrome.poke}
       onFocusCapture={chrome.poke}
     >
-      <video
-        ref={videoRef}
-        crossOrigin="anonymous"
-        playsInline
-        onClick={engine.togglePlay}
-        className={`anilili-video h-full w-full bg-black object-contain ${
-          chrome.visible ? 'anilili-chrome-visible' : ''
-        }`}
-      >
-        {subtitles.trackSrc && (
-          <SubtitleTrack key={subtitles.trackSrc} src={subtitles.trackSrc} onError={handleSubtitleError} />
-        )}
-      </video>
+      {isMpv ? (
+        // mpv draws under the page here; this region stays see-through.
+        <div ref={regionRef} aria-hidden="true" className="absolute inset-0" onClick={engine.togglePlay} />
+      ) : (
+        <video
+          ref={videoRef}
+          crossOrigin="anonymous"
+          playsInline
+          onClick={engine.togglePlay}
+          className={`anilili-video h-full w-full bg-black ${objectFitClass(screenFit)} ${
+            chrome.visible ? 'anilili-chrome-visible' : ''
+          }`}
+        >
+          {webSubtitles.trackSrc && (
+            <SubtitleTrack key={webSubtitles.trackSrc} src={webSubtitles.trackSrc} onError={handleSubtitleError} />
+          )}
+        </video>
+      )}
 
-      {secondarySrc && (
+      {secondarySrc && !isMpv && (
         <SecondarySubtitle
           key={secondarySrc}
           videoRef={videoRef}
@@ -557,8 +745,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           background={subtitleBackground}
           delayMs={subtitleDelayMs}
           onError={() => {
-            setSecondaryId(SUBTITLES_OFF);
-            notify({ text: 'That subtitle track could not be loaded', tone: 'error' });
+            setWebSecondaryId(SUBTITLES_OFF);
+            notify({ text: t('videoPlayer.subtitleLoadFailed'), tone: 'error' });
           }}
         />
       )}
@@ -566,7 +754,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {dropped.dragging && (
         <div className="pointer-events-none absolute inset-4 z-30 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/60 bg-black/60 text-white">
           <Captions aria-hidden="true" className="h-8 w-8" />
-          <span className="text-sm font-medium">Drop to add the subtitle file</span>
+          <span className="text-sm font-medium">{t('videoPlayer.dropSubtitle')}</span>
         </div>
       )}
 
@@ -592,38 +780,81 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <PlayerStatus
           scrim
           kind="error"
-          title={providerName ? `Playback failed on ${providerName}` : 'Playback failed'}
+          title={providerName ? t('videoPlayer.playbackFailedOn', { provider: providerName }) : t('videoPlayer.playbackFailed')}
           detail={engine.error}
           actions={errorActions}
         />
       ) : loading ? (
-        <PlayerStatus kind="loading" title="Loading the stream…" />
+        <PlayerStatus kind="loading" title={t('videoPlayer.loadingStream')} />
       ) : (
         (media.buffering || engine.rebuffering) && (
           <div role="status" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <LoaderCircle aria-hidden="true" className="h-10 w-10 animate-spin text-white" />
-            <span className="sr-only">Buffering</span>
+            <span className="sr-only">{t('videoPlayer.buffering')}</span>
           </div>
         )
       )}
 
       {skip.active && !failed && !miniPlayer.mini && (
+        <div className="absolute bottom-28 right-6 z-20 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={skip.skipActive}
+            onMouseDown={(e) => e.preventDefault()}
+            title={
+              skip.countdown !== null
+                ? t('videoPlayer.skipNowWithKey')
+                : skip.active.kind === 'intro'
+                  ? t('videoPlayer.skipIntroWithKey')
+                  : t('videoPlayer.skipEndingWithKey')
+            }
+            className="h-9 rounded-md border border-white/20 bg-black/70 px-4 text-[13px] font-medium tabular-nums text-white cursor-pointer transition-colors hover:bg-black/90"
+          >
+            {skip.countdown !== null
+              ? t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntroIn' : 'videoPlayer.skipEndingIn', {
+                  seconds: countdownLabel(skip.countdown),
+                })
+              : t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntro' : 'videoPlayer.skipEnding')}
+          </button>
+          {skip.countdown !== null && (
+            <button
+              type="button"
+              onClick={skip.cancelCountdown}
+              onMouseDown={(e) => e.preventDefault()}
+              title={t('videoPlayer.keepWatchingWithKey')}
+              className="h-9 rounded-md border border-white/20 bg-black/70 px-3 text-[13px] text-white cursor-pointer transition-colors hover:bg-black/90"
+            >
+              {t('common.cancel')}
+            </button>
+          )}
+        </div>
+      )}
+      <span className="sr-only" aria-live="polite">
+        {skip.countdown !== null && skip.active
+          ? t(skip.active.kind === 'intro' ? 'videoPlayer.skippingIntroAnnounce' : 'videoPlayer.skippingEndingAnnounce')
+          : ''}
+      </span>
+      {!skip.active && skip.fallbackShown && !failed && !miniPlayer.mini && (
         <button
           type="button"
-          onClick={skip.skipActive}
+          onClick={skip.skipFallback}
           onMouseDown={(e) => e.preventDefault()}
-          title={skip.active.kind === 'intro' ? 'Skip intro (S)' : 'Skip ending (S)'}
+          title={t('videoPlayer.fallbackSkipHint')}
           className="absolute bottom-28 right-6 z-20 h-9 rounded-md border border-white/20 bg-black/70 px-4 text-[13px] font-medium text-white cursor-pointer transition-colors hover:bg-black/90"
         >
-          {skip.active.kind === 'intro' ? 'Skip intro' : 'Skip ending'}
+          {t('videoPlayer.fallbackSkip')}
         </button>
+      )}
+
+      {pausedLong && !panelOpen && !miniPlayer.mini && (
+        <PauseDetails title={animeTitle} episode={episodeNumber} episodeTitle={episodeTitle} meta={metaLine} />
       )}
 
       {miniPlayer.mini ? (
         <MiniPlayerChrome
           videoRef={videoRef}
           visible={chrome.visible}
-          title={`${animeTitle} – Episode ${episodeNumber}`}
+          title={t('videoPlayer.titleWithEpisode', { title: animeTitle, number: episodeNumber })}
           playing={media.playing || engine.rebuffering}
           duration={media.duration}
           onTogglePlay={engine.togglePlay}
@@ -634,12 +865,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ) : (
         <>
           <PlayerTopBar title={animeTitle} meta={metaLine} onBack={onBack} visible={chrome.visible}>
+            <PlayerClock videoRef={videoRef} />
             <IconButton
-              label="Download this episode"
+              label={t('videoPlayer.download')}
               title={
                 provider === 'local'
-                  ? 'This episode is already a file on this computer'
-                  : 'Download this episode (MKV with subtitles)'
+                  ? t('videoPlayer.downloadLocal')
+                  : t('videoPlayer.downloadHint')
               }
               disabled={!hasStream || provider === 'local'}
               onClick={handleDownload}
@@ -647,7 +879,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <Download aria-hidden="true" className="h-4 w-4" />
             </IconButton>
             <IconButton
-              label={`Open in ${externalPlayer === 'vlc' ? 'VLC' : 'mpv'}`}
+              label={t('videoPlayer.openIn', { player: externalPlayer === 'vlc' ? 'VLC' : 'mpv' })}
               disabled={!hasStream}
               onClick={handleOpenExternal}
             >
@@ -669,26 +901,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             muted={media.muted}
             onVolumeChange={setVolume}
             onToggleMute={toggleMute}
-            rate={media.rate}
-            onRateChange={setRate}
-            qualityOptions={qualityOptions}
-            quality={String(engine.selectedLevel)}
-            onQualityChange={(value) => engine.selectLevel(Number(value))}
             subtitlesOn={subtitles.selectedId !== SUBTITLES_OFF}
             onOpenSubtitles={() => setSubtitleSettingsOpen(true)}
             onOpenEpisodes={onOpenEpisodes}
             queuedCount={queuedCount}
             onOpenServers={onOpenServers}
+            onOpenSettings={() => setSettingsOpen(true)}
             isFullscreen={isFullscreen}
             onToggleFullscreen={onToggleFullscreen}
-            audioMode={audioMode}
-            onAudioModeChange={(mode) => {
-              setAudioMode(mode);
-              notify({ text: mode === 'boost' ? 'Dialogue boost on' : 'Dialogue boost off' });
-            }}
             onToggleMiniPlayer={miniPlayer.toggle}
-            onPictureInPicture={pictureInPicture ? handlePictureInPicture : undefined}
-            onMenuOpenChange={setMenuOpen}
+            onPictureInPicture={pictureInPicture && !isMpv ? handlePictureInPicture : undefined}
           />
         </>
       )}
@@ -708,6 +930,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         category={category}
         onToggleCategory={onToggleCategory}
         container={container}
+        engine={engineKind}
+      />
+
+      <PlayerSettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        container={container}
+        engine={engineKind}
+        rate={media.rate}
+        onRateChange={setRate}
+        qualityOptions={qualityOptions}
+        quality={String(engine.selectedLevel)}
+        onQualityChange={(value) => engine.selectLevel(Number(value))}
+        audioMode={audioMode}
+        onAudioModeChange={(mode) => {
+          setAudioMode(mode);
+          notify({ text: mode === 'boost' ? t('videoPlayer.dialogueBoostOn') : t('videoPlayer.dialogueBoostOff') });
+        }}
       />
     </div>
   );

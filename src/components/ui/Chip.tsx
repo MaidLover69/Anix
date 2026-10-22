@@ -39,7 +39,9 @@ export const Chip: React.FC<ChipProps> = ({
       className={clsx(
         classes,
         'cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none',
-        accent ? 'hover:bg-accent-500/20' : 'hover:bg-bg-input hover:text-text-primary'
+        accent ? 'hover:bg-accent-500/20' : 'hover:bg-bg-input hover:text-text-primary',
+        // Not only a hue change: in the dark themes the tint is close to the unselected fill.
+        selected && 'font-medium ring-1 ring-inset ring-accent-500/60'
       )}
     >
       {children}

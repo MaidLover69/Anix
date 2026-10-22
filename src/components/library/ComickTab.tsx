@@ -10,14 +10,15 @@ import { useUIStore } from '../../stores/uiStore';
 import type { ComickLibraryEntry } from '../../types';
 import { CoverThumb } from './CoverThumb';
 import { PosterGrid, PosterGridSkeleton, ShowMore } from './PosterGrid';
+import { t } from '../../i18n';
 
-/** Comick's status numbers, in the order of the AniList tab. */
+/** Comick's status numbers, in the order of the AniList tab. Labels are getters so they follow the interface language. */
 const COMICK_STATUSES: { value: string; label: string }[] = [
-  { value: '1', label: 'Watching' },
-  { value: '5', label: 'Planning' },
-  { value: '2', label: 'Completed' },
-  { value: '3', label: 'On hold' },
-  { value: '4', label: 'Dropped' },
+  { value: '1', get label() { return t('comickTab.watching'); } },
+  { value: '5', get label() { return t('comickTab.planning'); } },
+  { value: '2', get label() { return t('comickTab.completed'); } },
+  { value: '3', get label() { return t('comickTab.onHold'); } },
+  { value: '4', get label() { return t('comickTab.dropped'); } },
 ];
 
 function useComickLibrary(enabled: boolean) {
@@ -57,23 +58,23 @@ export const ComickTab: React.FC = () => {
     return (
       <EmptyState
         icon={<Cloud className="w-8 h-8" aria-hidden="true" />}
-        title="Comick is not connected"
-        description="Connect your Comick account to see its anime library here and have the episodes you finish saved to it."
+        title={t('comickTab.notConnected')}
+        description={t('comickTab.notConnectedHint')}
         action={
           <Button variant="primary" onClick={() => setAuthDialogOpen(true)}>
-            Connect Comick
+            {t('comickTab.connect')}
           </Button>
         }
       />
     );
   }
 
-  const statusLabel = COMICK_STATUSES.find((option) => option.value === status)?.label ?? 'this list';
+  const statusLabel = COMICK_STATUSES.find((option) => option.value === status)?.label ?? t('comickTab.thisList');
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <SegmentedControl aria-label="Comick list" options={COMICK_STATUSES} value={status} onChange={setStatus} />
+        <SegmentedControl aria-label={t('comickTab.listLabel')} options={COMICK_STATUSES} value={status} onChange={setStatus} />
         {accountsQuery.data?.comick.name && (
           <span className="truncate text-xs font-medium text-text-secondary">{accountsQuery.data.comick.name}</span>
         )}
@@ -83,15 +84,15 @@ export const ComickTab: React.FC = () => {
         <PosterGridSkeleton />
       ) : libraryQuery.isError ? (
         <ErrorState
-          title="Could not load your Comick library"
+          title={t('comickTab.libraryError')}
           message={errorMessage(libraryQuery.error)}
           onRetry={() => libraryQuery.refetch()}
         />
       ) : entries.length === 0 ? (
         <EmptyState
           icon={<ListChecks className="w-8 h-8" aria-hidden="true" />}
-          title={`Nothing in ${statusLabel}`}
-          description="Anime on this list of your Comick account shows up here."
+          title={t('comickTab.emptyTitle', { status: statusLabel })}
+          description={t('comickTab.emptyHint')}
         />
       ) : (
         <ComickEntries key={status} entries={entries} />
@@ -113,8 +114,8 @@ const ComickEntries: React.FC<{ entries: ComickLibraryEntry[] }> = ({ entries })
               type="button"
               onClick={() => entry.url && openExternal(entry.url)}
               disabled={!entry.url}
-              title={entry.url ? `Open ${entry.title} on Comick` : undefined}
-              className="group flex flex-col gap-2 text-left focus-visible:outline-none"
+              title={entry.url ? t('comickTab.openOnComick', { title: entry.title }) : undefined}
+              className="group flex flex-col gap-2 text-start focus-visible:outline-none"
             >
               <CoverThumb
                 src={entry.cover_url}
@@ -127,9 +128,9 @@ const ComickEntries: React.FC<{ entries: ComickLibraryEntry[] }> = ({ entries })
                 )}
               </span>
             </button>
-            <span className="mt-1 truncate pl-0.5 text-[11px] tabular-nums text-text-muted">
-              Progress {entry.progress?.number ?? 0}/{entry.total_units ?? '?'}
-              {entry.rating !== null && ` · Score ${entry.rating}`}
+            <span className="mt-1 truncate ps-0.5 text-[11px] tabular-nums text-text-muted">
+              {t('comickTab.progress', { progress: entry.progress?.number ?? 0, total: entry.total_units ?? '?' })}
+              {entry.rating !== null && ` · ${t('comickTab.score', { score: entry.rating })}`}
             </span>
           </div>
         ))}

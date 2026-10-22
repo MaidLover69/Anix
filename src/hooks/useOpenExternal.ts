@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-shell';
 import { useUIStore } from '../stores/uiStore';
+import { t } from '../i18n';
 
 /** Opens a URL in the system browser and reports a failure instead of swallowing it. */
 export function useOpenExternal() {
@@ -14,7 +15,7 @@ export function useOpenExternal() {
         console.error('[openExternal] failed to open', url, err);
         showToast({
           type: 'error',
-          title: 'Could not open the link',
+          title: t('useOpenExternal.failed'),
           message: url,
         });
       }

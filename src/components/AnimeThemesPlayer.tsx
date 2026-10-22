@@ -4,6 +4,7 @@ import { useAnimeThemes } from '../hooks/useAniList';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
 import type { AnimeThemeEntry } from '../types';
+import { t } from '../i18n';
 
 interface AnimeThemesPlayerProps {
   malId?: number | null;
@@ -20,7 +21,7 @@ const ThemeRow: React.FC<{
   theme: AnimeThemeEntry;
   onPlay: (theme: AnimeThemeEntry, mode: MediaMode) => void;
 }> = ({ theme, onPlay }) => {
-  const songTitle = theme.song_title || 'Theme song';
+  const songTitle = theme.song_title || t('animeThemesPlayer.themeSong');
   return (
     <li className="flex items-center gap-3 py-2">
       <span className="w-14 flex-shrink-0 truncate whitespace-nowrap text-[11px] font-semibold tabular-nums text-text-muted" title={theme.slug}>
@@ -38,8 +39,8 @@ const ThemeRow: React.FC<{
             icon
             variant="ghost"
             size="sm"
-            aria-label={`Watch the video for ${songTitle}`}
-            title="Watch video"
+            aria-label={t('animeThemesPlayer.watchVideoFor', { title: songTitle })}
+            title={t('animeThemesPlayer.watchVideo')}
             onClick={() => onPlay(theme, 'video')}
           >
             <Video aria-hidden="true" className="h-4 w-4" />
@@ -50,8 +51,8 @@ const ThemeRow: React.FC<{
             icon
             variant="ghost"
             size="sm"
-            aria-label={`Listen to ${songTitle}`}
-            title="Listen"
+            aria-label={t('animeThemesPlayer.listenTo', { title: songTitle })}
+            title={t('animeThemesPlayer.listen')}
             onClick={() => onPlay(theme, 'audio')}
           >
             <Volume2 aria-hidden="true" className="h-4 w-4" />
@@ -86,8 +87,8 @@ export const AnimeThemesPlayer: React.FC<AnimeThemesPlayerProps> = ({ malId, ani
 
   if (isLoading || themes.length === 0) return null;
 
-  const openings = themes.filter((t) => t.theme_type === 'OP');
-  const endings = themes.filter((t) => t.theme_type === 'ED');
+  const openings = themes.filter((theme) => theme.theme_type === 'OP');
+  const endings = themes.filter((theme) => theme.theme_type === 'ED');
   const handlePlay = (theme: AnimeThemeEntry, mode: MediaMode) => setActive({ theme, mode });
 
   const activeVideo = active?.mode === 'video' ? active.theme.video_url : null;
@@ -95,18 +96,18 @@ export const AnimeThemesPlayer: React.FC<AnimeThemesPlayerProps> = ({ malId, ani
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-xl font-semibold text-text-primary">Openings &amp; endings</h2>
+      <h2 className="text-xl font-semibold text-text-primary">{t('animeThemesPlayer.heading')}</h2>
 
       <div className="grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2">
-        <ThemeList label="Openings" themes={openings} onPlay={handlePlay} />
-        <ThemeList label="Endings" themes={endings} onPlay={handlePlay} />
+        <ThemeList label={t('animeThemesPlayer.openings')} themes={openings} onPlay={handlePlay} />
+        <ThemeList label={t('animeThemesPlayer.endings')} themes={endings} onPlay={handlePlay} />
       </div>
 
       <Modal
         isOpen={!!active}
         onClose={() => setActive(null)}
         size="2xl"
-        title={active ? `${active.theme.slug} · ${active.theme.song_title || 'Theme song'}` : 'Theme song'}
+        title={active ? `${active.theme.slug} · ${active.theme.song_title || t('animeThemesPlayer.themeSong')}` : t('animeThemesPlayer.themeSong')}
         header={
           <p className="truncate text-xs text-text-muted select-text">
             {active?.theme.artist_name || animeTitle}

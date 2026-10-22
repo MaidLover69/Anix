@@ -3,17 +3,23 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import type { AppSettings, UpdateInfo } from '../types';
 import { DEFAULT_THEME } from '../theme/themes';
+import { isTimeFormat, type TimeFormat } from '../lib/time';
+import { isNewerVersion } from '../lib/version';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoplay: true,
   auto_skip_intro_outro: false,
+  skip_intro: false,
+  skip_outro: false,
   prefer_dub: false,
   preferred_provider: 'auto',
   external_player: 'builtin',
   hide_adult_content: true,
   release_notifications: true,
   enable_doh: true,
+  doh_mode: 'auto',
   doh_provider: 'cloudflare',
+  catalogue_source: 'auto',
   download_quality: 'best',
   download_dir: '',
   theme: DEFAULT_THEME,
@@ -24,6 +30,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   only_preferred_languages: true,
   window_buttons: 'desktop',
   use_system_accent: false,
+  playful_touches: true,
+  release_check_hours: 3,
+  background_alerts: false,
+  // Settings from before the key existed (1.2.0) load as embedded mpv.
+  player_engine: 'mpv',
+  hwdec_mode: 'auto',
+  player_buffer_mb: 150,
+  player_readahead_secs: 30,
+  player_disk_cache: false,
+  player_disk_cache_mb: 1024,
 };
 
 /** Stands for "no specific provider" wherever a provider key (a plugin id) is expected. */
@@ -42,7 +58,16 @@ function pick(stored: StoredSettings, keep: (key: string) => boolean): StoredSet
 
 async function loadSettings(): Promise<AppSettings> {
   const stored = await invoke<StoredSettings>('get_settings');
-  return { ...DEFAULT_SETTINGS, ...pick(stored, (key) => !isAccountKey(key)) };
+  // 1.2.0 had one switch for both; it becomes the value of each.
+  const oldSkip = stored.auto_skip_intro_outro === true;
+  return {
+    ...DEFAULT_SETTINGS,
+    skip_intro: oldSkip,
+    skip_outro: oldSkip,
+    // Before `doh_mode`, the DNS-over-HTTPS switch was on or off; a saved one keeps its value.
+    ...(typeof stored.enable_doh === 'boolean' ? { doh_mode: stored.enable_doh ? 'on' : 'off' } : {}),
+    ...pick(stored, (key) => !isAccountKey(key)),
+  };
 }
 
 /**
@@ -60,6 +85,17 @@ export function useSettings() {
     queryFn: loadSettings,
     staleTime: Infinity,
   });
+}
+
+/** Settings › Appearance › Time format, for `formatTime` (lib/time.ts). */
+export function useTimeFormat(): TimeFormat {
+  const value = useSettings().data?.time_format;
+  return isTimeFormat(value) ? value : 'system';
+}
+
+/** The "Playful touches" switch; on unless it was turned off (older settings lack the key). */
+export function usePlayful(): boolean {
+  return useSettings().data?.playful_touches !== false;
 }
 
 export function useSaveSettings() {
@@ -87,23 +123,7 @@ export function useSaveSettings() {
   });
 }
 
-/** True when `candidate` is a higher dotted version than `current` ("1.2.0" > "1.1.9"). */
-export function isNewerVersion(candidate: string, current: string): boolean {
-  const parse = (v: string) =>
-    v
-      .trim()
-      .replace(/^v/i, '')
-      .split(/[.+-]/)
-      .map((part) => parseInt(part, 10))
-      .map((n) => (Number.isFinite(n) ? n : 0));
-  const a = parse(candidate);
-  const b = parse(current);
-  for (let i = 0; i < Math.max(a.length, b.length, 3); i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) return diff > 0;
-  }
-  return false;
-}
+export { isNewerVersion };
 
 export function useAppVersion() {
   return useQuery<string>({

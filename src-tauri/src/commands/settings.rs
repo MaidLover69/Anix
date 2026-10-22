@@ -84,6 +84,22 @@ pub fn language_prefs() -> crate::providers::languages::LanguagePrefs {
     crate::providers::languages::LanguagePrefs::from_settings(&settings)
 }
 
+/// The saved settings, or an empty object when they cannot be read.
+pub fn saved_settings() -> Value {
+    get_settings_path()
+        .and_then(|path| read_settings_file(&path))
+        .unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Plugin ids in the order chosen in Settings › Sources (`provider_order`), first tried first.
+pub fn provider_order() -> Vec<String> {
+    saved_settings()
+        .get("provider_order")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_str).map(String::from).collect())
+        .unwrap_or_default()
+}
+
 /// Settings for the frontend. Account tokens stay in the backend and are never returned.
 #[tauri::command]
 pub async fn get_settings() -> Result<Value, String> {
@@ -98,15 +114,20 @@ pub async fn get_settings() -> Result<Value, String> {
 #[tauri::command]
 pub async fn save_settings(app: tauri::AppHandle, mut settings: Value) -> Result<(), String> {
     let path = get_settings_path()?;
-    {
+    let language_changed = {
         // The frontend never sees the account keys, so carry the stored ones over.
         let _guard = crate::accounts::store::settings_lock();
         let stored = read_settings_file(&path)?;
         crate::accounts::store::keep_stored_account_keys(&stored, &mut settings);
         write_settings_file(&path, &settings)?;
-    }
+        stored.get("app_language") != settings.get("app_language")
+    };
     // The release-notifications switch lives in settings; apply it right away.
     crate::notifier::replan();
     crate::system::apply(&app, crate::system::SystemSettings::from_json(&settings));
+    if language_changed {
+        crate::i18n::forget();
+        crate::system::tray::relabel(&app);
+    }
     Ok(())
 }

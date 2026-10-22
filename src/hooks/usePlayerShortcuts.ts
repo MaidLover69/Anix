@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { hasOpenModal } from '../components/ui/Modal';
 import { useUIStore } from '../stores/uiStore';
+import { HOLD_MS } from '../components/player/playerLogic';
 
 export interface PlayerShortcutActions {
   togglePlay: () => void;
@@ -13,6 +14,14 @@ export interface PlayerShortcutActions {
   previousEpisode: () => void;
   skipSegment: () => void;
   toggleMiniPlayer: () => void;
+  /** `[` / `]`: one speed step down or up. */
+  speedBy: (direction: 1 | -1) => void;
+  /** Holding Space: play fast until it is let go. */
+  holdStart: () => void;
+  holdEnd: () => void;
+  /** Enter / Esc while the skip countdown runs; true when there was one. */
+  confirmSkip: () => boolean;
+  cancelSkip: () => boolean;
 }
 
 const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'password', 'number', 'tel', 'url']);
@@ -55,6 +64,10 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
   actionsRef.current = actions;
 
   useEffect(() => {
+    // Space is pressed since, its hold timer, and whether it plays fast right now.
+    let spaceDownAt: number | null = null;
+    let holdTimer: number | null = null;
+    let holding = false;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTextEntry(e.target) || anyDialogOpen()) return;
@@ -65,9 +78,28 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
 
       switch (key) {
         case ' ':
+          // A tap toggles play when it is let go; held longer, it plays fast (see keyup).
+          if (e.shiftKey || isActivatable(e.target)) handled = false;
+          else if (!e.repeat && spaceDownAt === null) {
+            spaceDownAt = Date.now();
+            holdTimer = window.setTimeout(() => {
+              holding = true;
+              actionsRef.current.holdStart();
+            }, HOLD_MS);
+          }
+          break;
         case 'k':
-          if (e.shiftKey || (key === ' ' && isActivatable(e.target))) handled = false;
+          if (e.shiftKey) handled = false;
           else if (!e.repeat) a.togglePlay();
+          break;
+        case '[':
+          a.speedBy(-1);
+          break;
+        case ']':
+          a.speedBy(1);
+          break;
+        case 'Enter':
+          handled = !isActivatable(e.target) && a.confirmSkip();
           break;
         case 'f':
           if (e.shiftKey) handled = false;
@@ -112,7 +144,9 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
           else if (!e.repeat) a.previousEpisode();
           break;
         case 'Escape':
-          // Only ever leaves fullscreen; the webview usually handles this key itself.
+          // Cancels a skip countdown, else only ever leaves fullscreen; the webview usually
+          // handles this key itself.
+          if (a.cancelSkip()) break;
           a.exitFullscreen();
           handled = false;
           break;
@@ -123,7 +157,32 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
       if (handled) e.preventDefault();
     };
 
+    const endSpace = (toggle: boolean) => {
+      if (holdTimer !== null) window.clearTimeout(holdTimer);
+      holdTimer = null;
+      const wasHolding = holding;
+      const pressed = spaceDownAt !== null;
+      spaceDownAt = null;
+      holding = false;
+      if (wasHolding) actionsRef.current.holdEnd();
+      else if (pressed && toggle) actionsRef.current.togglePlay();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== ' ' || spaceDownAt === null) return;
+      e.preventDefault();
+      endSpace(true);
+    };
+    // Focus leaving the window while Space is held must not leave the speed up.
+    const onBlur = () => endSpace(false);
+
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      endSpace(false);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 }

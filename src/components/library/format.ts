@@ -1,4 +1,5 @@
 import type { AppSettings, Media } from '../../types';
+import { formatNumber, locale, t, type TKey } from '../../i18n';
 
 /** Only mpv and vlc can open a file; the 'builtin' setting falls back to mpv. */
 export function externalPlayerFor(settings: Pick<AppSettings, 'external_player'> | undefined): 'mpv' | 'vlc' {
@@ -16,7 +17,7 @@ export function toMillis(timestamp: number): number {
 
 export function formatDate(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
-  return new Date(toMillis(timestamp)).toLocaleDateString(undefined, {
+  return new Date(toMillis(timestamp)).toLocaleDateString(locale(), {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -26,8 +27,9 @@ export function formatDate(timestamp: number): string {
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) return '';
   const gb = bytes / (1024 * 1024 * 1024);
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const oneDecimal = { minimumFractionDigits: 1, maximumFractionDigits: 1 };
+  if (gb >= 1) return t('libraryFormat.gigabytes', { size: formatNumber(gb, oneDecimal) });
+  return t('libraryFormat.megabytes', { size: formatNumber(bytes / (1024 * 1024), oneDecimal) });
 }
 
 /**
@@ -42,7 +44,7 @@ export function watchedPercent(positionMs: number, durationMs: number): number |
 }
 
 export function categoryLabel(category: string | null | undefined): string {
-  return category?.toLowerCase() === 'dub' ? 'Dub' : 'Sub';
+  return category?.toLowerCase() === 'dub' ? t('common.dub') : t('common.sub');
 }
 
 export function watchCategory(category: string | null | undefined): 'sub' | 'dub' {
@@ -56,23 +58,24 @@ export function sentenceCase(value: string | null | undefined): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-const MEDIA_FORMAT_LABELS: Record<string, string> = {
-  TV: 'TV',
-  TV_SHORT: 'TV short',
-  MOVIE: 'Movie',
-  SPECIAL: 'Special',
-  OVA: 'OVA',
-  ONA: 'ONA',
-  MUSIC: 'Music',
-  MANGA: 'Manga',
-  NOVEL: 'Novel',
-  ONE_SHOT: 'One-shot',
+const MEDIA_FORMAT_LABELS: Record<string, TKey> = {
+  TV: 'libraryFormat.formatTv',
+  TV_SHORT: 'libraryFormat.formatTvShort',
+  MOVIE: 'libraryFormat.formatMovie',
+  SPECIAL: 'libraryFormat.formatSpecial',
+  OVA: 'libraryFormat.formatOva',
+  ONA: 'libraryFormat.formatOna',
+  MUSIC: 'libraryFormat.formatMusic',
+  MANGA: 'libraryFormat.formatManga',
+  NOVEL: 'libraryFormat.formatNovel',
+  ONE_SHOT: 'libraryFormat.formatOneShot',
 };
 
 /** AniList format as it reads in a caption: "TV", "Movie", "OVA", "TV short". */
 export function mediaFormatLabel(format: string | null | undefined): string {
   if (!format) return '';
-  return MEDIA_FORMAT_LABELS[format.toUpperCase()] ?? sentenceCase(format);
+  const key = MEDIA_FORMAT_LABELS[format.toUpperCase()];
+  return key ? t(key) : sentenceCase(format);
 }
 
 const DOWNLOAD_STATUS_LABELS: Record<string, string> = {
@@ -95,7 +98,7 @@ export const ANILIST_LIST_STATUSES: { value: string; label: string }[] = [
 ];
 
 export function episodeLabel(episode: number): string {
-  return `Episode ${episode}`;
+  return t('common.episodeNumber', { number: episode });
 }
 
 /** Builds the `Media` shape `AnimeCard` needs from a stored list row. */
@@ -146,3 +149,43 @@ export const INPUT_CLASS = `${FIELD_CLASS} h-9`;
 export const TEXTAREA_CLASS = `${FIELD_CLASS} py-2 resize-none`;
 
 export const LABEL_CLASS = 'block mb-1.5 text-[13px] font-medium text-text-primary';
+
+/**
+ * Days in a row with at least one watched episode, by local calendar day. `current` is the
+ * run ending today, or yesterday when nothing has been watched yet today. Days are stepped
+ * with setDate, so DST changes don't break a run.
+ */
+export function watchStreak(timestamps: number[], now = new Date()): { current: number; longest: number } {
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const days = new Set<string>();
+  const starts: number[] = [];
+  for (const t of timestamps) {
+    if (!Number.isFinite(t) || t <= 0) continue;
+    const d = new Date(toMillis(t));
+    const key = dayKey(d);
+    if (days.has(key)) continue;
+    days.add(key);
+    starts.push(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime());
+  }
+  starts.sort((a, b) => a - b);
+
+  let longest = 0;
+  let run = 0;
+  let expected: string | null = null;
+  for (const start of starts) {
+    const day = new Date(start);
+    run = dayKey(day) === expected ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    day.setDate(day.getDate() + 1);
+    expected = dayKey(day);
+  }
+
+  const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!days.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+  let current = 0;
+  while (days.has(dayKey(cursor))) {
+    current++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return { current, longest };
+}

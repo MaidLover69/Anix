@@ -6,13 +6,16 @@
 //! goes through one gate: requests run one at a time, at least [`MIN_REQUEST_GAP`] apart,
 //! several series share one request, and after a 429 nothing is sent until it has expired.
 
-use crate::clients::anilist::post_graphql;
+use crate::catalogue::breaker;
+use crate::catalogue::model::anilist_json;
+use crate::catalogue::{self, Catalogue, Found, SearchQuery, Source};
+use crate::clients::anilist::post_graphql_to;
 use crate::clients::app_settings;
 use crate::commands::local_scanner::scan_local_anime_directory;
 use crate::db::current_unix_millis;
 use crate::error::AppError;
 use crate::local_library::{
-    self, batched_search_body, candidates_of_alias, match_from_candidates, rank_candidates,
+    self, batched_search_body, candidates_of_alias, CANDIDATES_PER_SEARCH, match_from_candidates, rank_candidates,
     search_terms, LocalLibraryScan, MatchCandidate, MatchRequest, SeriesMatch,
 };
 use crate::state::AppState;
@@ -21,6 +24,8 @@ use serde::Serialize;
 use serde_json::Value;
 use std::time::{Duration, Instant};
 use tauri::State;
+
+const ANILIST: &str = "AniList";
 
 pub const MIN_REQUEST_GAP: Duration = Duration::from_millis(2100);
 /// Series searched per request; each takes one or two of its aliases.
@@ -34,7 +39,7 @@ struct Gate {
 
 static GATE: Lazy<tokio::sync::Mutex<Gate>> = Lazy::new(|| tokio::sync::Mutex::new(Gate::default()));
 
-async fn gated_search(client: &reqwest::Client, terms: &[String]) -> Result<Value, AppError> {
+async fn anilist_search(client: &reqwest::Client, url: &str, terms: &[String]) -> Result<Value, AppError> {
     let mut gate = GATE.lock().await;
     if let Some(until) = gate.blocked_until {
         let now = Instant::now();
@@ -52,12 +57,55 @@ async fn gated_search(client: &reqwest::Client, terms: &[String]) -> Result<Valu
         }
     }
     let body = batched_search_body(terms, app_settings::current().hide_adult_content);
-    let result = post_graphql(client, &body, None).await;
+    let result = post_graphql_to(client, url, &body, None).await;
     gate.last = Some(Instant::now());
     if let Err(AppError::RateLimited { retry_after_s }) = &result {
         gate.blocked_until = Some(Instant::now() + Duration::from_secs((*retry_after_s).max(1)));
     }
     result
+}
+
+/// Runs the searches on AniList, or, while AniList is unavailable, on the fallback catalogues
+/// (one request per term), in the same answer shape.
+async fn gated_search(state: &AppState, terms: &[String]) -> Result<Value, AppError> {
+    search_with_fallback(&state.catalogue, &state.client, terms).await
+}
+
+/// [`gated_search`] without the app state. AniList is skipped while the catalogue has it paused
+/// or the debug switch `ANIX_CATALOGUE_DOWN` names it, as for every other catalogue request.
+pub async fn search_with_fallback(catalogue: &Catalogue, client: &reqwest::Client, terms: &[String]) -> Result<Value, AppError> {
+    let breaker = catalogue.breaker();
+    if !breaker.is_open(ANILIST) {
+        let result = if catalogue::simulated_down(Source::AniList) {
+            Err(AppError::Network(format!("{} HTTP 503: switched off by ANIX_CATALOGUE_DOWN", ANILIST)))
+        } else {
+            anilist_search(client, catalogue.anilist_url(), terms).await
+        };
+        // A rate limit is waited out by the caller, not answered elsewhere.
+        if matches!(result, Err(AppError::RateLimited { .. })) || !result.as_ref().is_err_and(breaker::trips) {
+            return result;
+        }
+        breaker.record(ANILIST, &result);
+    }
+    let hide_adult = app_settings::current().hide_adult_content;
+    let mut data = serde_json::Map::new();
+    for (i, term) in terms.iter().enumerate() {
+        let query = SearchQuery {
+            query: Some(term.clone()),
+            page: 1,
+            per_page: CANDIDATES_PER_SEARCH as i32,
+            hide_adult,
+            ..Default::default()
+        };
+        let served = catalogue.search(&query).await?;
+        let media: Vec<Value> = served
+            .value
+            .into_iter()
+            .map(|media| anilist_json(&Found { media, ..Default::default() }))
+            .collect();
+        data.insert(format!("s{}", i), serde_json::json!({ "media": media }));
+    }
+    Ok(Value::Object(data))
 }
 
 /// Scans `dir_path` and groups its video files into series, with cached matches attached.
@@ -148,7 +196,7 @@ pub async fn match_local_series(
     }
 
     let all_terms: Vec<String> = to_search.iter().flat_map(|(_, t)| t.iter().cloned()).collect();
-    match gated_search(&state.client, &all_terms).await {
+    match gated_search(&state, &all_terms).await {
         Ok(data) => {
             let mut alias = 0;
             for (request, terms) in &to_search {
@@ -190,7 +238,7 @@ pub async fn search_local_match(
     if query.chars().count() < 2 {
         return Ok(Vec::new());
     }
-    let data = gated_search(&state.client, std::slice::from_ref(&query))
+    let data = gated_search(&state, std::slice::from_ref(&query))
         .await
         .map_err(|e| e.to_string())?;
     let candidates = candidates_of_alias(&data, 0);

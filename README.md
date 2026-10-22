@@ -7,7 +7,7 @@
 ### An anime catalogue, tracker, and local library player for Linux
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20(AppImage%20%7C%20RPM%20%7C%20DEB)-E95420?logo=linux&logoColor=white)](https://anix-linux.vercel.app)
-[![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.3.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <p align="center">
@@ -85,6 +85,11 @@
 - **Keyboard-Driven**: Quick search with <kbd>Ctrl</kbd> + <kbd>K</kbd> and comprehensive in-player hotkeys.
 - **Privacy First**: No analytics or telemetry.
 
+### Languages
+- **Your language**: The interface is available in English, French, Japanese, Korean, Simplified Chinese, Brazilian Portuguese, Russian, Hindi, Spanish, German and Arabic (right to left). Pick it on first start or in Settings › Appearance › Language; "Use system language" is the default.
+- **Viewing languages**: Choose a first, second and third language for subtitles and for dubs; sources in those languages are tried in that order.
+- **About the translations**: Translations were made by AI, not by human translators. Corrections are welcome.
+
 ---
 
 ## Extensions
@@ -102,23 +107,27 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [GitHub Releases](https://github.com/MaidLover69/Anix/releases), and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
 
-- **Direct AppImage Download:** [Anix_1.2.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
-- [GitHub Release](https://github.com/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage) • [Codeberg Release](https://codeberg.org/MaidLover69/Anix/releases/download/1.2/Anix_1.2.0_amd64.AppImage)
+- **Direct AppImage Download:** [Anix_1.3.0_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
+- [GitHub Release](https://github.com/MaidLover69/Anix/releases/download/1.3/Anix_1.3.0_amd64.AppImage) • [Codeberg Release](https://codeberg.org/MaidLover69/Anix/releases/download/1.3/Anix_1.3.0_amd64.AppImage)
 
 ### AppImage (Universal, any distribution)
 
 ```bash
-chmod +x Anix_1.2.0_amd64.AppImage
-./Anix_1.2.0_amd64.AppImage
+chmod +x Anix_1.3.0_amd64.AppImage
+./Anix_1.3.0_amd64.AppImage
 ```
 
-**For users now, with no new release who are facing the issue of no Thumnails:**
+**Missing thumbnails:** from 1.3.0 on, the AppImage fixes this itself (it sets `G_TLS_GNUTLS_PRIORITY=NORMAL` when your system has no GnuTLS crypto policy), so no command is needed any more. A value you set yourself is kept. Only 1.2.0 still needs the old workaround: `G_TLS_GNUTLS_PRIORITY=NORMAL ./Anix_1.2.0_amd64.AppImage`.
 
-Run it from a terminal with: G_TLS_GNUTLS_PRIORITY=NORMAL ./Anix_1.2.0_amd64.AppImage
-Or, to make it permanent, put this line in their Anix .desktop file: Exec=env G_TLS_GNUTLS_PRIORITY=NORMAL /path/to/Anix_1.2.0_amd64.AppImage %U
-Fedora users don't need it.
+*(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.3.0_amd64.AppImage`)*
 
-*(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.2.0_amd64.AppImage`)*
+### Troubleshooting the video player
+
+From 1.3.0 on, videos play in an embedded mpv player by default (Settings › Playback › Player engine).
+
+- **The window is blank or the video does not show after switching to embedded mpv:** wait 15 seconds. Anix asks whether the player shows correctly and, without an answer, goes back to the web player and restarts by itself.
+- **Start once with the web player, whatever the setting says:** run `./Anix_1.3.0_amd64.AppImage --web-player`, or set `ANIX_PLAYER_ENGINE=web` (for example `ANIX_PLAYER_ENGINE=web ./Anix_1.3.0_amd64.AppImage`). Then pick the engine you want in Settings › Playback.
+- **Black picture with sound:** set Settings › Playback › Hardware decoding to *Always copy-back* (or *Off*). *Automatic* already uses copy-back unless a hidden self-test passed on your machine; Settings › System › Hardware video decoding shows its result.
 
 ---
 
@@ -139,13 +148,16 @@ During playback:
 | Key | Action |
 | :--- | :--- |
 | <kbd>Space</kbd> / <kbd>K</kbd> | Play / Pause |
+| Hold <kbd>Space</kbd> | Play at 2× while held |
+| <kbd>[</kbd> / <kbd>]</kbd> | Speed down / up by 0.25× (0.25× to 3×) |
 | <kbd>F</kbd> | Toggle fullscreen |
 | <kbd>M</kbd> | Toggle mute |
 | <kbd>→</kbd> / <kbd>←</kbd> | Seek 5 seconds (<kbd>Shift</kbd>: 30s) |
 | <kbd>L</kbd> / <kbd>J</kbd> | Seek 10 seconds |
 | <kbd>↑</kbd> / <kbd>↓</kbd> | Volume up / down (5%) |
 | <kbd>Shift</kbd> + <kbd>N</kbd> / <kbd>P</kbd> | Next / Previous episode |
-| <kbd>S</kbd> | Skip intro / outro |
+| <kbd>S</kbd> | Skip intro / outro (or +85 s when no skip times are known) |
+| <kbd>Enter</kbd> / <kbd>Esc</kbd> | Skip now / cancel while the skip countdown runs |
 | <kbd>Esc</kbd> | Exit fullscreen |
 
 Anywhere in the app: <kbd>Ctrl</kbd> + <kbd>K</kbd> opens search, <kbd>?</kbd> shows keyboard shortcuts.

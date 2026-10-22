@@ -15,6 +15,7 @@ import {
   useStartAccountLogin,
 } from '../hooks/useAccounts';
 import type { AccountService, AccountStatus } from '../types';
+import { t } from '../i18n';
 
 /** The line under an account's name: who is connected, or that nobody is. */
 export function accountSummary(
@@ -22,10 +23,10 @@ export function accountSummary(
   failed = false,
   available = true,
 ): string {
-  if (!status) return failed ? 'The account could not be read.' : 'Checking…';
-  if (!status.connected && !available) return 'Not available in this build.';
-  if (!status.connected) return 'Not connected.';
-  return status.name ? `Connected as ${status.name}.` : 'Connected.';
+  if (!status) return failed ? t('authDialog.couldNotRead') : t('authDialog.checking');
+  if (!status.connected && !available) return t('authDialog.notAvailableSentence');
+  if (!status.connected) return t('authDialog.notConnected');
+  return status.name ? t('authDialog.connectedAs', { name: status.name }) : t('authDialog.connected');
 }
 
 /**
@@ -45,10 +46,10 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
   if (!accounts) {
     return isError ? (
       <Button variant="ghost" size="sm" onClick={() => refetch()}>
-        Try again
+        {t('common.tryAgain')}
       </Button>
     ) : (
-      <Spinner size="sm" label={`Checking the ${label} account`} />
+      <Spinner size="sm" label={t('authDialog.checkingAccount', { service: label })} />
     );
   }
 
@@ -57,38 +58,42 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
       <Button
         variant="danger"
         size="sm"
-        aria-label={`Disconnect ${label}`}
+        aria-label={t('authDialog.disconnectService', { service: label })}
         onClick={() => disconnect.mutate(service)}
         disabled={disconnect.isPending}
       >
         <LogOut aria-hidden="true" className="h-4 w-4" />
-        Disconnect
+        {t('authDialog.disconnect')}
       </Button>
     );
   }
 
   if (!isAccountAvailable(service, accounts)) {
-    return <span className="text-xs text-text-muted">Not available in this build</span>;
+    return <span className="text-xs text-text-muted">{t('authDialog.notAvailable')}</span>;
   }
 
   const connectButton = (
     <Button
       variant={loginPending ? 'secondary' : 'primary'}
       size="sm"
-      aria-label={loginPending ? undefined : `Connect ${label}`}
+      aria-label={loginPending ? undefined : t('authDialog.connectService', { service: label })}
       title={
         loginPending
           ? inBrowser
-            ? `Open the ${label} sign-in page in your browser again`
-            : `Show the ${label} sign-in window`
+            ? t('authDialog.reopenBrowser', { service: label })
+            : t('authDialog.showWindow', { service: label })
           : inBrowser
-            ? `Opens ${label} in your browser`
+            ? t('authDialog.opensInBrowser', { service: label })
             : undefined
       }
       onClick={() => startLogin(service)}
     >
-      {loginPending && <Spinner size="sm" label={`Waiting for the ${label} sign-in`} />}
-      {loginPending ? (inBrowser ? 'Waiting for the browser…' : 'Waiting for sign-in…') : 'Connect'}
+      {loginPending && <Spinner size="sm" label={t('authDialog.waitingForService', { service: label })} />}
+      {loginPending
+        ? inBrowser
+          ? t('authDialog.waitingBrowser')
+          : t('authDialog.waitingSignIn')
+        : t('authDialog.connect')}
     </Button>
   );
 
@@ -97,7 +102,7 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
     <div className="flex items-center gap-2">
       {connectButton}
       <Button variant="ghost" size="sm" onClick={() => cancelLogin(service)}>
-        Cancel
+        {t('common.cancel')}
       </Button>
     </div>
   );
@@ -150,11 +155,8 @@ export const AuthDialog: React.FC = () => {
   useAccountEvents();
 
   return (
-    <Modal isOpen={authDialogOpen} onClose={() => setAuthDialogOpen(false)} title="Accounts" size="md">
-      <p className="text-[13px] text-text-secondary">
-        Episodes you finish and anime you add to your watchlist are saved to the connected
-        lists. Signing in happens on the service&rsquo;s own page.
-      </p>
+    <Modal isOpen={authDialogOpen} onClose={() => setAuthDialogOpen(false)} title={t('authDialog.title')} size="md">
+      <p className="text-[13px] text-text-secondary">{t('authDialog.intro')}</p>
       <div className="mt-2 divide-y divide-border">
         {ACCOUNT_SERVICES.map((service) => (
           <AccountRow

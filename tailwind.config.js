@@ -3,11 +3,12 @@ import plugin from 'tailwindcss/plugin';
 // Solid colours are stored as RGB channels so opacity modifiers (bg-accent-500/20) work.
 const rgb = (variable) => `rgb(var(${variable}) / <alpha-value>)`;
 
-// The hairline border is --border-rgb at a low alpha; a modifier scales that alpha.
+// The hairline border is --border-rgb at a low alpha; a modifier scales that alpha, and so does
+// the contrast level (--contrast-border, set in themes.css).
 const hairline = ({ opacityValue }) =>
   opacityValue === undefined
-    ? 'rgb(var(--border-rgb) / var(--border-alpha))'
-    : `rgb(var(--border-rgb) / calc(var(--border-alpha) * ${opacityValue}))`;
+    ? 'rgb(var(--border-rgb) / calc(var(--border-alpha) * var(--contrast-border, 1)))'
+    : `rgb(var(--border-rgb) / calc(var(--border-alpha) * var(--contrast-border, 1) * ${opacityValue}))`;
 
 /** @type {import('tailwindcss').Config} */
 export default {
@@ -29,7 +30,7 @@ export default {
         border: {
           DEFAULT: hairline,
           subtle: hairline,
-          strong: 'rgb(var(--border-rgb) / var(--border-strong-alpha))',
+          strong: 'rgb(var(--border-rgb) / calc(var(--border-strong-alpha) * var(--contrast-border, 1)))',
           focus: 'var(--border-focus)',
         },
         accent: {

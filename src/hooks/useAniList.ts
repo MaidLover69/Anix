@@ -39,6 +39,12 @@ export interface SearchParams {
   sort?: string;
   page?: number;
   perPage?: number;
+  excludeGenres?: string[];
+  /** Lowest average score, 0–100. */
+  minScore?: number;
+  year?: number;
+  /** WINTER, SPRING, SUMMER or FALL. */
+  season?: string;
 }
 
 export function useSearchAnime(
@@ -60,6 +66,10 @@ export function useSearchAnime(
         sort: params.sort || 'POPULARITY_DESC',
         page: params.page || 1,
         perPage: params.perPage || 24,
+        excludeGenres: params.excludeGenres && params.excludeGenres.length > 0 ? params.excludeGenres : null,
+        minScore: params.minScore || null,
+        year: params.year || null,
+        season: params.season || null,
       });
     },
     enabled: options?.enabled,

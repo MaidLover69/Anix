@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useSettings, useSaveSettings } from './useSettings';
 import { useDesktopAppearance } from './useDesktopAppearance';
-import { applyTheme, currentTheme, isThemeId, DEFAULT_THEME } from '../theme/themes';
-import { applyAccentOverride } from '../theme/accent';
+import { applyLook, applyTheme, currentTheme, isThemeId, DEFAULT_THEME } from '../theme/themes';
+import { applyAccentOverride, parseHexColor } from '../theme/accent';
 import type { ThemeId } from '../theme/themes';
 
 /**
@@ -19,15 +19,28 @@ export function useThemeSync(): void {
     if (theme !== currentTheme()) applyTheme(theme);
   }, [saved]);
 
-  // The system accent is derived per theme, so it is worked out again on every theme change.
+  // The accent is derived per theme, so it is worked out again on every theme change. The
+  // system accent, while that option is on, wins over a colour picked in Settings.
   const useSystemAccent = settings?.use_system_accent === true;
   const desktop = useDesktopAppearance();
-  const systemAccent = useSystemAccent ? desktop.data?.accent_color ?? null : null;
+  const customAccent = parseHexColor(settings?.accent_color) ? settings?.accent_color ?? null : null;
+  const accent = useSystemAccent ? desktop.data?.accent_color ?? null : customAccent;
   const accentKnown = settings !== undefined && (!useSystemAccent || !desktop.isPending);
   useEffect(() => {
     if (!accentKnown) return;
-    applyAccentOverride(systemAccent);
-  }, [accentKnown, systemAccent, saved]);
+    applyAccentOverride(accent);
+  }, [accentKnown, accent, saved]);
+
+  const loaded = settings !== undefined;
+  const contrast = settings?.contrast;
+  const uiSize = settings?.ui_size;
+  const art = settings?.background_art;
+  const artUrl = art?.url;
+  const artStyle = art?.style;
+  useEffect(() => {
+    if (!loaded) return;
+    applyLook({ contrast, uiSize, art: artUrl ? { url: artUrl, style: artStyle === 'plain' ? 'plain' : 'blur' } : null });
+  }, [loaded, contrast, uiSize, artUrl, artStyle]);
 }
 
 /** The selected theme and a setter that applies it at once and saves it. */

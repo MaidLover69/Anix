@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.3.0
+
+### Languages and First-Start Setup
+- Multilingual interface support: English, French, Japanese, Korean, Simplified Chinese, Brazilian Portuguese, Russian, Hindi, Spanish, German, and Arabic (with complete right-to-left layout). Configurable in Settings › Appearance › Language, with automatic system language detection.
+- Streamlined setup wizard on first launch and following updates: easily configure preferred display language along with first, second, and third priority preferences for audio dubs and subtitles.
+- Desktop notifications, release alerts, airing countdowns, and system tray menu automatically follow the selected interface language.
+
+### Video Player & Playback Engine
+- Embedded libmpv is now the primary player engine on Linux, rendered directly within the application window with custom controls. The web player remains available as a fallback (Settings › Playback › Player engine) and automatically activates if libmpv cannot be initialized.
+- Automatic hardware video decoding with safe defaults and automated graphics self-tests.
+- Anime4K real-time upscaling shader presets (Off, Mode A, B, C; Fast or High Quality).
+- Configurable playback buffer and disk cache settings, aspect ratio modes (Fit, Crop, Fill), and timestamp clock displaying estimated completion time.
+- Configurable intro and outro skip toggles with a 3-2-1 visual countdown (Enter to skip, Esc to cancel) and manual +85s skip option when segment metadata is unavailable.
+- Hold Space for 2× playback speed, keyboard step adjustments (`[` / `]`), and an in-player shortcut cheat sheet.
+- Subtitle rendering positioned above the bottom control bar, with automatic audio track matching for multi-language streams.
+
+### Release Alerts & Airing Reminders
+- Airing alerts monitor availability for newly aired episodes (checking sub and dub tracks separately every 15 minutes for up to 3 hours) and send desktop notifications when ready.
+- Background release monitoring when the application is closed (via system startup option).
+- Episode airing reminders with customizable countdown intervals (10, 30, or 60 minutes) per series.
+
+### Library & Watchlist Management
+- Comprehensive list statuses (Watching, Plan to watch, Completed, On hold, Dropped) with real-time counters and filter views. Synchronizes bidirectionally with AniList, MyAnimeList, and Comick, with local offline fallback.
+- Poster context menu (Right-click or Shift+F10) for rapid status updates, details inspection, and sharing.
+- Encrypted backup and restore for library collections and custom settings.
+- Notification Centre with dedicated Airing and Media tabs and unread badge indicator.
+
+### Schedule & Discovery
+- Schedule timeline featuring a dynamic current time marker, episode countdown timers, Up Next showcase, and a month calendar on wide displays.
+- Series watch order visualizer, "Because you watched..." recommendations, advanced Discover filters (genre inclusion/exclusion, score threshold, release year, season), and recent search history in Command Palette (<kbd>Ctrl</kbd> + <kbd>K</kbd>).
+- Reorderable home screen sections (Settings › Appearance).
+
+### Offline Media & Downloads
+- Dedicated Downloads management screen, custom storage folder picker, disk capacity meter, language tagging, automated transfer resumption on launch, and status notifications.
+
+### Modular Extension System
+- Per-extension custom configuration panels, automated background health checks, and changelog visibility for extension updates.
+- Detailed, user-friendly diagnostic messages on stream playback issues, language badges across all provider listings, and draggable stream server prioritization.
+- Built-in DNS-over-HTTPS fallback for enhanced privacy and network reliability, resilient connection timeouts, and automatic retry handling.
+
+### Settings & User Interface
+- Searchable settings with a two-pane layout on wide displays.
+- Custom accent colors, contrast adjustment, interface scale slider, 12/24-hour clock formatting, and dynamic background art.
+- Two-column detail page layout for resolutions above 1200px, refined episode cards, and intuitive empty states.
+- Diagnostic error reporting with quick-copy error codes and system diagnostics export.
+- Integrated update verification for AppImage packages.
+
 ## 1.2.0
 
 ### Languages & Audio Preferences

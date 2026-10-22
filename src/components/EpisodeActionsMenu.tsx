@@ -1,11 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Check } from 'lucide-react';
 import clsx from 'clsx';
 
 export interface MenuAction {
   label: string;
   onSelect: () => void;
   disabled?: boolean;
+  /** Set on a choice among several (`menuitemradio`): whether it is the current one. */
+  checked?: boolean;
 }
 
 interface EpisodeActionsMenuProps {
@@ -108,7 +111,8 @@ export const EpisodeActionsMenu: React.FC<EpisodeActionsMenuProps> = ({
             itemRefs.current[i] = el;
           }}
           type="button"
-          role="menuitem"
+          role={action.checked === undefined ? 'menuitem' : 'menuitemradio'}
+          aria-checked={action.checked}
           tabIndex={-1}
           disabled={action.disabled}
           onClick={() => {
@@ -116,10 +120,13 @@ export const EpisodeActionsMenu: React.FC<EpisodeActionsMenuProps> = ({
             closeAndReturn();
           }}
           className={clsx(
-            'flex h-8 w-full cursor-pointer items-center rounded-md px-3 text-left text-[13px] text-text-primary transition-colors',
+            'flex h-8 w-full cursor-pointer items-center rounded-md px-3 text-start text-[13px] text-text-primary transition-colors',
             'hover:bg-ink/10 focus:bg-ink/10 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40'
           )}
         >
+          {action.checked !== undefined && (
+            <Check aria-hidden="true" className={clsx('-ms-1 me-2 h-4 w-4 flex-shrink-0', !action.checked && 'invisible')} />
+          )}
           {action.label}
         </button>
       ))}

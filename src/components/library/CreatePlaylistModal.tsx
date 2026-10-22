@@ -3,6 +3,7 @@ import { Button, Modal, errorMessage } from '../ui';
 import { useCreatePlaylist } from '../../hooks/usePlaylists';
 import type { CustomPlaylist } from '../../types';
 import { INPUT_CLASS, LABEL_CLASS, TEXTAREA_CLASS } from './format';
+import { t, tn } from '../../i18n';
 
 interface CreatePlaylistModalProps {
   onClose: () => void;
@@ -38,7 +39,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
       });
       onCreated(playlist);
     } catch (err) {
-      setError(errorMessage(err, 'The playlist could not be created.'));
+      setError(errorMessage(err, t('createPlaylistModal.createError')));
     } finally {
       submittingRef.current = false;
     }
@@ -48,15 +49,15 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
     <Modal
       isOpen
       onClose={handleClose}
-      title="New playlist"
+      title={t('createPlaylistModal.title')}
       size="md"
       footer={
         <>
           <Button variant="ghost" onClick={handleClose} disabled={pending}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" form={formId} variant="primary" disabled={!trimmedName || pending}>
-            {pending ? 'Creating…' : 'Create playlist'}
+            {pending ? t('createPlaylistModal.creating') : t('createPlaylistModal.create')}
           </Button>
         </>
       }
@@ -64,7 +65,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
       <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <label htmlFor={`${formId}-name`} className={LABEL_CLASS}>
-            Name
+            {t('createPlaylistModal.name')}
           </label>
           <input
             id={`${formId}-name`}
@@ -72,7 +73,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
             type="text"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Weekend marathon"
+            placeholder={t('createPlaylistModal.namePlaceholder')}
             maxLength={120}
             required
             className={INPUT_CLASS}
@@ -81,7 +82,9 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
 
         <div>
           <label htmlFor={`${formId}-description`} className={LABEL_CLASS}>
-            Description <span className="font-normal text-text-muted">(optional)</span>
+            {tn('createPlaylistModal.descriptionLabel', {
+              optional: <span className="font-normal text-text-muted">{t('createPlaylistModal.optional')}</span>,
+            })}
           </label>
           <textarea
             id={`${formId}-description`}

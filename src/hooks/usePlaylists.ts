@@ -7,6 +7,7 @@ import type {
   SourcesResult,
 } from '../types';
 import { errorMessage } from '../components/ui/ErrorState';
+import { t } from '../i18n';
 
 export function usePlaylists() {
   return useQuery<CustomPlaylist[]>({
@@ -134,12 +135,12 @@ export async function resolvePlaylistStreams(
 
       const stream = sources?.streams?.[0];
       if (!stream) {
-        result.failures.push({ item, reason: 'No stream returned' });
+        result.failures.push({ item, reason: t('usePlaylists.noStream') });
         continue;
       }
       result.resolved.push({
         url: stream.url,
-        title: `${item.series_title} - Episode ${item.episode_num}`,
+        title: t('usePlaylists.streamTitle', { title: item.series_title, number: item.episode_num }),
         referer: stream.referer ?? stream.headers?.Referer ?? stream.headers?.referer ?? null,
       });
     } catch (err) {

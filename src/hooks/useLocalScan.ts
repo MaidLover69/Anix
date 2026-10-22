@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { LibraryFile, LocalLibraryScan, SeriesMatch } from './useLocalLibrary';
 import { useDownloadDirectory } from './useDownloads';
 import { errorMessage } from '../components/ui/ErrorState';
+import { t } from '../i18n';
 
 export type LocalScanStatus = 'idle' | 'scanning' | 'done' | 'error';
 
@@ -27,9 +28,9 @@ export interface LocalScan {
 }
 
 function validateDir(dir: string): string | null {
-  if (!dir) return 'Enter the folder to scan.';
+  if (!dir) return t('useLocalScan.enterFolder');
   if (!dir.startsWith('/')) {
-    return 'Use the full path, starting with "/" (for example /home/you/Videos/Anime).';
+    return t('useLocalScan.fullPath');
   }
   return null;
 }

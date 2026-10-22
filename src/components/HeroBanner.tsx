@@ -7,6 +7,7 @@ import { AmbientGlow } from './AmbientGlow';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
+import { t, type TKey } from '../i18n';
 import type { Media, HistoryEntry } from '../types';
 
 interface HeroBannerProps {
@@ -23,8 +24,15 @@ const SLIDE_INTERVAL_MS = 7000;
 const NAV_BUTTON_CLASS =
   'absolute top-1/2 z-30 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white cursor-pointer opacity-0 transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100';
 
+const SEASON_LABELS: Record<string, TKey> = {
+  WINTER: 'heroBanner.seasonWinter',
+  SPRING: 'heroBanner.seasonSpring',
+  SUMMER: 'heroBanner.seasonSummer',
+  FALL: 'heroBanner.seasonFall',
+};
+
 function titleOf(media: Media): string {
-  return media.title.english || media.title.user_preferred || media.title.romaji || 'Untitled';
+  return media.title.english || media.title.user_preferred || media.title.romaji || t('heroBanner.untitled');
 }
 
 function backdropOf(media: Media): string | null {
@@ -69,11 +77,15 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const canWatch = released === null || released > 0;
   const watchEpisode = target?.episode ?? 1;
 
+  const seasonKey = current.season ? SEASON_LABELS[current.season] : undefined;
+  const season = seasonKey
+    ? t(seasonKey)
+    : current.season
+      ? current.season.charAt(0) + current.season.slice(1).toLowerCase()
+      : null;
   const caption = [
     mediaFormatLabel(current.format),
-    [current.season ? current.season.charAt(0) + current.season.slice(1).toLowerCase() : null, current.season_year]
-      .filter(Boolean)
-      .join(' '),
+    season && current.season_year ? t('heroBanner.seasonYear', { season, year: current.season_year }) : season || current.season_year,
     current.average_score ? `${current.average_score}%` : null,
     current.genres?.slice(0, 3).join(', '),
   ]
@@ -88,7 +100,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       <AmbientGlow color={current.cover_image.color} className="-inset-x-4 -top-4 -bottom-16 -z-10" />
       <section
         aria-roledescription="carousel"
-        aria-label="Trending now"
+        aria-label={t('heroBanner.trendingNow')}
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
         onFocus={() => setPaused(true)}
@@ -120,7 +132,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         {/* Two scrims: one under the text block, one along the bottom edge. The artwork stays
             visible everywhere, so the banner keeps an edge on all four sides. */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg-deepest/95 via-bg-deepest/55 to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-4/5 bg-gradient-to-r from-bg-deepest/90 via-bg-deepest/65 to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 start-0 w-4/5 bg-gradient-to-r rtl:bg-gradient-to-l from-bg-deepest/90 via-bg-deepest/65 to-transparent" />
         <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-ink/[0.06]" />
 
         <div className="relative z-20 flex h-full max-w-2xl flex-col justify-end p-8 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)]">
@@ -152,12 +164,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 }
               >
                 <Play aria-hidden="true" className="h-4 w-4 fill-current" />
-                {target ? `Continue Episode ${watchEpisode}` : 'Watch Episode 1'}
+                {target ? t('heroBanner.continueEpisode', { episode: watchEpisode }) : t('heroBanner.watchFirstEpisode')}
               </Button>
             )}
             <Button variant="neutral" onClick={() => navigate(`/detail/${current.id}`)}>
               <Info aria-hidden="true" className="h-4 w-4" />
-              Details
+              {t('common.details')}
             </Button>
           </div>
         </div>
@@ -167,27 +179,27 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <button
               type="button"
               onClick={() => go(currentIndex - 1)}
-              aria-label="Previous title"
-              className={clsx(NAV_BUTTON_CLASS, 'left-3')}
+              aria-label={t('heroBanner.previousTitle')}
+              className={clsx(NAV_BUTTON_CLASS, 'start-3')}
             >
-              <ChevronLeft aria-hidden="true" className="h-5 w-5" />
+              <ChevronLeft aria-hidden="true" className="h-5 w-5 rtl:-scale-x-100" />
             </button>
             <button
               type="button"
               onClick={() => go(currentIndex + 1)}
-              aria-label="Next title"
-              className={clsx(NAV_BUTTON_CLASS, 'right-3')}
+              aria-label={t('heroBanner.nextTitle')}
+              className={clsx(NAV_BUTTON_CLASS, 'end-3')}
             >
-              <ChevronRight aria-hidden="true" className="h-5 w-5" />
+              <ChevronRight aria-hidden="true" className="h-5 w-5 rtl:-scale-x-100" />
             </button>
 
-            <div className="absolute bottom-4 right-6 z-30 flex items-center gap-1">
+            <div className="absolute bottom-4 end-6 z-30 flex items-center gap-1">
               {items.map((item, i) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => go(i)}
-                  aria-label={`Show ${titleOf(item)}`}
+                  aria-label={t('heroBanner.showTitle', { title: titleOf(item) })}
                   aria-current={i === currentIndex}
                   className="flex h-6 cursor-pointer items-center px-0.5"
                 >

@@ -1,4 +1,4 @@
-//! Pushing watch progress and watchlist additions to the connected lists.
+//! Pushing watch progress, watchlist additions and list statuses to the connected lists.
 //!
 //! What has to be pushed is first written to a small queue table, then sent. A push that fails
 //! stays queued and is tried again at the next opportunity: the next watched episode, a
@@ -8,6 +8,7 @@
 use super::comick::{self, ComickEntry, ComickProgress, ComickWrite};
 use super::oauth::Service;
 use super::session::{self, Context, Notice};
+use crate::catalogue::ids::{self, AnimeKey, Site};
 use crate::clients::anilist::{parse_media_hint, ListEntryState, MediaListContext};
 use crate::db;
 use crate::error::AppError;
@@ -131,6 +132,27 @@ pub fn anilist_status_from_mal(status: Option<&str>, is_rewatching: bool) -> &'s
     }
 }
 
+/// The MyAnimeList id behind a stand-in id (an anime the catalogue knows by its MyAnimeList id
+/// only). Stand-ins have no AniList entry, so they sync to MyAnimeList alone.
+pub fn stand_in_mal_id(anilist_id: i32) -> Option<i32> {
+    match ids::decode(anilist_id as i64) {
+        Some(AnimeKey::Other(Site::Mal, mal_id)) => i32::try_from(mal_id).ok(),
+        _ => None,
+    }
+}
+
+/// The services an anime can be pushed to: all of them for an AniList id, MyAnimeList for a
+/// stand-in that carries a MyAnimeList id, none otherwise.
+fn services_for(anilist_id: i32) -> &'static [Service] {
+    if anilist_id > 0 {
+        &Service::ALL
+    } else if stand_in_mal_id(anilist_id).is_some() {
+        &[Service::Mal]
+    } else {
+        &[]
+    }
+}
+
 // ---- Queue --------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,10 +244,11 @@ pub async fn queue_watched_episode(
     let Some(progress) = whole_episode(episode_number) else {
         return Ok(false);
     };
-    if anilist_id <= 0 {
+    let services = services_for(anilist_id);
+    if services.is_empty() {
         return Ok(false);
     }
-    for service in Service::ALL.into_iter().filter(|service| service.available()) {
+    for service in services.iter().copied().filter(|service| service.available()) {
         enqueue(pool, service, anilist_id, PendingKind::Progress, progress).await?;
     }
     Ok(true)
@@ -234,10 +257,7 @@ pub async fn queue_watched_episode(
 /// Queues "add as planning" for every service that is connected right now.
 pub async fn queue_watchlist_addition(ctx: &Context<'_>, anilist_id: i32) -> Result<bool, AppError> {
     let mut queued = false;
-    if anilist_id <= 0 {
-        return Ok(queued);
-    }
-    for service in Service::ALL {
+    for &service in services_for(anilist_id) {
         if ctx.store.is_connected(service) {
             enqueue(ctx.pool, service, anilist_id, PendingKind::Planning, 0).await?;
             queued = true;
@@ -400,12 +420,17 @@ async fn push_to_anilist(
     Ok(PushOutcome::Updated(update))
 }
 
-async fn push_to_mal(
+/// The MyAnimeList id of an anime and what AniList knows about it. A stand-in id carries its
+/// MyAnimeList id and is not looked up on AniList (its episode count stays unknown). `None`
+/// when there is no MyAnimeList id to push to.
+async fn mal_target(
     ctx: &Context<'_>,
-    item: &PendingSync,
+    id: i32,
     cache: &mut MediaCache,
-) -> Result<PushOutcome, AppError> {
-    let id = item.anilist_id;
+) -> Result<Option<(i32, MediaListContext)>, AppError> {
+    if id <= 0 {
+        return Ok(stand_in_mal_id(id).map(|mal_id| (mal_id, MediaListContext::default())));
+    }
     let media = match cache.get(&id) {
         Some(known) => known.clone(),
         None => {
@@ -414,10 +439,16 @@ async fn push_to_mal(
             fetched
         }
     };
-    let Some(media) = media else {
-        return Ok(PushOutcome::Skipped(SkipReason::UnknownAnime));
-    };
-    let Some(mal_id) = media.id_mal.filter(|mal_id| *mal_id > 0) else {
+    Ok(media.and_then(|media| media.id_mal.filter(|mal_id| *mal_id > 0).map(|mal_id| (mal_id, media))))
+}
+
+async fn push_to_mal(
+    ctx: &Context<'_>,
+    item: &PendingSync,
+    cache: &mut MediaCache,
+) -> Result<PushOutcome, AppError> {
+    let id = item.anilist_id;
+    let Some((mal_id, media)) = mal_target(ctx, id, cache).await? else {
         return Ok(PushOutcome::Skipped(SkipReason::NoMalId));
     };
 
@@ -737,7 +768,226 @@ pub async fn drain(ctx: &Context<'_>) -> DrainReport {
             }
         }
     }
+    push_statuses(ctx, &mut cache, &mut report).await;
     report
+}
+
+// ---- List statuses --------------------------------------------------------------------------
+//
+// The watchlist keeps a status per anime. With AniList or MyAnimeList connected the tracker
+// wins: its status is read back into the watchlist and a status chosen here is sent to it.
+// Without an account, or while the tracker cannot be reached, the status chosen here is kept
+// with `synced = 0` and sent by a later drain.
+
+/// The watchlist's vocabulary: AniList's, without REPEATING (a rewatch is "Watching" here).
+pub fn local_status(remote: &str) -> &'static str {
+    match remote {
+        "CURRENT" | "REPEATING" => "CURRENT",
+        "COMPLETED" => "COMPLETED",
+        "PAUSED" => "PAUSED",
+        "DROPPED" => "DROPPED",
+        _ => "PLANNING",
+    }
+}
+
+/// Failures that say "try again later" rather than "this will never work".
+fn is_transient(error: &AppError) -> bool {
+    matches!(error, AppError::AuthRequired) || crate::offline::is_offline_error(error)
+}
+
+/// Sends one status to one service. `Ok(false)` when the service has nowhere to put it.
+async fn push_status(
+    ctx: &Context<'_>,
+    service: Service,
+    id: i32,
+    status: &str,
+    cache: &mut MediaCache,
+) -> Result<bool, AppError> {
+    match service {
+        Service::AniList if id > 0 => {
+            let status = status.to_string();
+            session::with_anilist(ctx, |token| {
+                let status = status.clone();
+                async move { ctx.anilist.save_list_entry(&token, id, Some(status), None, None).await }
+            })
+            .await?;
+            Ok(true)
+        }
+        Service::Mal => {
+            let Some((mal_id, _)) = mal_target(ctx, id, cache).await? else {
+                return Ok(false);
+            };
+            let value = mal_status(status);
+            session::with_mal(ctx, |token| async move {
+                ctx.mal.update_list_status(&token, mal_id, None, Some(value)).await
+            })
+            .await?;
+            Ok(true)
+        }
+        // Comick and stand-ins on AniList: statuses stay local there.
+        _ => Ok(false),
+    }
+}
+
+/// Sends the statuses chosen here that the connected lists do not have yet. A status counts as
+/// sent once every connected list took it (or has nowhere to put it); one that cannot be sent
+/// for now stays unsynced for the next drain.
+async fn push_statuses(ctx: &Context<'_>, cache: &mut MediaCache, report: &mut DrainReport) {
+    let connected: Vec<Service> = [Service::AniList, Service::Mal]
+        .into_iter()
+        .filter(|service| ctx.store.is_connected(*service))
+        .collect();
+    if connected.is_empty() {
+        return;
+    }
+    let waiting = match db::unsynced_watchlist(ctx.pool).await {
+        Ok(waiting) => waiting,
+        Err(e) => {
+            tracing::error!("could not read the unsynced list statuses: {}", e);
+            return;
+        }
+    };
+    let mut down: Vec<Service> = Vec::new();
+    for (id, status) in waiting {
+        let mut done = true;
+        for &service in &connected {
+            if down.contains(&service) {
+                done = false;
+                continue;
+            }
+            match push_status(ctx, service, id, &status, cache).await {
+                Ok(true) => {
+                    report.updated += 1;
+                    ctx.notifier.notify(Notice::Synced { service, anilist_id: id });
+                }
+                Ok(false) => report.skipped += 1,
+                Err(e) if is_transient(&e) => {
+                    tracing::warn!("{} status sync postponed: {}", service.label(), e);
+                    report.failed += 1;
+                    down.push(service);
+                    done = false;
+                }
+                // Refused for good (unknown anime and the like): kept here, not retried.
+                Err(e) => {
+                    tracing::warn!("{} refused the status of anime {}: {}", service.label(), id, e);
+                    report.skipped += 1;
+                }
+            }
+        }
+        if done {
+            if let Err(e) = db::mark_watchlist_synced(ctx.pool, id, &status).await {
+                tracing::error!("could not mark the status of anime {} as sent: {}", id, e);
+            }
+        }
+    }
+}
+
+/// Chooses a status for one anime: stored with `synced = 0`, then sent by the next drain
+/// (right away when a list is connected).
+#[allow(clippy::too_many_arguments)]
+pub async fn set_status(
+    pool: &SqlitePool,
+    anilist_id: i32,
+    title: &str,
+    cover: Option<&str>,
+    format: Option<&str>,
+    average_score: Option<i32>,
+    status: &str,
+) -> Result<(), AppError> {
+    db::set_watchlist_status(pool, anilist_id, title, cover, format, average_score, status, false).await?;
+    // The status replaces a queued "add as planning".
+    cancel_watchlist_addition(pool, anilist_id).await
+}
+
+/// The status shown for one anime and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ListStatus {
+    pub status: Option<String>,
+    /// False while a status chosen here waits to be sent.
+    pub synced: bool,
+    /// "anilist", "myanimelist" or "local".
+    pub source: &'static str,
+}
+
+/// The status of one anime: the connected tracker's when it has the anime (and nothing chosen
+/// here is waiting to be sent), else the watchlist's. A tracker that cannot be reached falls
+/// back to the watchlist.
+pub async fn list_status(ctx: &Context<'_>, anilist_id: i32) -> Result<ListStatus, AppError> {
+    let local = db::get_watchlist_status(ctx.pool, anilist_id).await?;
+    let local_view = |source| ListStatus {
+        status: local.as_ref().map(|(status, _)| status.clone()),
+        synced: local.as_ref().is_none_or(|(_, synced)| *synced),
+        source,
+    };
+    if local.as_ref().is_some_and(|(_, synced)| !synced) {
+        return Ok(local_view("local"));
+    }
+
+    let remote = remote_status(ctx, anilist_id).await;
+    let (status, source) = match remote {
+        Ok(Some(found)) => found,
+        Ok(None) => return Ok(local_view("local")),
+        Err(e) => {
+            tracing::info!("list status of anime {} read from the watchlist: {}", anilist_id, e);
+            return Ok(local_view("local"));
+        }
+    };
+    db::take_remote_status(ctx.pool, anilist_id, status).await?;
+    Ok(ListStatus {
+        status: Some(status.to_string()),
+        synced: true,
+        source,
+    })
+}
+
+/// The tracker's status of one anime in watchlist vocabulary, AniList first.
+async fn remote_status(ctx: &Context<'_>, id: i32) -> Result<Option<(&'static str, &'static str)>, AppError> {
+    if id > 0 && ctx.store.is_connected(Service::AniList) {
+        let media = session::with_anilist(ctx, |token| async move {
+            ctx.anilist.list_context(Some(&token), id).await
+        })
+        .await?;
+        return Ok(media
+            .and_then(|media| media.entry)
+            .map(|entry| (local_status(&entry.status), "anilist")));
+    }
+    if ctx.store.is_connected(Service::Mal) {
+        let mut cache = MediaCache::new();
+        let Some((mal_id, _)) = mal_target(ctx, id, &mut cache).await? else {
+            return Ok(None);
+        };
+        let entry = session::with_mal(ctx, |token| async move {
+            ctx.mal.get_list_status(&token, mal_id).await
+        })
+        .await?;
+        return Ok(entry.map(|entry| {
+            let status = anilist_status_from_mal(entry.status.as_deref(), entry.is_rewatching);
+            (local_status(status), "myanimelist")
+        }));
+    }
+    Ok(None)
+}
+
+/// Reads the connected AniList list into the watchlist: every anime on both takes AniList's
+/// status, except one whose status chosen here is still waiting to be sent. Returns how many
+/// statuses changed.
+pub async fn pull_statuses(ctx: &Context<'_>) -> Result<usize, AppError> {
+    if !ctx.store.is_connected(Service::AniList) {
+        return Ok(0);
+    }
+    let user_id = session::anilist_viewer_id(ctx).await?;
+    let entries = session::with_anilist(ctx, |token| async move {
+        ctx.anilist.get_user_library(&token, user_id, None).await
+    })
+    .await?;
+    let mut changed = 0;
+    for entry in entries {
+        let Some(status) = entry.status.as_deref() else { continue };
+        if db::take_remote_status(ctx.pool, entry.id, local_status(status)).await? {
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 // ---- Watch progress -----------------------------------------------------------------------
@@ -817,6 +1067,11 @@ pub async fn save_entry(
     .await?;
     if let Err(e) = forget_progress(ctx.pool, Service::AniList, media_id).await {
         tracing::warn!("could not clear queued AniList progress: {}", e);
+    }
+    if let Some(saved) = entry.status.as_deref() {
+        if let Err(e) = db::take_remote_status(ctx.pool, media_id, local_status(saved)).await {
+            tracing::warn!("could not update the watchlist status of anime {}: {}", media_id, e);
+        }
     }
 
     let mal = if !ctx.store.is_connected(Service::Mal) {

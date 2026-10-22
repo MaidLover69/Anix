@@ -30,17 +30,18 @@ if [ -z "$plugins_src" ] || [ -z "$helpers_src" ]; then
 fi
 
 # Plugins the webview needs for MP4 and HLS playback. Everything else on the system (Qt,
-# Vulkan, capture devices, editing) would only pull in large unrelated libraries.
-wanted="a52dec adaptivedemux2 adder alaw alpha alphacolor alsa amrnb amrwbdec apetag app asf
+# Vulkan, capture devices, editing) would only pull in large unrelated libraries. Plugins that
+# wrap GPL libraries (x264, a52dec, mpeg2dec, faad) are left out; gst-libav decodes those formats.
+wanted="adaptivedemux2 adder alaw alpha alphacolor alsa amrnb amrwbdec apetag app asf
 audioconvert audiofx audiomixer audioparsers audiorate audioresample audiotestsrc auparse
 autodetect avi cairo compositor coreelements coretracers cutter deinterlace dsd dtmf dvdlpcmdec
 dvdsub encoding equalizer flac flv flxdec gdkpixbuf gio icydemux id3demux imagefreeze interleave
-isomp4 jpeg lame level libav matroska mpeg2dec mpg123 mulaw multifile multipart ogg opengl opus
+isomp4 jpeg lame level libav matroska mpg123 mulaw multifile multipart ogg opengl opus
 overlaycomposition pango pbtypes playback png pulseaudio rawparse realmedia replaygain rtp
 rtpmanager rtsp shapewipe smpte soup spectrum speex subparse taglib tcp theora twolame
 typefindfunctions udp videobox videoconvertscale videocrop videofilter videomixer videorate
-videotestsrc volume vorbis vpx wavenc wavpack wavparse x264 xingmux y4m
-mse hls dash mpegtsdemux mpegpsdemux videoparsersbad fdkaac faad openh264 dav1d aom de265 va
+videotestsrc volume vorbis vpx wavenc wavpack wavparse xingmux y4m
+mse hls dash mpegtsdemux mpegpsdemux videoparsersbad fdkaac openh264 dav1d aom de265 va
 pipewire id3tag codecalpha closedcaption ttmlsubs opusparse autoconvert debugutilsbad audiofxbad
 videofiltersbad ivfparse subenc proxy soundtouch webp codectimestamper audiobuffersplit dvdspu
 dvbsuboverlay"
@@ -89,6 +90,93 @@ text, count = re.subn(r'export GIO_EXTRA_MODULES="[^"]*"', 'export GIO_EXTRA_MOD
 if count != 1:
     sys.exit("GIO_EXTRA_MODULES line not found in the GTK hook")
 open(path, "w").write(text)
+PY
+
+# The embedded player: the LGPL libmpv and FFmpeg from scripts/build-libmpv-lgpl.sh, loaded at
+# run time from usr/lib/anix. Anything reporting a GPL or non-free licence stops the build.
+libmpv_out="${ANIX_LIBMPV_DIR:-$HOME/.cache/anix-build/libmpv}/out"
+[ -f "$libmpv_out/lib/anix/libmpv.so.2" ] || {
+  echo "No LGPL libmpv build in $libmpv_out; run scripts/build-libmpv-lgpl.sh first." >&2
+  exit 1
+}
+python3 -I - "$libmpv_out/lib/anix" <<'PY'
+import ctypes, glob, sys
+d = sys.argv[1]
+for lib, fn in [("libavutil", "avutil_license"), ("libavcodec", "avcodec_license"), ("libavformat", "avformat_license"),
+                ("libavfilter", "avfilter_license"), ("libswscale", "swscale_license"), ("libswresample", "swresample_license")]:
+    found = sorted(glob.glob(f"{d}/{lib}.so.*"), key=len)
+    if not found:
+        sys.exit(f"{lib} is missing from {d}")
+    f = getattr(ctypes.CDLL(found[0]), fn)
+    f.restype = ctypes.c_char_p
+    text = f().decode()
+    if "LGPL" not in text or "nonfree" in text.lower():
+        sys.exit(f"{lib} reports '{text}', not an LGPL build; refusing.")
+mpv = ctypes.CDLL(f"{d}/libmpv.so.2")
+mpv.mpv_create.restype = ctypes.c_void_p
+mpv.mpv_initialize.argtypes = [ctypes.c_void_p]
+mpv.mpv_set_option_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+mpv.mpv_get_property_string.restype = ctypes.c_void_p
+mpv.mpv_get_property_string.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+mpv.mpv_terminate_destroy.argtypes = [ctypes.c_void_p]
+h = mpv.mpv_create()
+mpv.mpv_set_option_string(h, b"vo", b"null"); mpv.mpv_set_option_string(h, b"ao", b"null")
+if mpv.mpv_initialize(h) < 0:
+    sys.exit("libmpv does not initialise")
+config = ctypes.string_at(mpv.mpv_get_property_string(h, b"mpv-configuration")).decode()
+mpv.mpv_terminate_destroy(h)
+if "gpl=false" not in config.replace(" ", ""):
+    sys.exit("libmpv was not built with -Dgpl=false; refusing.")
+print("libmpv and FFmpeg are LGPL builds.")
+PY
+mkdir -p "$appdir/usr/lib/anix" "$appdir/usr/share/licenses/anix"
+cp -P "$libmpv_out"/lib/anix/*.so* "$appdir/usr/lib/anix/"
+# Libraries the mpv build links against that older or minimal systems lack (all permissively
+# licensed, listed in THIRD-PARTY-NOTICES.md). Audio, X11/Wayland, fonts and VA-API stay the system's.
+for soname in libdav1d.so.7 libunwind.so.8 liblcms2.so.2 libjpeg.so.62; do
+  path="$(ldconfig -p | awk -v n="$soname" '$1 == n && /x86-64/ && !found {print $NF; found = 1}')"
+  [ -n "$path" ] || { echo "$soname is not installed on this build machine." >&2; exit 1; }
+  cp -L "$path" "$appdir/usr/lib/anix/$soname"
+done
+cp "$libmpv_out"/share/licenses/* "$appdir/usr/share/licenses/anix/"
+cp "$project/THIRD-PARTY-NOTICES.md" "$appdir/usr/share/licenses/anix/"
+
+# The GStreamer libav plugin makes the bundler copy this machine's FFmpeg, which is often a GPL
+# build that also drags in GPL codec libraries. Point those sonames at the LGPL build and drop
+# what only the GPL build needed.
+for lib in "$appdir"/usr/lib/libav*.so* "$appdir"/usr/lib/libsw*.so* "$appdir"/usr/lib/libpostproc.so*; do
+  case "$(basename "$lib")" in libavahi*|libavif*) continue ;; esac
+  rm -f "$lib"
+done
+for f in "$appdir"/usr/lib/anix/libav*.so* "$appdir"/usr/lib/anix/libsw*.so*; do
+  ln -sf "anix/$(basename "$f")" "$appdir/usr/lib/$(basename "$f")"
+done
+gpl_libs='x264|x265|xvidcore|vidstab|rubberband|fftw3|chromaprint|leptonica|tesseract|jbig|a52|mpeg2|faad|postproc|dvdread|dvdnav|cdio|cdio_paranoia'
+find "$appdir/usr" -regextype posix-extended -regex ".*/lib(${gpl_libs})[._-].*" -print -delete
+# libtiff was only there for the GPL build's OCR filter.
+if ! find "$appdir/usr" -name '*.so*' -type f -exec readelf -d {} + 2>/dev/null | grep -q 'NEEDED.*\[libtiff\.'; then
+  rm -f "$appdir"/usr/lib/libtiff.so*
+fi
+python3 -I - "$appdir" "$gpl_libs" <<'PY'
+import glob, os, re, subprocess, sys
+appdir, gpl = sys.argv[1], sys.argv[2]
+problems = []
+for path in glob.glob(f"{appdir}/usr/**/*.so*", recursive=True):
+    name = os.path.basename(path)
+    if re.match(rf"lib({gpl})[._-]", name) or re.match(r"libgst(x264|a52dec|mpeg2dec|faad|dvdread|cdparanoia)\.so", name):
+        problems.append(f"GPL component bundled: {name}")
+    if re.match(r"lib(av(codec|format|filter|util|device)|sw(scale|resample)|postproc)\.so", name):
+        target = os.path.realpath(path)
+        if os.path.dirname(target) != os.path.realpath(f"{appdir}/usr/lib/anix"):
+            problems.append(f"FFmpeg library not from the LGPL build: {name}")
+    if os.path.isfile(path) and not os.path.islink(path):
+        out = subprocess.run(["readelf", "-d", path], capture_output=True, text=True).stdout
+        for needed in re.findall(r"NEEDED.*\[(.+?)\]", out):
+            if re.match(rf"lib({gpl})[._-]", needed):
+                problems.append(f"{name} still needs the removed {needed}")
+if problems:
+    sys.exit("\n".join(sorted(set(problems))) + "\nRefusing to build a package with GPL components.")
+print("No GPL components in the package.")
 PY
 
 if grep -rla -e "$HOME" -e "$(id -un)" "$appdir"; then

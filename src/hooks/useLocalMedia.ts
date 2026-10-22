@@ -2,10 +2,14 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import type { SourcesResult } from '../types';
+import { t } from '../i18n';
 
 /** Provider key of "Your files" in `/watch?prov=` and in watch history. */
 export const LOCAL_PROVIDER = 'local';
-export const LOCAL_PROVIDER_LABEL = 'Your files';
+/** The translated name of "Your files"; call it at render time. */
+export function localProviderLabel(): string {
+  return t('useLocalMedia.yourFiles');
+}
 
 export interface LocalMediaFile {
   id: number;

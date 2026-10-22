@@ -4,6 +4,7 @@
  * table for matching, so labels normalise the same way on both sides.
  */
 import type { PluginInfo } from '../types';
+import { language, locale, t } from '../i18n';
 
 interface LanguageEntry {
   code: string;
@@ -67,12 +68,43 @@ export const KNOWN_LANGUAGES: { code: string; name: string }[] = LANGUAGES.map((
   name,
 })).sort((a, b) => a.name.localeCompare(b.name));
 
+/** Every language the app knows, named and sorted in the interface language (for pickers). */
+export function knownLanguages(): { code: string; name: string }[] {
+  const lang = locale();
+  return LANGUAGES.map(({ code }) => ({ code, name: languageLabel(code) })).sort((a, b) =>
+    a.name.localeCompare(b.name, lang)
+  );
+}
+
 export const DEFAULT_LANGUAGES = ['en'];
 
-/** The English name of a language code, or the code in capitals when it is not known. */
+let displayNames: { locale: string; names: Intl.DisplayNames | null } | null = null;
+
+/**
+ * The name of a language code in the interface language, as it reads inside a sentence
+ * ("anglais" in French), or the code in capitals when it is not known.
+ */
 export function languageName(code: string): string {
   const known = LANGUAGES.find((entry) => entry.code === code.toLowerCase());
-  return known ? known.name : code.toUpperCase();
+  if (!known) return code.toUpperCase();
+  if (language() === 'en') return known.name;
+  if (displayNames?.locale !== locale()) {
+    let names: Intl.DisplayNames | null = null;
+    try {
+      names = new Intl.DisplayNames([locale()], { type: 'language' });
+    } catch {
+      // Without Intl.DisplayNames the English name is shown.
+    }
+    displayNames = { locale: locale(), names };
+  }
+  const local = displayNames.names?.of(known.code);
+  return local && local.toLowerCase() !== known.code ? local : known.name;
+}
+
+/** `languageName` starting with a capital, for lists and pickers ("Anglais"). */
+export function languageLabel(code: string): string {
+  const name = languageName(code);
+  return name.charAt(0).toLocaleUpperCase(locale()) + name.slice(1);
 }
 
 function lookup(candidate: string): string | null {
@@ -117,7 +149,7 @@ export type StreamCategory = 'sub' | 'dub';
 
 /** "English subtitles" for a sub, "Hindi audio" for a dub. */
 export function versionLabel(code: string, category: StreamCategory): string {
-  return `${languageName(code)} ${category === 'dub' ? 'audio' : 'subtitles'}`;
+  return t(category === 'dub' ? 'languages.audioIn' : 'languages.subtitlesIn', { language: languageName(code) });
 }
 
 /** The languages a plugin serves for a category. */
@@ -168,18 +200,69 @@ export function groupByLanguage<T>(
     )
     .map(([language, list]) => ({
       language,
-      label: language ? versionLabel(language, category) : 'Language not stated',
+      label: language ? sourceLabel(language, category) : t('languages.notStated'),
       items: list,
     }));
 }
 
 /** A plugin's languages as one short line: "English, Spanish subtitles · Russian audio". */
 export function pluginLanguageSummary(plugin: PluginInfo): string {
-  const names = (codes: string[]) => codes.map(languageName).join(', ');
+  const names = (codes: string[]) => codes.map(languageName).join(t('languages.listSeparator'));
   return [
-    plugin.sub_languages?.length ? `${names(plugin.sub_languages)} subtitles` : null,
-    plugin.dub_languages?.length ? `${names(plugin.dub_languages)} audio` : null,
+    plugin.sub_languages?.length ? t('languages.subtitlesIn', { language: names(plugin.sub_languages) }) : null,
+    plugin.dub_languages?.length ? t('languages.audioIn', { language: names(plugin.dub_languages) }) : null,
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+/**
+ * How a source reads wherever one is listed (server list, player bar, directory, downloads,
+ * alerts): "Japanese audio · English subtitles" for a sub, "Hindi audio" for a dub.
+ */
+export function sourceLabel(code: string | null | undefined, category: StreamCategory): string {
+  if (category === 'dub') return code ? versionLabel(code, 'dub') : t('languages.dubbedAudio');
+  return code
+    ? t('languages.japaneseAudioWith', { subtitles: versionLabel(code, 'sub') })
+    : t('languages.japaneseAudio');
+}
+
+/** "Subtitles only" / "Dub only" for a plugin that serves just one of them, else null. */
+export function audioOnlyLabel(plugin: Pick<PluginInfo, 'sub_languages' | 'dub_languages'> | undefined): string | null {
+  if (!plugin) return null;
+  const subs = plugin.sub_languages?.length ?? 0;
+  const dubs = plugin.dub_languages?.length ?? 0;
+  if (subs > 0 && dubs === 0) return t('languages.subtitlesOnly');
+  if (dubs > 0 && subs === 0) return t('languages.dubOnly');
+  return null;
+}
+
+/** Language names for a list of codes, as the extension directory shows them: "English, Hindi". */
+export function languageList(codes: string[]): string {
+  return codes.map(languageLabel).join(t('languages.listSeparator'));
+}
+
+interface StreamFacts {
+  streams: { quality: string | null; subtitle_variant?: string | null }[];
+  subtitles: unknown[];
+}
+
+/**
+ * What a source's first stream is like, when the plugin said: "Switchable subtitles · 1080p",
+ * "Subtitles burnt in · 720p". Null when it said nothing about either.
+ */
+export function describeStream(sources: StreamFacts | null | undefined, category: StreamCategory): string | null {
+  const stream = sources?.streams[0];
+  if (!stream) return null;
+  const subtitles =
+    category === 'dub'
+      ? null
+      : sources.subtitles.length > 0 || stream.subtitle_variant === 's-sub'
+        ? t('languages.switchableSubtitles')
+        : stream.subtitle_variant === 'h-sub'
+          ? t('languages.burntInSubtitles')
+          : null;
+  const resolution = /(\d{3,4})p\b/i.exec(stream.quality ?? '')?.[1];
+  const parts = [subtitles, resolution ? `${resolution}p` : null].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }

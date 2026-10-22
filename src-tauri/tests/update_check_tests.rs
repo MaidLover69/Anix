@@ -3,8 +3,10 @@
 mod plugin_support;
 
 use anix_lib::clients::update::{
-    default_download_url, fetch_update_info, parse_version_document, version_document_url, UpdateInfo, SITE_URL,
+    appimage_target, backup_path, default_download_url, download_and_install, fetch_update_info, install_verified,
+    is_newer_version, parse_version_document, sha256_file, version_document_url, AppImageAsset, UpdateInfo, SITE_URL,
 };
+use std::path::{Path, PathBuf};
 use plugin_support::{Req, Resp, Site};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -125,4 +127,162 @@ async fn the_update_check_reads_version_json_from_the_site() {
     drop(site);
     let unreachable = fetch_update_info(&client(), &base).await.unwrap_err();
     assert!(unreachable.contains("Could not reach the update server"), "{}", unreachable);
+}
+
+// ---------------------------------------------------------------------------------------
+// The in-app AppImage updater
+// ---------------------------------------------------------------------------------------
+
+const HASH_OF_NEW: &str = "c2ab5b8a3a0f9a9b6c4b2a5f4c4f7b1a1d5c6e7f8091a2b3c4d5e6f708192a3b";
+
+/// A temp folder with a stand-in "running" AppImage.
+struct Install(PathBuf);
+
+impl Install {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("anix-update-test-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Anix.AppImage"), b"old version").unwrap();
+        Self(dir)
+    }
+    fn target(&self) -> PathBuf {
+        self.0.join("Anix.AppImage")
+    }
+    fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(&self.0).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+}
+
+impl Drop for Install {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    let file = std::env::temp_dir().join(format!("anix-hash-{}-{}", std::process::id(), bytes.len()));
+    std::fs::write(&file, bytes).unwrap();
+    let hash = sha256_file(&file).unwrap();
+    let _ = std::fs::remove_file(file);
+    hash
+}
+
+#[test]
+fn the_manifest_lists_the_appimage_with_its_checksum() {
+    let site = "https://site.example";
+    let hash = "AB".repeat(32);
+    let info = parse_version_document(
+        &json!({ "version": "1.3.0", "appimage": { "url": "https://dl.example/Anix_1.3.0.AppImage", "sha256": hash, "size": 9000 } }),
+        site,
+    )
+    .unwrap();
+    assert_eq!(
+        info.appimage,
+        Some(AppImageAsset { url: "https://dl.example/Anix_1.3.0.AppImage".into(), sha256: "ab".repeat(32), size: Some(9000) })
+    );
+    let shape = serde_json::to_value(&info).unwrap();
+    assert_eq!(shape["appimage"]["sha256"], json!("ab".repeat(32)));
+
+    // Without a usable checksum or address there is nothing to install.
+    for bad in [
+        json!({ "url": "https://dl.example/a", "sha256": "abc" }),
+        json!({ "url": "https://dl.example/a", "sha256": "zz".repeat(32) }),
+        json!({ "url": "file:///tmp/a", "sha256": "ab".repeat(32) }),
+        json!({ "sha256": "ab".repeat(32) }),
+        json!("https://dl.example/a"),
+    ] {
+        let info = parse_version_document(&json!({ "version": "1.3.0", "appimage": bad }), site).unwrap();
+        assert_eq!(info.appimage, None, "{}", bad);
+    }
+    assert_eq!(parse_version_document(&json!({ "version": "1.3.0" }), site).unwrap().appimage, None);
+}
+
+#[test]
+fn versions_compare_like_the_frontend() {
+    assert!(is_newer_version("1.3.0", "1.2.0"));
+    assert!(is_newer_version("v1.10.0", "1.9.9"));
+    assert!(is_newer_version("1.2.1", "1.2"));
+    assert!(!is_newer_version("1.2.0", "1.2.0"));
+    assert!(!is_newer_version("1.2.0", "1.3.0"));
+    assert!(!is_newer_version("1.3.0-beta", "1.3.0"));
+}
+
+#[test]
+fn only_a_writable_appimage_of_a_normal_user_can_be_replaced() {
+    let install = Install::new("target");
+    let target = install.target();
+    assert_eq!(appimage_target(Some(target.as_os_str()), 1000), Ok(target.clone()));
+    assert!(appimage_target(None, 1000).unwrap_err().contains("not running as an AppImage"));
+    assert!(appimage_target(Some(target.as_os_str()), 0).unwrap_err().contains("root"));
+    assert!(appimage_target(Some(std::ffi::OsStr::new("Anix.AppImage")), 1000).is_err(), "relative");
+    assert!(appimage_target(Some(install.0.join("missing").as_os_str()), 1000).is_err());
+
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&install.0, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if unsafe { libc::geteuid() } != 0 {
+        assert!(appimage_target(Some(target.as_os_str()), 1000).unwrap_err().contains("cannot write"));
+    }
+    std::fs::set_permissions(&install.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn a_mismatching_checksum_aborts_and_keeps_the_old_file() {
+    let install = Install::new("mismatch");
+    let downloaded = install.0.join(".Anix.AppImage.anix-update");
+    std::fs::write(&downloaded, b"tampered").unwrap();
+
+    let error = install_verified(&downloaded, &install.target(), HASH_OF_NEW).unwrap_err();
+
+    assert!(error.contains("does not match its checksum"), "{}", error);
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"old version");
+    assert_eq!(install.names(), vec!["Anix.AppImage"], "the download is deleted and no backup is made");
+}
+
+#[test]
+fn a_verified_update_replaces_the_appimage_and_keeps_a_backup() {
+    let install = Install::new("verified");
+    let downloaded = install.0.join(".Anix.AppImage.anix-update");
+    std::fs::write(&downloaded, b"new version").unwrap();
+
+    let backup = install_verified(&downloaded, &install.target(), &sha256(b"new version").to_uppercase()).unwrap();
+
+    assert_eq!(backup, backup_path(&install.target()));
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"new version");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"old version");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(install.target()).unwrap().permissions().mode() & 0o111, 0o111, "executable");
+    assert_eq!(install.names(), vec!["Anix.AppImage", "Anix.AppImage.bak"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_update_is_downloaded_next_to_the_appimage_and_checked_before_it_replaces_it() {
+    let site = Site::start(|request: &Req| match request.route() {
+        "/Anix_1.3.0.AppImage" => Resp::new(200, "application/octet-stream", b"new version".to_vec()),
+        _ => Resp::status(404),
+    })
+    .await;
+    let install = Install::new("download");
+    let good = AppImageAsset { url: site.url("/Anix_1.3.0.AppImage"), sha256: sha256(b"new version"), size: None };
+
+    // A file that does not match the manifest never replaces the AppImage.
+    let tampered = AppImageAsset { sha256: HASH_OF_NEW.to_string(), ..good.clone() };
+    let error = download_and_install(&client(), &tampered, &install.target(), |_| {}).await.unwrap_err();
+    assert!(error.contains("checksum"), "{}", error);
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"old version");
+    assert_eq!(install.names(), vec!["Anix.AppImage"]);
+
+    let missing = AppImageAsset { url: site.url("/gone.AppImage"), ..good.clone() };
+    assert!(download_and_install(&client(), &missing, &install.target(), |_| {}).await.unwrap_err().contains("HTTP 404"));
+    assert_eq!(install.names(), vec!["Anix.AppImage"]);
+
+    let mut seen = Vec::new();
+    download_and_install(&client(), &good, &install.target(), |f| seen.push(f)).await.unwrap();
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"new version");
+    assert_eq!(std::fs::read(backup_path(&install.target())).unwrap(), b"old version");
+    assert_eq!(seen.last().copied(), Some(1.0));
+    assert!(Path::new(&install.0).join("Anix.AppImage.bak").exists());
 }

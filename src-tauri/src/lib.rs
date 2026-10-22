@@ -1,21 +1,29 @@
 pub mod accounts;
+pub mod backup;
 pub mod cache;
+pub mod catalogue;
 pub mod clients;
 pub mod commands;
 pub mod db;
+pub mod diagnostics;
 pub mod downloads;
+pub mod embedded_mpv;
 pub mod error;
+pub mod i18n;
 pub mod local_library;
 pub mod local_media;
 pub mod migration;
 pub mod models;
 pub mod mpris;
 pub mod mpv_ipc;
+pub mod notices;
 pub mod notifier;
 pub mod offline;
 pub mod plugins;
 pub mod providers;
+pub mod release_check;
 pub mod release_parser;
+pub mod reminders;
 pub mod state;
 pub mod stream_proxy;
 pub mod system;
@@ -33,7 +41,7 @@ pub fn env_var_os(name: &str, legacy_name: &str) -> Option<std::ffi::OsString> {
 
 /// Sends backend logs to stderr in development and to a log file in packaged builds,
 /// where nothing is attached to stderr.
-fn init_logging() {
+pub(crate) fn init_logging() {
     let builder = tracing_subscriber::fmt().with_max_level(tracing::Level::INFO);
 
     if cfg!(debug_assertions) {
@@ -99,6 +107,7 @@ pub fn run() {
                     app.manage(state);
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
+                    notices::init(app.handle().clone());
                     notifier::start(app.handle().clone());
                     system::apply(app.handle(), system::SystemSettings::read());
                     let args: Vec<String> = std::env::args().collect();
@@ -112,6 +121,7 @@ pub fn run() {
                     if let Err(e) = stream_proxy::start() {
                         tracing::error!("{}", e);
                     }
+                    embedded_mpv::install(app.handle());
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize database: {}", e);
@@ -159,6 +169,7 @@ pub fn run() {
             commands::set_plugin_config,
             commands::test_plugin,
             commands::test_all_plugins,
+            commands::get_plugin_health,
             commands::check_plugin_updates,
             commands::get_plugin_directory,
             // Library & History
@@ -172,6 +183,19 @@ pub fn run() {
             commands::get_watchlist,
             commands::set_episodes_watched,
             commands::get_watched_history,
+            commands::get_watch_times,
+            commands::set_list_status,
+            commands::get_list_status,
+            commands::sync_list_statuses,
+            // Notification centre
+            commands::list_notices,
+            commands::get_unread_notice_count,
+            commands::mark_notices_read,
+            commands::clear_notices,
+            commands::push_test_notice,
+            // Backup & restore
+            commands::export_backup,
+            commands::import_backup,
             commands::fetch_anilist_stats,
             // Downloads
             commands::create_download,
@@ -181,16 +205,21 @@ pub fn run() {
             commands::delete_download,
             commands::check_storage_for_download,
             commands::get_download_directory,
+            commands::pick_download_directory,
             // Schedule & Notifications
             commands::fetch_airing_schedule,
             commands::save_notification_preference,
             commands::list_notification_preferences,
+            commands::set_bell_lead_time,
+            commands::list_bell_lead_times,
             // Settings
             commands::get_settings,
             commands::save_settings,
             // System
             commands::get_desktop_status,
             commands::get_hardware_report,
+            commands::save_diagnostics_report,
+            commands::open_log_folder,
             commands::get_desktop_appearance,
             // Player
             commands::launch_external_player,
@@ -220,8 +249,19 @@ pub fn run() {
             // Updates
             commands::check_for_update,
             commands::get_site_url,
+            commands::get_update_install_support,
+            commands::install_update,
+            commands::restart_after_update,
             // Stream proxy
             stream_proxy::get_stream_proxy_base,
+            // Embedded mpv player
+            embedded_mpv::embedded_mpv,
+            embedded_mpv::embedded_mpv_status,
+            embedded_mpv::embedded_mpv_answer,
+            embedded_mpv::embedded_mpv_engine_changed,
+            embedded_mpv::embedded_mpv_restart,
+            embedded_mpv::embedded_mpv_take_route,
+            embedded_mpv::embedded_mpv_clear_cache,
             // Custom Playlists & Queue
             commands::create_playlist,
             commands::list_playlists,

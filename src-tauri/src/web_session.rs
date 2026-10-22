@@ -1145,6 +1145,8 @@ struct Blocked {
     path: String,
     headers: Vec<(String, String)>,
     at: Instant,
+    /// Only the app's plain client met the check; the in-app browser was not asked yet.
+    plain: bool,
 }
 
 struct SiteState {
@@ -1703,6 +1705,7 @@ fn note_refused(site: &'static SiteSpec, origin: &str, asked: &WebRequest) -> Ap
             path: asked.path.clone(),
             headers: asked.headers.clone(),
             at: Instant::now(),
+            plain: false,
         });
     });
     if let Some(known) = KNOWN_ORIGINS.get() {
@@ -1710,6 +1713,38 @@ fn note_refused(site: &'static SiteSpec, origin: &str, asked: &WebRequest) -> Ap
     }
     tracing::info!("{} refuses the in-app browser until the user verifies", host_of(origin));
     verification_required(site, origin)
+}
+
+/// The app's plain client met `origin`'s check page and no in-app browser session was asked for
+/// it: the site is listed for verification, so the user can pass the check in the site's
+/// window (Verify), and `asked` is what is repeated there to see it pass. A session started
+/// later still tries by itself first.
+pub fn note_plain_refusal(site: &'static SiteSpec, origin: &str, asked: &WebRequest) {
+    if !is_available() {
+        return;
+    }
+    let mut sites = sites();
+    let state = sites.entry(site.key).or_insert_with(|| SiteState::new(site));
+    if state.blocked.is_some() || state.window.is_some() {
+        return;
+    }
+    state.blocked = Some(Blocked {
+        origin: origin.to_string(),
+        path: asked.path.clone(),
+        headers: asked.headers.clone(),
+        // Old enough that `fetch` does not take it for a refusal of the session just now.
+        at: Instant::now().checked_sub(BLOCK_MEMORY * 2).unwrap_or_else(Instant::now),
+        plain: true,
+    });
+}
+
+/// The plain client is answered by the site again; a refusal noted from it alone is dropped.
+pub fn clear_plain_refusal(site: &SiteSpec) {
+    with_site(site.key, |state| {
+        if !state.visible && state.blocked.as_ref().map_or(false, |blocked| blocked.plain) {
+            state.blocked = None;
+        }
+    });
 }
 
 /// The request, made by a same-origin `fetch()` inside the site's own page in a hidden window of

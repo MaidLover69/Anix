@@ -1,11 +1,12 @@
 use crate::cache::L1Cache;
-use crate::clients::anilist::{fetch_media_hint, MediaHint};
+use crate::clients::anilist::MediaHint;
 use crate::clients::http::{http_client, no_redirect_client};
 use crate::error::AppError;
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
 use crate::providers::languages::{plan_tiers, prefer_subtitles, served_language, LanguagePrefs, Languages, Tier};
 use crate::providers::AnimeProvider;
+use crate::plugins::net::{is_connection_reset, RESET_RETRY_PAUSES};
 use crate::web_session::{detect_barrier, SessionUse};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION, ORIGIN, RANGE, REFERER};
 use reqwest::{Client, Url};
@@ -20,10 +21,14 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 
 /// Limit for one provider's episode listing.
-const EPISODES_TIMEOUT: Duration = Duration::from_secs(10);
+const EPISODES_TIMEOUT: Duration = Duration::from_secs(20);
 /// Limit for one provider's whole attempt at a play request: episode lookup, source
-/// resolution and stream verification.
-const SOURCES_TIMEOUT: Duration = Duration::from_secs(18);
+/// resolution and stream verification. The race ends as soon as any provider delivers, so a
+/// slow site only costs this when nothing else plays.
+const SOURCES_TIMEOUT: Duration = Duration::from_secs(30);
+/// After the first verified answer, an earlier provider in the user's order still running gets
+/// this long to deliver too and take precedence.
+const ORDER_GRACE: Duration = Duration::from_millis(600);
 /// Limit for checking a single stream, and for each request made while checking it.
 const VERIFY_STREAM_TIMEOUT: Duration = Duration::from_secs(7);
 const VERIFY_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -31,7 +36,8 @@ const VERIFY_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_VERIFIED_STREAMS: usize = 8;
 const MAX_PLAYLIST_BYTES: usize = 8 * 1024 * 1024;
 
-const HINT_TIMEOUT: Duration = Duration::from_millis(2500);
+/// A fallback catalogue may need an id lookup before its answer.
+const HINT_TIMEOUT: Duration = Duration::from_millis(5000);
 
 const EPISODES_TTL_SECS: u64 = 15 * 60;
 /// An empty listing is retried sooner than a real one expires.
@@ -275,10 +281,18 @@ async fn check_stream(stream: &StreamItem) -> Result<(), String> {
     let is_file = stream.stream_type.eq_ignore_ascii_case("mp4")
         || (!is_hls_url(&stream.url) && url.path().to_ascii_lowercase().contains(".mp4"));
     let check = async {
-        if is_file {
-            check_file(stream, url).await
-        } else {
-            check_hls(stream, url).await
+        // A network that resets some connections to a host is given a few more tries.
+        let mut pauses = RESET_RETRY_PAUSES.iter();
+        loop {
+            let result = if is_file {
+                check_file(stream, url.clone()).await
+            } else {
+                check_hls(stream, url.clone()).await
+            };
+            match (&result, pauses.next()) {
+                (Err(reason), Some(pause)) if is_connection_reset(reason) => tokio::time::sleep(*pause).await,
+                _ => return result,
+            }
         }
     };
     match timeout(VERIFY_STREAM_TIMEOUT, check).await {
@@ -404,6 +418,123 @@ pub fn summarize_failures(failures: &[(String, String)]) -> String {
         .join("; ")
 }
 
+/// Why a play failed, in the words the player shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureKind {
+    /// A site waits for the user to pass its check (Verify).
+    Verification,
+    /// The site no longer has the video.
+    Removed,
+    /// The video is only on hosts the extension cannot read.
+    UnreadableHost(String),
+    /// The sites took too long to answer.
+    TooSlow,
+    /// The sites could not be reached at all.
+    Unreachable,
+    /// No extension lists this episode (in this audio).
+    NotListed,
+    Other,
+}
+
+fn mentions(text: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| text.contains(word))
+}
+
+/// The kind of one provider's failure reason.
+pub fn classify_reason(reason: &str) -> FailureKind {
+    let lower = reason.to_ascii_lowercase();
+    if mentions(&lower, &["needs verification", "anti-bot", "bot protection", "captcha"]) {
+        return FailureKind::Verification;
+    }
+    if let Some(at) = lower.find("can't read") {
+        let hosts: Vec<&str> = reason[at..]
+            .split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')')
+            .map(|word| word.trim_end_matches('.'))
+            .filter(|word| word.contains('.') && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+            .collect();
+        if !hosts.is_empty() {
+            return FailureKind::UnreadableHost(hosts.join(", "));
+        }
+    }
+    if mentions(
+        &lower,
+        &["removed", "deleted", "http 404", "http 410", "not found on", "has no copy", "no longer available", "video not found"],
+    ) {
+        return FailureKind::Removed;
+    }
+    if mentions(&lower, &["anime not found", "not listed", "no dub", "not in the", "no episodes listed"]) {
+        return FailureKind::NotListed;
+    }
+    if mentions(&lower, &["timed out", "timeout", "too slow"]) {
+        return FailureKind::TooSlow;
+    }
+    if mentions(&lower, &["connection failed", "unreachable", "connection reset", "dns"]) {
+        return FailureKind::Unreachable;
+    }
+    FailureKind::Other
+}
+
+/// The one reason that best explains a list of per-provider failures: one the user can act on
+/// first, and "not listed" only when every provider said so.
+pub fn main_failure(failures: &[(String, String)]) -> FailureKind {
+    let kinds: Vec<FailureKind> = failures.iter().map(|(_, reason)| classify_reason(reason)).collect();
+    if kinds.is_empty() {
+        return FailureKind::Other;
+    }
+    let rank = |kind: &FailureKind| match kind {
+        FailureKind::Verification => 0,
+        FailureKind::Removed => 1,
+        FailureKind::UnreadableHost(_) => 2,
+        FailureKind::TooSlow => 3,
+        FailureKind::Unreachable => 4,
+        FailureKind::Other => 5,
+        FailureKind::NotListed => 6,
+    };
+    kinds.into_iter().min_by_key(|kind| rank(kind)).unwrap_or(FailureKind::Other)
+}
+
+/// The failure in plain words, as the first line of the message the player shows.
+pub fn explain_failure(kind: &FailureKind, category: &Category) -> String {
+    match kind {
+        FailureKind::Verification => "The site asks you to pass its check first. Press Verify, then the episode is tried again.".to_string(),
+        FailureKind::Removed => "The site removed this video.".to_string(),
+        FailureKind::UnreadableHost(hosts) => format!("This episode is only on video hosts the extensions can't read ({}).", hosts),
+        FailureKind::TooSlow => "The sites are too slow to answer right now. Try again in a moment.".to_string(),
+        FailureKind::Unreachable => {
+            "The sites could not be reached. Your network may block them; DNS over HTTPS in Settings › Network can help.".to_string()
+        }
+        FailureKind::NotListed if *category == Category::Dub => "No installed extension has this episode in dub.".to_string(),
+        FailureKind::NotListed => "No installed extension has this episode.".to_string(),
+        FailureKind::Other => "The extensions answered, but none gave a stream that plays.".to_string(),
+    }
+}
+
+/// When a stream or listing was last asked for, or a video piece went through the stream
+/// proxy, so background checks keep out of the way.
+static LAST_LOOKUP: once_cell::sync::Lazy<Mutex<Option<Instant>>> = once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+pub fn note_lookup() {
+    *LAST_LOOKUP.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
+}
+
+/// How long ago the last episode listing or stream lookup started; `None` before the first.
+pub fn since_last_lookup() -> Option<Duration> {
+    LAST_LOOKUP.lock().unwrap_or_else(|p| p.into_inner()).map(|at| at.elapsed())
+}
+
+/// The providers in the user's order (plugin ids, Settings › Sources); providers the order does
+/// not name keep their own order after the named ones.
+pub fn apply_order(mut providers: Vec<Arc<dyn AnimeProvider>>, order: &[String]) -> Vec<Arc<dyn AnimeProvider>> {
+    let rank = |name: &str| order.iter().position(|key| key.eq_ignore_ascii_case(name)).unwrap_or(usize::MAX);
+    providers.sort_by_key(|provider| rank(provider.name()));
+    providers
+}
+
+/// Looks up the facts used for title matching (titles, year, episode count) for an id.
+pub type HintSource = Arc<
+    dyn Fn(i64) -> Pin<Box<dyn Future<Output = Result<MediaHint, AppError>> + Send>> + Send + Sync,
+>;
+
 /// A spawned task that is cancelled when this handle is dropped.
 struct AbortOnDrop<T>(JoinHandle<T>);
 
@@ -519,6 +650,8 @@ struct Inner {
     resolve_hints: bool,
     /// Without it, every provider is asked whatever its languages.
     languages: Option<LanguageSource>,
+    /// Where hints come from; the anime catalogue (AniList, then the fallbacks) when unset.
+    hint_source: Option<HintSource>,
 }
 
 impl Inner {
@@ -562,17 +695,26 @@ impl Inner {
 
     async fn enrich_query(&self, base: &AnimeQuery) -> AnimeQuery {
         let mut query = base.clone();
-        if !self.resolve_hints || base.anilist_id <= 0 {
+        // Synthetic (negative) ids of anime AniList lacks are looked up too.
+        if !self.resolve_hints || base.anilist_id == 0 {
             return query;
         }
         let id = base.anilist_id;
+        let source = self.hint_source.clone();
         let lookup = self
             .hints
             .try_get_with(id, async move {
-                let client = http_client()?;
-                match timeout(HINT_TIMEOUT, fetch_media_hint(&client, id)).await {
+                // When AniList is down the catalogue answers from MyAnimeList or Kitsu, whose
+                // titles and synonyms are then what the extensions search with.
+                let hint = async move {
+                    match source {
+                        Some(source) => source(id).await,
+                        None => crate::catalogue::media_hint(id).await,
+                    }
+                };
+                match timeout(HINT_TIMEOUT, hint).await {
                     Ok(result) => result.map(Arc::new),
-                    Err(_) => Err(AppError::Network("AniList timed out".to_string())),
+                    Err(_) => Err(AppError::Network("the anime catalogue timed out".to_string())),
                 }
             })
             .await;
@@ -588,7 +730,7 @@ impl Inner {
                 query.english = hint.english.clone();
             }
             Err(e) => tracing::warn!(
-                "AniList lookup for {} failed ({}); matching by the given title only",
+                "Catalogue lookup for {} failed ({}); matching by the given title only",
                 id,
                 e.reason()
             ),
@@ -764,11 +906,36 @@ impl Inner {
             });
         }
 
-        while let Some(joined) = attempts.join_next().await {
+        // Earlier providers in the user's order win over later ones that answer only a moment
+        // sooner; `pending` holds the first answer while earlier ones get `ORDER_GRACE`.
+        let mut running: Vec<usize> = wave.to_vec();
+        let mut pending: Option<(usize, SourcesResult)> = None;
+        let mut grace_until: Option<tokio::time::Instant> = None;
+        loop {
+            if let Some((idx, _)) = &pending {
+                if !running.iter().any(|other| other < idx) {
+                    break;
+                }
+            }
+            let joined = match grace_until {
+                Some(until) => match tokio::time::timeout_at(until, attempts.join_next()).await {
+                    Ok(joined) => joined,
+                    Err(_) => break,
+                },
+                None => attempts.join_next().await,
+            };
+            let Some(joined) = joined else {
+                break;
+            };
+            if let Ok((idx, _)) = &joined {
+                running.retain(|other| other != idx);
+            }
             match joined {
-                Ok((_, Ok(sources))) => {
-                    attempts.abort_all();
-                    return Some(sources);
+                Ok((idx, Ok(sources))) => {
+                    if pending.as_ref().map_or(true, |(held, _)| idx < *held) {
+                        pending = Some((idx, sources));
+                    }
+                    grace_until.get_or_insert_with(|| tokio::time::Instant::now() + ORDER_GRACE);
                 }
                 Ok((idx, Err((reason, refused)))) => {
                     let provider = &lineup[idx];
@@ -786,7 +953,8 @@ impl Inner {
                 Err(join_err) => tracing::error!("provider attempt task failed: {}", join_err),
             }
         }
-        None
+        attempts.abort_all();
+        pending.map(|(_, sources)| sources)
     }
 }
 
@@ -849,8 +1017,18 @@ impl ProviderManager {
                 cooldowns: Mutex::new(HashMap::new()),
                 resolve_hints,
                 languages,
+                hint_source: None,
             }),
         }
+    }
+
+    /// `with_providers` with titles, year and episode count looked up from `hints`, for tests.
+    pub fn with_providers_and_hints(providers: Vec<Arc<dyn AnimeProvider>>, hints: HintSource) -> Self {
+        let mut manager = Self::build(Arc::new(move || providers.clone()), true);
+        if let Some(inner) = Arc::get_mut(&mut manager.inner) {
+            inner.hint_source = Some(hints);
+        }
+        manager
     }
 
     pub fn provider_names(&self) -> Vec<&'static str> {
@@ -892,6 +1070,7 @@ impl ProviderManager {
         mal_id: Option<i64>,
         title_romaji: Option<String>,
     ) -> Result<Vec<ProviderData>, AppError> {
+        note_lookup();
         let inner = &self.inner;
         let lineup = inner.lineup();
         let base = Arc::new(AnimeQuery::new(anilist_id, mal_id, title_romaji.as_deref()));
@@ -987,6 +1166,7 @@ impl ProviderManager {
         title_romaji: Option<String>,
         preferred_provider: Option<&str>,
     ) -> Result<SourcesResult, AppError> {
+        note_lookup();
         let inner = &self.inner;
         let lineup = inner.lineup();
         if lineup.is_empty() {
@@ -1098,7 +1278,9 @@ impl ProviderManager {
             .into_iter()
             .map(|f| (f.name.to_string(), f.reason))
             .collect();
-        let mut message = format!("No source found. {}", summarize_failures(&listed));
+        // First line: the reason in plain words; the rest is the list per provider, for Details.
+        let plain = explain_failure(&main_failure(&listed), &category);
+        let mut message = format!("{}\nNo source found. {}", plain, summarize_failures(&listed));
         if let (None, Some(prefs), true) = (preferred, &prefs, left_out) {
             message.push_str(&format!(
                 ". Only plugins with {} were asked; Settings › Sources can allow other languages.",

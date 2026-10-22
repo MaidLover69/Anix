@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import type { DownloadRecord, StorageCheck } from '../types';
 import { errorMessage } from '../components/ui/ErrorState';
+import { useSaveSettings } from './useSettings';
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -138,4 +139,37 @@ export function useRetryDownload() {
       queryClient.invalidateQueries({ queryKey: ['allDownloads'] });
     },
   });
+}
+
+/** Downloads waiting or running: the count on the sidebar's Downloads entry. */
+export function useActiveDownloadCount(): number {
+  return (useAllDownloads({ watch: true }).data ?? []).filter(isDownloadActive).length;
+}
+
+/**
+ * Change and Reset for the download folder. Change opens the folder picker; the backend
+ * refuses a folder it cannot write to. Both save `download_dir`; downloads read it when they start.
+ */
+export function useDownloadFolder() {
+  const queryClient = useQueryClient();
+  const save = useSaveSettings();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['downloadDirectory'] });
+    queryClient.invalidateQueries({ queryKey: ['checkStorage'] });
+  };
+  const change = useMutation({
+    mutationFn: async (): Promise<string | null> => {
+      const picked = await invoke<string | null>('pick_download_directory');
+      if (picked) await save.mutateAsync({ download_dir: picked });
+      return picked;
+    },
+    onSettled: refresh,
+  });
+  const reset = useMutation({
+    mutationFn: async () => {
+      await save.mutateAsync({ download_dir: '' });
+    },
+    onSettled: refresh,
+  });
+  return { change, reset };
 }

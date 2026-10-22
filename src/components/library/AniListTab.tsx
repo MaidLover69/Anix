@@ -8,8 +8,10 @@ import { useProgressiveList } from '../../hooks/useProgressiveList';
 import { useUIStore } from '../../stores/uiStore';
 import type { MediaListEntry, Viewer } from '../../types';
 import { EditListEntryModal } from './EditListEntryModal';
-import { ANILIST_LIST_STATUSES, mediaFromListRow } from './format';
+import { mediaFromListRow } from './format';
+import { LIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
 import { PosterGrid, PosterGridSkeleton, ShowMore } from './PosterGrid';
+import { t } from '../../i18n';
 
 /**
  * The connected AniList account's lists. Episodes finished in Anix are sent to AniList by
@@ -23,7 +25,7 @@ export const AniListTab: React.FC = () => {
   const viewerQuery = useAniListViewer(connected);
   const viewer = viewerQuery.data ?? null;
 
-  const [status, setStatus] = useState<string>(ANILIST_LIST_STATUSES[0].value);
+  const [status, setStatus] = useState<string>(LIST_STATUS_OPTIONS[0].value);
   const entriesQuery = useAniListLibrary(connected && viewer !== null, status);
 
   if (accountsQuery.isLoading) {
@@ -37,7 +39,7 @@ export const AniListTab: React.FC = () => {
   if (accountsQuery.isError) {
     return (
       <ErrorState
-        title="Could not load your accounts"
+        title={t('aniListTab.accountsError')}
         error={accountsQuery.error}
         onRetry={() => accountsQuery.refetch()}
       />
@@ -48,11 +50,11 @@ export const AniListTab: React.FC = () => {
     return (
       <EmptyState
         icon={<Cloud className="w-8 h-8" aria-hidden="true" />}
-        title="AniList is not connected"
-        description="Connect your AniList account to see your lists here and have the episodes you finish saved to them."
+        title={t('aniListTab.notConnected')}
+        description={t('aniListTab.notConnectedHint')}
         action={
           <Button variant="primary" onClick={() => setAuthDialogOpen(true)}>
-            Connect AniList
+            {t('aniListTab.connect')}
           </Button>
         }
       />
@@ -62,8 +64,8 @@ export const AniListTab: React.FC = () => {
   if (viewerQuery.isLoading) {
     return (
       <div className="flex flex-col items-center gap-3 py-20 text-xs text-text-muted">
-        <Spinner size="lg" label="Loading your AniList account" />
-        <span aria-hidden="true">Loading your AniList account…</span>
+        <Spinner size="lg" label={t('aniListTab.loadingAccount')} />
+        <span aria-hidden="true">{t('aniListTab.loadingAccountEllipsis')}</span>
       </div>
     );
   }
@@ -71,16 +73,16 @@ export const AniListTab: React.FC = () => {
   if (viewerQuery.isError || !viewer) {
     return (
       <ErrorState
-        title="Could not load your AniList account"
+        title={t('aniListTab.accountError')}
         message={
           viewerQuery.isError
             ? errorMessage(viewerQuery.error)
-            : 'AniList did not return an account for the saved login.'
+            : t('aniListTab.noAccount')
         }
         onRetry={() => viewerQuery.refetch()}
         action={
           <Button variant="ghost" onClick={() => setAuthDialogOpen(true)}>
-            Accounts
+            {t('aniListTab.accounts')}
           </Button>
         }
       />
@@ -88,14 +90,14 @@ export const AniListTab: React.FC = () => {
   }
 
   const statusLabel =
-    ANILIST_LIST_STATUSES.find((option) => option.value === status)?.label ?? 'this list';
+    LIST_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? t('aniListTab.thisList');
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <SegmentedControl
-          aria-label="AniList list"
-          options={ANILIST_LIST_STATUSES}
+          aria-label={t('aniListTab.listLabel')}
+          options={LIST_STATUS_OPTIONS}
           value={status}
           onChange={setStatus}
         />
@@ -153,15 +155,15 @@ const AniListEntries: React.FC<AniListEntriesProps> = ({
   if (isLoading) return <PosterGridSkeleton />;
 
   if (error !== null) {
-    return <ErrorState title="Could not load this AniList list" message={error} onRetry={onRetry} />;
+    return <ErrorState title={t('aniListTab.listError')} message={error} onRetry={onRetry} />;
   }
 
   if (entries.length === 0) {
     return (
       <EmptyState
         icon={<ListChecks className="w-8 h-8" aria-hidden="true" />}
-        title={`Nothing in ${statusLabel}`}
-        description="Anime on this list of your AniList account shows up here."
+        title={t('aniListTab.emptyTitle', { status: statusLabel })}
+        description={t('aniListTab.emptyHint')}
       />
     );
   }
@@ -181,16 +183,16 @@ const AniListEntries: React.FC<AniListEntriesProps> = ({
                 episodes: entry.total_episodes,
               })}
             />
-            <div className="flex items-center justify-between gap-2 pl-0.5 mt-1 text-[11px] text-text-muted tabular-nums">
+            <div className="flex items-center justify-between gap-2 ps-0.5 mt-1 text-[11px] text-text-muted tabular-nums">
               <span className="truncate">
-                Progress {entry.progress}/{entry.total_episodes ?? '?'}
-                {entry.score > 0 && ` · Score ${entry.score}`}
+                {t('aniListTab.progress', { progress: entry.progress, total: entry.total_episodes ?? '?' })}
+                {entry.score > 0 && ` · ${t('aniListTab.score', { score: entry.score })}`}
               </span>
               <Button
                 icon
                 variant="ghost"
                 size="sm"
-                aria-label={`Edit ${entry.title ?? 'this entry'} on your list`}
+                aria-label={entry.title ? t('aniListTab.editEntry', { title: entry.title }) : t('aniListTab.editThisEntry')}
                 onClick={() => setEditing(entry)}
                 className="-my-1"
               >

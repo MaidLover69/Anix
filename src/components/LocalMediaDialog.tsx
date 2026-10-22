@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { Spinner } from './ui/Spinner';
 import { errorMessage } from './ui/ErrorState';
 import { formatBytes, INPUT_CLASS } from './library/format';
+import { t } from '../i18n';
 import {
   pickLocalMedia,
   useLocalMedia,
@@ -69,7 +70,7 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
   const linkTypedFolder = () => {
     const folder = typedFolder.trim();
     if (!folder.startsWith('/')) {
-      setError('Use the full path of the folder, starting with "/".');
+      setError(t('localMediaDialog.fullPath'));
       return;
     }
     run({ kind: 'linkFolder', folderPath: folder });
@@ -89,12 +90,11 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Your files"
+      title={t('localMediaDialog.title')}
       size="xl"
       header={
         <p className="mt-1 text-xs text-text-muted">
-          Episodes of {animeTitle} from your own folder. They play in the built-in player and
-          update your progress and connected trackers like streams do.
+          {t('localMediaDialog.intro', { title: animeTitle })}
         </p>
       }
       footer={
@@ -102,16 +102,16 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
           {data?.linked && (
             <Button
               variant="danger"
-              className="mr-auto"
+              className="me-auto"
               disabled={busy}
               onClick={() => run({ kind: 'unlink' })}
             >
               <Unlink aria-hidden="true" className="h-4 w-4" />
-              Unlink all
+              {t('localMediaDialog.unlinkAll')}
             </Button>
           )}
           <Button variant="primary" onClick={onClose}>
-            Done
+            {t('localMediaDialog.done')}
           </Button>
         </>
       }
@@ -124,26 +124,26 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
         )}
 
         <div className="flex flex-col gap-2">
-          <span className="text-[13px] font-medium text-text-primary">Folder</span>
+          <span className="text-[13px] font-medium text-text-primary">{t('localMediaDialog.folder')}</span>
           <p className="text-xs text-text-secondary select-text break-all">
-            {data?.folder_path ?? 'No folder linked.'}
+            {data?.folder_path ?? t('localMediaDialog.noFolder')}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" disabled={busy} onClick={() => pick(false)}>
               <FolderOpen aria-hidden="true" className="h-4 w-4" />
-              {data?.folder_path ? 'Change folder…' : 'Choose folder…'}
+              {data?.folder_path ? t('localMediaDialog.changeFolder') : t('localMediaDialog.chooseFolder')}
             </Button>
             {data?.folder_path && (
               <Button variant="neutral" disabled={busy} onClick={() => run({ kind: 'rescan' })}>
                 <RefreshCw aria-hidden="true" className="h-4 w-4" />
-                Re-scan
+                {t('localMediaDialog.rescan')}
               </Button>
             )}
             <Button variant="neutral" disabled={busy} onClick={() => pick(true)}>
               <FilePlus2 aria-hidden="true" className="h-4 w-4" />
-              Add files…
+              {t('localMediaDialog.addFiles')}
             </Button>
-            {busy && <Spinner size="sm" label="Working" className="text-text-muted" />}
+            {busy && <Spinner size="sm" label={t('localMediaDialog.working')} className="text-text-muted" />}
           </div>
           <form
             className="flex items-center gap-2"
@@ -154,34 +154,33 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
           >
             <input
               type="text"
-              aria-label="Folder path"
+              aria-label={t('localMediaDialog.folderPath')}
               value={typedFolder}
               onChange={(event) => setTypedFolder(event.target.value)}
-              placeholder="Or type the folder path, e.g. /home/you/Videos/Anime/Show"
+              placeholder={t('localMediaDialog.folderPlaceholder')}
               spellCheck={false}
               autoComplete="off"
               disabled={busy}
               className={`${INPUT_CLASS} min-w-0 flex-1`}
             />
             <Button type="submit" variant="neutral" disabled={busy || !typedFolder.trim()}>
-              Link
+              {t('localMediaDialog.link')}
             </Button>
           </form>
           <p className="text-xs text-text-muted">
-            Finds .mkv, .mp4, .webm and .avi files up to four folders deep. Subtitle files with the
-            same name (.srt, .ass, .vtt) are picked up too.
+            {t('localMediaDialog.scanHint')}
           </p>
         </div>
 
         {link.isLoading ? (
           <div className="flex justify-center py-6">
-            <Spinner size="lg" label="Loading your files" className="text-text-muted" />
+            <Spinner size="lg" label={t('localMediaDialog.loading')} className="text-text-muted" />
           </div>
         ) : data && data.files.length > 0 ? (
           <div className="flex flex-col gap-2">
             <span className="text-[13px] font-medium text-text-primary">
-              {data.files.length} {data.files.length === 1 ? 'file' : 'files'} · {data.episodes.length}{' '}
-              {data.episodes.length === 1 ? 'episode' : 'episodes'} playable
+              {t('localMediaDialog.fileCount', { count: data.files.length })} ·{' '}
+              {t('localMediaDialog.playableCount', { count: data.episodes.length })}
             </span>
             <ul className="-mx-2 flex max-h-80 flex-col gap-0.5 overflow-y-auto">
               {data.files.map((file) => (
@@ -194,22 +193,22 @@ export const LocalMediaDialog: React.FC<LocalMediaDialogProps> = ({
                     run({ kind: 'setEpisode', fileId: file.id, episodeNumber })
                   }
                   onRemove={() => run({ kind: 'removeFile', fileId: file.id })}
-                  onInvalid={() => setError('Enter an episode number such as 3 or 12.5, or leave it empty.')}
+                  onInvalid={() => setError(t('localMediaDialog.invalidEpisode'))}
                 />
               ))}
             </ul>
           </div>
         ) : (
           data?.linked && (
-            <p className="text-[13px] text-text-muted">No video files were found in the linked folder.</p>
+            <p className="text-[13px] text-text-muted">{t('localMediaDialog.noFiles')}</p>
           )
         )}
 
         {existingDownloads.length > 0 && (
           <p className="text-xs text-text-muted">
-            Also playable from your downloads:{' '}
-            {existingDownloads.length === 1 ? 'episode' : 'episodes'}{' '}
-            {existingDownloads.map((d) => d.episode_number).join(', ')}.
+            {t(existingDownloads.length === 1 ? 'localMediaDialog.downloadsOne' : 'localMediaDialog.downloadsMany', {
+              list: existingDownloads.map((d) => d.episode_number).join(', '),
+            })}
           </p>
         )}
       </div>
@@ -250,20 +249,20 @@ const LocalFileRow: React.FC<LocalFileRowProps> = ({
 
   const notes = [
     formatBytes(file.file_size) || null,
-    !file.exists ? 'Missing on disk' : null,
-    file.episode_number === null ? 'Not used' : null,
-    duplicate ? 'Another file has this number' : null,
-    file.manual ? 'Numbered by you' : null,
+    !file.exists ? t('localMediaDialog.missing') : null,
+    file.episode_number === null ? t('localMediaDialog.notUsed') : null,
+    duplicate ? t('localMediaDialog.duplicate') : null,
+    file.manual ? t('localMediaDialog.manual') : null,
   ].filter(Boolean);
 
   return (
     <li className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-ink/5">
       <label className="flex flex-shrink-0 items-center gap-1.5 text-xs text-text-muted">
-        Ep
+        {t('localMediaDialog.ep')}
         <input
           type="text"
           inputMode="decimal"
-          aria-label={`Episode number of ${file.file_name}`}
+          aria-label={t('localMediaDialog.episodeNumberOf', { file: file.file_name })}
           value={value}
           disabled={disabled}
           onChange={(event) => setValue(event.target.value)}
@@ -300,8 +299,8 @@ const LocalFileRow: React.FC<LocalFileRowProps> = ({
           icon
           variant="ghost"
           size="sm"
-          aria-label={`Remove ${file.file_name}`}
-          title="Remove from this title (the file stays on disk)"
+          aria-label={t('localMediaDialog.removeFile', { file: file.file_name })}
+          title={t('localMediaDialog.removeHint')}
           disabled={disabled}
           onClick={onRemove}
         >

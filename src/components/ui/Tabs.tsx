@@ -15,22 +15,27 @@ interface TabsProps<T extends string> {
   onChange: (value: T) => void;
   'aria-label'?: string;
   className?: string;
+  /** Id of the caller's `role="tabpanel"`; tab `value` gets the id `${panelId}-${value}`. */
+  panelId?: string;
 }
 
 /** Underline tabs. The caller renders the panel for the selected value. */
-export function Tabs<T extends string>({ tabs, value, onChange, className, ...rest }: TabsProps<T>) {
+export function Tabs<T extends string>({ tabs, value, onChange, className, panelId, ...rest }: TabsProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    // Right to left, the next item is drawn on the left: swap the two horizontal arrows.
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    const key = rtl && e.key === 'ArrowLeft' ? 'ArrowRight' : rtl && e.key === 'ArrowRight' ? 'ArrowLeft' : e.key;
+    if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return;
     e.preventDefault();
     const enabled = tabs.map((t, i) => (t.disabled ? -1 : i)).filter((i) => i !== -1);
     if (enabled.length === 0) return;
     const pos = enabled.indexOf(index);
     let next = enabled[0];
-    if (e.key === 'End') next = enabled[enabled.length - 1];
-    else if (e.key === 'ArrowRight') next = enabled[(pos + 1) % enabled.length];
-    else if (e.key === 'ArrowLeft') next = enabled[(pos - 1 + enabled.length) % enabled.length];
+    if (key === 'End') next = enabled[enabled.length - 1];
+    else if (key === 'ArrowRight') next = enabled[(pos + 1) % enabled.length];
+    else if (key === 'ArrowLeft') next = enabled[(pos - 1 + enabled.length) % enabled.length];
     onChange(tabs[next].value);
     refs.current[next]?.focus();
   };
@@ -55,6 +60,8 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, ...re
               }}
               type="button"
               role="tab"
+              id={panelId ? `${panelId}-${tab.value}` : undefined}
+              aria-controls={panelId && selected ? panelId : undefined}
               aria-selected={selected}
               tabIndex={selected ? 0 : -1}
               disabled={tab.disabled}
@@ -72,7 +79,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, ...re
               >
                 {tab.label}
                 {tab.count !== undefined && (
-                  <span className="ml-2 text-xs font-normal tabular-nums text-text-muted">{tab.count}</span>
+                  <span className="ms-2 text-xs font-normal tabular-nums text-text-muted">{tab.count}</span>
                 )}
               </span>
             </button>

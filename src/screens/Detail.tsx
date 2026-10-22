@@ -1,31 +1,33 @@
 import { NotifyBell } from '../components/NotifyBell';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Bookmark, DownloadCloud, Video, SearchX, HardDrive } from 'lucide-react';
+import { ArrowLeft, Play, DownloadCloud, Video, SearchX, HardDrive, Image as ImageIcon } from 'lucide-react';
 import { ShimmerImage } from '../components/ShimmerImage';
 import { EpisodeBrowser } from '../components/EpisodeBrowser';
 import { AmbientGlow } from '../components/AmbientGlow';
-import { DetailStickyBar } from '../components/DetailStickyBar';
+import { DetailStickyBar, ListStatusSelect } from '../components/DetailStickyBar';
 import { TrailerModal, isPlayableTrailer } from '../components/TrailerModal';
 import { CharacterRail } from '../components/CharacterRail';
 import { RelationsRail } from '../components/RelationsRail';
+import { WatchOrder } from '../components/WatchOrder';
+import { Recommendations } from '../components/Recommendations';
+import { rememberDub } from '../components/schedule/dubKnown';
 import { AnimeThemesPlayer } from '../components/AnimeThemesPlayer';
 import { LocalMediaDialog } from '../components/LocalMediaDialog';
 import { LOCAL_PROVIDER, useLocalMedia } from '../hooks/useLocalMedia';
 import { Button } from '../components/ui/Button';
 import { Chip } from '../components/ui/Chip';
 import { EmptyState } from '../components/ui/EmptyState';
-import { ErrorState, errorMessage } from '../components/ui/ErrorState';
+import { ErrorState } from '../components/ui/ErrorState';
 import { useAnimeDetails, useMalAnimeDetails } from '../hooks/useAniList';
 import { useAnimeCatalogEpisodes, useEpisodes } from '../hooks/useProviders';
 import {
-  useIsInWatchlist,
-  useToggleWatchlist,
   useWatchedEpisodes,
   useContinueWatching,
 } from '../hooks/useLibrary';
-import { useSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { usePlayful, useSettings, useSaveSettings, AUTO_PROVIDER } from '../hooks/useSettings';
 import { useStreamingProviders } from '../hooks/usePlugins';
+import { openWith, useRememberedSource } from '../hooks/useRememberedSource';
 import {
   getContinueTarget,
   historyProgressPercent,
@@ -35,11 +37,34 @@ import {
 } from '../hooks/watchProgress';
 import { useUIStore } from '../stores/uiStore';
 import { mediaFormatLabel } from '../components/library/format';
-import type { AnimeDetails, EpisodeItem as EpisodeItemType, Media } from '../types';
+import { CompletedStamp } from '../components/CompletedStamp';
+import type { AnimeDetails, EpisodeItem as EpisodeItemType, FuzzyDate, Media } from '../types';
+import { formatNumber, locale, t, type TKey } from '../i18n';
 
 function sentenceCase(value: string): string {
   const lower = value.replace(/_/g, ' ').toLowerCase();
   return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+const STATUS_KEYS: Record<string, TKey> = {
+  FINISHED: 'detail.statusFinished',
+  RELEASING: 'detail.statusReleasing',
+  NOT_YET_RELEASED: 'detail.statusNotYetReleased',
+  CANCELLED: 'detail.statusCancelled',
+  HIATUS: 'detail.statusHiatus',
+};
+
+const SEASON_KEYS: Record<string, TKey> = {
+  WINTER: 'detail.seasonWinter',
+  SPRING: 'detail.seasonSpring',
+  SUMMER: 'detail.seasonSummer',
+  FALL: 'detail.seasonFall',
+};
+
+/** The label for an AniList enum value; a value without a key reads as written. */
+function enumLabel(keys: Record<string, TKey>, value: string): string {
+  const key = keys[value];
+  return key ? t(key) : sentenceCase(value);
 }
 
 function toMedia(details: AnimeDetails): Media {
@@ -74,21 +99,117 @@ function toMedia(details: AnimeDetails): Media {
   };
 }
 
+/** "12 Oct 2023", "Oct 2023" or "2023", as much as is known. */
+function fuzzyDateLabel(date: FuzzyDate | null | undefined): string | null {
+  if (!date?.year) return null;
+  if (date.month && date.day) {
+    return new Date(date.year, date.month - 1, date.day).toLocaleDateString(locale(), { dateStyle: 'medium' });
+  }
+  if (date.month) return new Date(date.year, date.month - 1, 1).toLocaleDateString(locale(), { month: 'short', year: 'numeric' });
+  return String(date.year);
+}
+
+const FactRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="flex flex-col gap-1">
+    <dt className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{label}</dt>
+    <dd className="text-[13px] text-text-secondary select-text">{children}</dd>
+  </div>
+);
+
+/**
+ * The right-hand column of a wide window (1200 px and up): studio, dates, genres, tags and the
+ * trailer. Narrower windows keep the single column, with the genres in the header.
+ */
+const DetailFacts: React.FC<{ details: AnimeDetails; seasonLabel: string; onTrailer: () => void }> = ({
+  details,
+  seasonLabel,
+  onTrailer,
+}) => {
+  const studios = [...(details.studios?.edges ?? [])]
+    .sort((a, b) => Number(b.isMain) - Number(a.isMain))
+    .map((edge) => edge.node.name)
+    .filter((name, i, all) => name && all.indexOf(name) === i);
+  const start = fuzzyDateLabel(details.startDate);
+  const end = fuzzyDateLabel(details.endDate);
+  const aired = start
+    ? end && end !== start
+      ? t('detail.airedRange', { start, end })
+      : details.status === 'RELEASING'
+        ? t('detail.airedOngoing', { start })
+        : start
+    : null;
+  const tags = (details.tags ?? [])
+    .filter((tag) => !tag.isMediaSpoiler)
+    .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0))
+    .slice(0, 10);
+  const trailer = details.trailer;
+  const playable = isPlayableTrailer(trailer);
+  const thumbnail = playable ? trailer?.thumbnail || `https://i.ytimg.com/vi/${trailer?.id}/hqdefault.jpg` : null;
+
+  return (
+    <aside aria-label={t('detail.aboutThisAnime')} className="sticky top-0 hidden flex-col gap-4 rounded-xl ui-card bg-bg-card p-4 min-[1200px]:flex">
+      {playable ? (
+        <button
+          type="button"
+          onClick={onTrailer}
+          aria-label={t('detail.playTrailer')}
+          className="group relative aspect-video w-full overflow-hidden rounded-md bg-bg-elevated"
+        >
+          {thumbnail && <ShimmerImage src={thumbnail} alt="" className="h-full w-full" />}
+          <span className="dark-scope absolute inset-0 flex items-center justify-center bg-black/30 transition-colors group-hover:bg-black/45">
+            <span className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
+              <Video aria-hidden="true" className="h-4 w-4" />
+              {t('detail.trailer')}
+            </span>
+          </span>
+        </button>
+      ) : (
+        details.servedBy && <p className="text-xs text-text-muted">{t('detail.noTrailerFrom', { name: details.servedBy })}</p>
+      )}
+      <dl className="flex flex-col gap-3">
+        {studios.length > 0 && <FactRow label={studios.length === 1 ? t('detail.studio') : t('detail.studios')}>{studios.join(', ')}</FactRow>}
+        {aired && <FactRow label={t('detail.aired')}>{aired}</FactRow>}
+        {seasonLabel && <FactRow label={t('detail.season')}>{seasonLabel}</FactRow>}
+        {details.genres && details.genres.length > 0 && (
+          <FactRow label={t('detail.genres')}>
+            <span className="mt-0.5 flex flex-wrap gap-1.5">
+              {details.genres.map((genre) => (
+                <Chip key={genre} tone="accent">
+                  {genre}
+                </Chip>
+              ))}
+            </span>
+          </FactRow>
+        )}
+        {tags.length > 0 && (
+          <FactRow label={t('detail.tags')}>
+            <span className="mt-0.5 flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <Chip key={tag.name}>{tag.name}</Chip>
+              ))}
+            </span>
+          </FactRow>
+        )}
+      </dl>
+    </aside>
+  );
+};
+
 const BackButton: React.FC = () => {
   const navigate = useNavigate();
   return (
     <Button
       variant="ghost"
       size="sm"
-      className="-ml-3 self-start"
+      className="-ms-3 self-start"
       onClick={() => {
         // Opened directly (deep link): there is nothing to go back to.
         if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
         else navigate('/');
       }}
     >
-      <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-      Back
+      <ArrowLeft aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" />
+      {t('common.back')}
     </Button>
   );
 };
@@ -103,21 +224,23 @@ const NO_EPISODES: EpisodeItemType[] = [];
 
 const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const navigate = useNavigate();
-  const anilistId = id && /^\d+$/.test(id) ? Number(id) : null;
+  // Negative ids stand for anime AniList does not list (see the backend's `catalogue::ids`).
+  const anilistId = id && /^-?[1-9]\d*$/.test(id) ? Number(id) : null;
 
   const openBulkDownloadDialog = useUIStore((s) => s.openBulkDownloadDialog);
-  const showToast = useUIStore((s) => s.showToast);
 
   const detailsQuery = useAnimeDetails(anilistId);
   const details = detailsQuery.data as AnimeDetails | null | undefined;
   const malId = details?.idMal ?? null;
   const { data: malDetails } = useMalAnimeDetails(malId);
-  const { data: inWatchlist = false } = useIsInWatchlist(anilistId);
-  const toggleWatchlistMutation = useToggleWatchlist();
   const { data: watchedEpisodes = [] } = useWatchedEpisodes(anilistId);
   const { data: continueWatching = [] } = useContinueWatching();
   const { data: settings } = useSettings();
+  const saveSettings = useSaveSettings();
+  const playful = usePlayful();
   const providers = useStreamingProviders();
+  // The server last picked for this anime is what its episodes open with.
+  const { remembered } = useRememberedSource(anilistId ?? 0);
 
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [isTrailerOpen, setIsTrailerOpen] = useState(false);
@@ -147,6 +270,10 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
     isLoading: providersLoading,
     isError: providersFailed,
   } = useEpisodes(lookupId, malId, titleRomaji);
+  // A plugin listing dub episodes is what the Schedule's "Dub available" filter knows.
+  useEffect(() => {
+    if (anilistId && episodesData && Object.values(episodesData).some((p) => (p?.dub?.length ?? 0) > 0)) rememberDub(anilistId);
+  }, [anilistId, episodesData]);
 
   const latestHistory = useMemo(
     () => continueWatching.find((h) => h.anilist_id === anilistId) ?? null,
@@ -167,11 +294,11 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         <BackButton />
         <EmptyState
           icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-          title="Anime not found"
-          description={`"${id ?? ''}" is not a valid anime id.`}
+          title={t('detail.notFound')}
+          description={t('detail.invalidId', { id: id ?? '' })}
           action={
             <Button variant="secondary" onClick={() => navigate('/')}>
-              Go to Home
+              {t('detail.goHome')}
             </Button>
           }
         />
@@ -210,10 +337,10 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       <div className="flex flex-col gap-4">
         <BackButton />
         <ErrorState
-          title="Could not load this anime"
+          title={t('detail.couldNotLoad')}
           error={detailsQuery.error}
           onRetry={() => detailsQuery.refetch()}
-          retryLabel={detailsQuery.isFetching ? 'Retrying…' : 'Retry'}
+          retryLabel={detailsQuery.isFetching ? t('detail.retrying') : t('common.retry')}
         />
       </div>
     );
@@ -225,11 +352,11 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         <BackButton />
         <EmptyState
           icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-          title="Anime not found"
-          description="AniList has no entry with this id."
+          title={t('detail.notFound')}
+          description={t('detail.noAniListEntry')}
           action={
             <Button variant="secondary" onClick={() => navigate('/')}>
-              Go to Home
+              {t('detail.goHome')}
             </Button>
           }
         />
@@ -244,7 +371,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
     details.title?.english ||
     details.title?.userPreferred ||
     details.title?.romaji ||
-    'Untitled';
+    t('detail.untitled');
 
   const bannerImage = bannerFailed ? null : details.bannerImage;
   const coverImage = details.coverImage?.extraLarge || details.coverImage?.large || null;
@@ -260,6 +387,12 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
     details.episodes,
     details.nextAiringEpisode?.episode
   );
+  const watchedSet = new Set(watchedEpisodes);
+  const finished =
+    playful &&
+    details.status === 'FINISHED' &&
+    (details.episodes ?? 0) > 0 &&
+    Array.from({ length: details.episodes! }, (_, i) => i + 1).every((n) => watchedSet.has(n));
   const continueTarget = getContinueTarget({
     latest: latestHistory,
     watched: watchedEpisodes,
@@ -268,8 +401,12 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   });
   const firstEpisode = releasedNumbers.length > 0 ? Math.min(...releasedNumbers) : 1;
   const hasReleasedEpisodes = releasedNumbers.length > 0 || released === null || released > 0;
-  const defaultCategory = settings?.prefer_dub ? 'dub' : 'sub';
-  const defaultProvider = settings?.preferred_provider || AUTO_PROVIDER;
+  const { category: defaultCategory, provider: defaultProvider } = openWith(
+    remembered,
+    providers.accepts,
+    settings?.prefer_dub,
+    settings?.preferred_provider
+  );
 
   // Only carry a provider from history if it is a plugin that can still be asked.
   const historyProvider =
@@ -299,41 +436,32 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
     navigate(watchPath(anilistId, ep.number, category, provider));
   };
 
-  const handleWatchlistToggle = () => {
-    toggleWatchlistMutation.mutate(
-      {
-        anilistId,
-        title,
-        cover: coverImage,
-        format: details.format,
-        averageScore: details.averageScore,
-        inWatchlist,
-      },
-      {
-        onError: (err) =>
-          showToast({
-            type: 'error',
-            title: 'Could not update the watchlist',
-            message: errorMessage(err),
-          }),
-      }
-    );
+  const listTarget = {
+    id: anilistId,
+    title,
+    cover: coverImage,
+    format: details.format ?? null,
+    averageScore: details.averageScore ?? null,
   };
 
-  const seasonLabel = [details.season ? sentenceCase(details.season) : null, details.seasonYear]
-    .filter(Boolean)
-    .join(' ');
+  const seasonName = details.season ? enumLabel(SEASON_KEYS, details.season) : null;
+  const seasonLabel =
+    seasonName && details.seasonYear
+      ? t('detail.seasonYear', { season: seasonName, year: details.seasonYear })
+      : seasonName ?? (details.seasonYear ? String(details.seasonYear) : '');
 
   const metadata = [
     mediaFormatLabel(details.format) || null,
-    details.status ? sentenceCase(details.status) : null,
+    details.status ? enumLabel(STATUS_KEYS, details.status) : null,
     seasonLabel || null,
-    details.episodes ? `${details.episodes} ${details.episodes === 1 ? 'episode' : 'episodes'}` : null,
-    details.duration ? `${details.duration} min` : null,
+    details.episodes ? t('common.episodeCount', { count: details.episodes }) : null,
+    details.duration ? t('detail.durationMinutes', { minutes: details.duration }) : null,
     // Scores are shown only where the source really has one.
-    details.averageScore ? `AniList ${details.averageScore}%` : null,
+    details.averageScore ? t('detail.aniListScore', { score: details.averageScore }) : null,
     typeof malDetails?.score === 'number' && malDetails.score > 0
-      ? `MAL ${malDetails.score.toFixed(2)}`
+      ? t('detail.malScore', {
+          score: formatNumber(malDetails.score, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        })
       : null,
   ]
     .filter(Boolean)
@@ -352,14 +480,17 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const isLongDescription = cleanDescription.length > 320;
 
   const playLabel = !hasReleasedEpisodes
-    ? 'Not yet aired'
+    ? t('detail.notYetAired')
     : continueTarget
-    ? `Continue Episode ${continueTarget.episode}`
-    : `Watch Episode ${firstEpisode}`;
+    ? t('detail.continueEpisode', { episode: continueTarget.episode })
+    : t('detail.watchEpisode', { episode: firstEpisode });
   // The same audio the episode list shows; playing follows it once the user has picked one.
   const requestedCategory = chosenCategory ?? defaultCategory;
   const barCategory: 'sub' | 'dub' = requestedCategory === 'dub' && dubAvailable ? 'dub' : 'sub';
   const coverColor = details.coverImage?.color ?? null;
+  // "Use as background" takes the wide banner, else the cover.
+  const backgroundUrl = details.bannerImage || coverImage;
+  const isBackground = !!backgroundUrl && settings?.background_art?.url === backgroundUrl;
 
   return (
     // isolate: the ambient glow sits behind the page's content but above the app background.
@@ -368,15 +499,13 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         anchorRef={heroRef}
         title={title}
         cover={coverImage}
-        inWatchlist={inWatchlist}
-        watchlistPending={toggleWatchlistMutation.isPending}
-        onToggleWatchlist={handleWatchlistToggle}
+        listTarget={listTarget}
         playLabel={
           !hasReleasedEpisodes
-            ? 'Not yet aired'
+            ? t('detail.notYetAired')
             : continueTarget
-            ? `Continue Ep ${continueTarget.episode}`
-            : `Play Ep ${firstEpisode}`
+            ? t('detail.continueEp', { episode: continueTarget.episode })
+            : t('detail.playEp', { episode: firstEpisode })
         }
         playDisabled={!hasReleasedEpisodes}
         onPlay={handlePlay}
@@ -405,18 +534,19 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
           )}
 
           {/* Behind the poster: the cover colour, softly, over the banner's fade. */}
-          <AmbientGlow color={coverColor} intensity={0.8} className="-left-40 -top-24 h-[620px] w-[640px]" />
+          <AmbientGlow color={coverColor} intensity={0.8} className="-start-40 -top-24 h-[620px] w-[640px]" />
 
           <div className={`relative flex gap-6 p-6 ${bannerImage ? 'pt-28' : ''}`}>
             <ShimmerImage
               src={coverImage}
-              alt={`${title} cover`}
+              alt={t('detail.coverAlt', { title })}
               className="aspect-[2/3] w-48 flex-shrink-0 self-start rounded-xl bg-bg-elevated shadow-pop"
             />
 
             <div className="flex min-w-0 flex-1 flex-col">
               <h1 className="text-[28px] font-bold leading-[34px] tracking-[-0.02em] text-text-primary select-text">
                 {title}
+                {finished && <CompletedStamp />}
               </h1>
               {alternateTitles && (
                 <p title={alternateTitles} className="mt-1 text-xs leading-[18px] text-text-muted line-clamp-2 select-text">
@@ -428,7 +558,8 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
               )}
 
               {details.genres && details.genres.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+                // On wide windows the genres are in the right-hand column.
+                <div className="mt-3 flex flex-wrap items-center gap-2 min-[1200px]:hidden">
                   {details.genres.map((genre) => (
                     <Chip key={genre} tone="accent">
                       {genre}
@@ -444,7 +575,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                     descriptionExpanded ? '' : 'line-clamp-4'
                   }`}
                 >
-                  {cleanDescription || 'No synopsis is available.'}
+                  {cleanDescription || t('detail.noSynopsis')}
                 </p>
                 {isLongDescription && (
                   <button
@@ -454,7 +585,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                     onClick={() => setDescriptionExpanded(!descriptionExpanded)}
                     className="mt-1 cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
                   >
-                    {descriptionExpanded ? 'Show less' : 'Show more'}
+                    {descriptionExpanded ? t('detail.showLess') : t('detail.showMore')}
                   </button>
                 )}
               </div>
@@ -465,16 +596,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                   {playLabel}
                 </Button>
 
-                {/* A toggle: neutral while off, accent once the anime is saved. */}
-                <Button
-                  variant={inWatchlist ? 'secondary' : 'neutral'}
-                  onClick={handleWatchlistToggle}
-                  aria-pressed={inWatchlist}
-                  disabled={toggleWatchlistMutation.isPending}
-                >
-                  <Bookmark aria-hidden="true" className={`h-4 w-4 ${inWatchlist ? 'fill-current' : ''}`} />
-                  {inWatchlist ? 'In watchlist' : 'Add to watchlist'}
-                </Button>
+                <ListStatusSelect target={listTarget} />
 
                 {/* Kept together, so a narrow window moves the whole group to a second row
                     instead of leaving one button on its own. */}
@@ -486,19 +608,19 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                   {isPlayableTrailer(details.trailer) && (
                     <Button variant="neutral" onClick={() => setIsTrailerOpen(true)}>
                       <Video aria-hidden="true" className="h-4 w-4" />
-                      Trailer
+                      {t('detail.trailer')}
                     </Button>
                   )}
 
                   <Button
                     variant="neutral"
                     onClick={() => setLocalOpen(true)}
-                    title="Watch episodes from a folder on this computer"
+                    title={t('detail.localFilesHint')}
                   >
                     <HardDrive aria-hidden="true" className="h-4 w-4" />
                     {local.data?.linked || local.episodes.length > 0
-                      ? `Your files · ${local.episodes.length}`
-                      : 'Load your own episodes'}
+                      ? t('detail.yourFiles', { count: local.episodes.length })
+                      : t('detail.loadOwnEpisodes')}
                   </Button>
 
                   <Button
@@ -507,47 +629,78 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                     disabled={!hasReleasedEpisodes}
                   >
                     <DownloadCloud aria-hidden="true" className="h-4 w-4" />
-                    Bulk download
+                    {t('detail.bulkDownload')}
                   </Button>
+
+                  {backgroundUrl && (
+                    <Button
+                      icon
+                      variant="neutral"
+                      aria-pressed={isBackground}
+                      aria-label={isBackground ? t('detail.stopBackgroundLabel') : t('detail.useBackgroundLabel')}
+                      title={isBackground ? t('detail.removeBackground') : t('detail.useAsBackground')}
+                      onClick={() =>
+                        saveSettings.mutate({
+                          background_art: isBackground
+                            ? null
+                            : { url: backgroundUrl, title, style: settings?.background_art?.style ?? 'blur' },
+                        })
+                      }
+                    >
+                      <ImageIcon aria-hidden="true" className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
+              {details.servedBy && !isPlayableTrailer(details.trailer) && (
+                <p className="mt-2 text-xs text-text-muted min-[1200px]:hidden">{t('detail.noTrailerFrom', { name: details.servedBy })}</p>
+              )}
             </div>
           </div>
         </header>
       </div>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-xl font-semibold text-text-primary">Episodes</h2>
-        <EpisodeBrowser
-          anilistId={anilistId}
-          malId={malId}
-          animeTitle={title}
-          animeCover={coverImage}
-          catalogEpisodes={catalogEpisodes}
-          isCatalogLoading={catalogLoading}
-          episodesData={episodesData}
-          isProvidersLoading={providersLoading}
-          isProvidersError={providersFailed}
-          defaultCategory={defaultCategory}
-          defaultProvider={defaultProvider}
-          progressByEpisode={progressByEpisode}
-          localEpisodes={local.episodes}
-          onSelectEpisode={handleSelectEpisode}
-          chosenCategory={chosenCategory}
-          onChosenCategoryChange={setChosenCategory}
-          onDubAvailableChange={setDubAvailable}
-        />
-      </section>
+      <div className="flex flex-col gap-8 min-[1200px]:grid min-[1200px]:grid-cols-[minmax(0,1fr)_280px] min-[1200px]:items-start">
+        <div className="flex min-w-0 flex-col gap-8">
+          <section className="flex flex-col gap-3">
+            <h2 className="text-xl font-semibold text-text-primary">{t('common.episodes')}</h2>
+            <EpisodeBrowser
+              anilistId={anilistId}
+              malId={malId}
+              animeTitle={title}
+              animeCover={coverImage}
+              catalogEpisodes={catalogEpisodes}
+              isCatalogLoading={catalogLoading}
+              episodesData={episodesData}
+              isProvidersLoading={providersLoading}
+              isProvidersError={providersFailed}
+              defaultCategory={defaultCategory}
+              defaultProvider={defaultProvider}
+              progressByEpisode={progressByEpisode}
+              localEpisodes={local.episodes}
+              onSelectEpisode={handleSelectEpisode}
+              chosenCategory={chosenCategory}
+              onChosenCategoryChange={setChosenCategory}
+              onDubAvailableChange={setDubAvailable}
+              currentEpisode={continueTarget?.episode ?? null}
+            />
+          </section>
 
-      {details.relations?.edges && details.relations.edges.length > 0 && (
-        <RelationsRail relations={details.relations.edges} />
-      )}
+          <WatchOrder key={details.id} details={details} />
 
-      {details.characters?.edges && details.characters.edges.length > 0 && (
-        <CharacterRail characters={details.characters.edges} />
-      )}
+          {details.relations?.edges && details.relations.edges.length > 0 && (
+            <RelationsRail relations={details.relations.edges} />
+          )}
 
-      <AnimeThemesPlayer malId={malId} animeTitle={title} />
+          <CharacterRail characters={details.characters?.edges ?? []} unavailableFrom={details.servedBy ?? null} />
+
+          <Recommendations details={details} />
+
+          <AnimeThemesPlayer malId={malId} animeTitle={title} />
+        </div>
+
+        <DetailFacts details={details} seasonLabel={seasonLabel} onTrailer={() => setIsTrailerOpen(true)} />
+      </div>
 
       <LocalMediaDialog
         isOpen={localOpen}

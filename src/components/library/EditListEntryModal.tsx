@@ -1,11 +1,14 @@
 import React, { useId, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button, Modal, errorMessage } from '../ui';
 import { CustomSelect } from '../CustomSelect';
 import { useSaveAniListEntry } from '../../hooks/useAniList';
 import { useAccountStatus } from '../../hooks/useAccounts';
 import { useUIStore } from '../../stores/uiStore';
 import type { MediaListEntry } from '../../types';
-import { ANILIST_LIST_STATUSES, INPUT_CLASS, LABEL_CLASS } from './format';
+import { LIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
+import { INPUT_CLASS, LABEL_CLASS } from './format';
+import { t } from '../../i18n';
 
 interface EditListEntryModalProps {
   entry: MediaListEntry;
@@ -24,9 +27,10 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
   const saveEntry = useSaveAniListEntry();
   const showToast = useUIStore((s) => s.showToast);
   const { data: accounts } = useAccountStatus();
+  const queryClient = useQueryClient();
 
   const total = entry.total_episodes !== null && entry.total_episodes > 0 ? entry.total_episodes : null;
-  const [status, setStatus] = useState(entry.status ?? ANILIST_LIST_STATUSES[0].value);
+  const [status, setStatus] = useState<string>(entry.status ?? LIST_STATUS_OPTIONS[0].value);
   const [progress, setProgress] = useState(String(clampProgress(entry.progress, total)));
   const [error, setError] = useState<string | null>(null);
 
@@ -55,21 +59,24 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
         status,
         progress: clampProgress(Number(progress), total),
       });
+      // The backend copied the new status to the watchlist row of this anime, if it has one.
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+      queryClient.invalidateQueries({ queryKey: ['listStatus', entry.id] });
       if (saved.mal.state === 'failed') {
         showToast({
           type: 'warning',
-          title: 'Saved to AniList, but not to MyAnimeList',
+          title: t('editListEntryModal.savedNotMal'),
           message: saved.mal.message,
         });
       } else {
         showToast({
           type: 'success',
-          title: saved.mal.state === 'saved' ? 'Saved to AniList and MyAnimeList' : 'Saved to AniList',
+          title: saved.mal.state === 'saved' ? t('editListEntryModal.savedBoth') : t('editListEntryModal.savedAniList'),
         });
       }
       onClose();
     } catch (err) {
-      setError(errorMessage(err, 'The entry could not be saved.'));
+      setError(errorMessage(err, t('editListEntryModal.saveError')));
     } finally {
       submittingRef.current = false;
     }
@@ -79,20 +86,20 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
     <Modal
       isOpen
       onClose={handleClose}
-      title={entry.title ?? 'Edit list entry'}
+      title={entry.title ?? t('editListEntryModal.title')}
       size="sm"
       header={
         <p className="mt-0.5 text-xs text-text-muted">
-          {accounts?.mal.connected ? 'Saved to AniList and MyAnimeList.' : 'Saved to AniList.'}
+          {accounts?.mal.connected ? t('editListEntryModal.savesToBoth') : t('editListEntryModal.savesToAniList')}
         </p>
       }
       footer={
         <>
           <Button variant="ghost" onClick={handleClose} disabled={pending}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" form={formId} variant="primary" disabled={pending}>
-            {pending ? 'Saving…' : 'Save'}
+            {pending ? t('editListEntryModal.saving') : t('common.save')}
           </Button>
         </>
       }
@@ -100,21 +107,21 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
       <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <span id={`${formId}-status`} className={LABEL_CLASS}>
-            Status
+            {t('editListEntryModal.status')}
           </span>
           <CustomSelect
             aria-labelledby={`${formId}-status`}
             className="w-full"
             value={status}
             onChange={handleStatusChange}
-            options={ANILIST_LIST_STATUSES}
+            options={LIST_STATUS_OPTIONS}
             disabled={pending}
           />
         </div>
 
         <div>
           <label htmlFor={`${formId}-progress`} className={LABEL_CLASS}>
-            Episodes watched
+            {t('editListEntryModal.episodesWatched')}
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -131,7 +138,7 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
               disabled={pending}
               className={`${INPUT_CLASS} w-24 tabular-nums`}
             />
-            <span className="text-[13px] text-text-muted tabular-nums">of {total ?? '?'}</span>
+            <span className="text-[13px] text-text-muted tabular-nums">{t('editListEntryModal.ofTotal', { total: total ?? '?' })}</span>
           </div>
         </div>
 

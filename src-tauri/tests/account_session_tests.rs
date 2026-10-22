@@ -450,6 +450,9 @@ async fn test_account_anilist_rejected_token_signs_out() {
             session::error_message(Service::AniList, false, &AppError::AuthRequired),
             "AniList is not connected."
         );
+        let disabled = AppError::Network("AniList HTTP 403: The AniList API has been temporarily disabled".to_string());
+        let message = session::error_message(Service::AniList, true, &disabled);
+        assert!(message.starts_with("AniList is unavailable right now (AniList HTTP 403"), "{}", message);
     }
 }
 

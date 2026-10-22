@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ExternalLink,
   Film,
+  FolderOpen,
   FolderSearch,
   Link2,
   Loader2,
@@ -18,7 +19,7 @@ import { Button, Chip, EmptyState, ErrorState, Spinner, errorMessage } from '../
 import { useSettings } from '../../hooks/useSettings';
 import { useProgressiveList } from '../../hooks/useProgressiveList';
 import type { LocalScan } from '../../hooks/useLocalScan';
-import { LOCAL_PROVIDER } from '../../hooks/useLocalMedia';
+import { LOCAL_PROVIDER, pickLocalMedia } from '../../hooks/useLocalMedia';
 import {
   candidateTitle,
   confirmSeriesMatch,
@@ -38,6 +39,7 @@ import { CoverThumb } from './CoverThumb';
 import { INPUT_CLASS, episodeLabel, externalPlayerFor, formatBytes, playerLabel } from './format';
 import { ShowMore } from './PosterGrid';
 import { LocalMatchDialog, candidateDetails } from './LocalMatchDialog';
+import { t, tn, type TKey } from '../../i18n';
 
 interface LocalFilesTabProps {
   scan: LocalScan;
@@ -45,11 +47,11 @@ interface LocalFilesTabProps {
 
 type Filter = 'all' | 'review' | 'linked';
 
-const KIND_LABELS: Record<string, string> = {
-  movie: 'Movie',
-  ova: 'OVA',
-  ona: 'ONA',
-  special: 'Specials',
+const KIND_LABELS: Record<string, TKey> = {
+  movie: 'localFilesTab.kindMovie',
+  ova: 'localFilesTab.kindOva',
+  ona: 'localFilesTab.kindOna',
+  special: 'localFilesTab.kindSpecials',
 };
 
 /** "1–12, 14, 24.5" */
@@ -88,6 +90,24 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
   const isScanning = scan.status === 'scanning';
   const library = scan.library;
   const matching = useSeriesMatching(library, scan.matches, scan.setMatches);
+  // A folder chosen in the picker is scanned once the typed folder has taken its value.
+  const [scanPicked, setScanPicked] = useState(false);
+  const { scan: runScan } = scan;
+  useEffect(() => {
+    if (!scanPicked) return;
+    setScanPicked(false);
+    runScan();
+  }, [scanPicked, runScan]);
+  const chooseFolder = async () => {
+    try {
+      const [folder] = await pickLocalMedia(false);
+      if (!folder) return;
+      scan.setDir(folder);
+      setScanPicked(true);
+    } catch (err) {
+      showToast({ type: 'error', title: t('localFilesTab.pickerError'), message: errorMessage(err) });
+    }
+  };
 
   const handlePlay = async (file: LibraryFile) => {
     try {
@@ -95,7 +115,7 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
     } catch (err) {
       showToast({
         type: 'error',
-        title: `Could not open the file in ${playerLabel(player)}`,
+        title: t('localFilesTab.openFileError', { player: playerLabel(player) }),
         message: errorMessage(err),
       });
     }
@@ -111,7 +131,7 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
         }}
       >
         <label htmlFor="local-scan-dir" className="text-[13px] font-medium text-text-primary">
-          Folder to scan
+          {t('localFilesTab.folderToScan')}
         </label>
         <div className="flex items-center gap-2">
           <input
@@ -120,51 +140,58 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
             value={scan.dir}
             onChange={(event) => scan.setDir(event.target.value)}
             disabled={isScanning}
-            placeholder="/home/you/Videos/Anime"
+            placeholder={t('localFilesTab.dirPlaceholder')}
             spellCheck={false}
             autoComplete="off"
             className={`${INPUT_CLASS} flex-1 min-w-0 max-w-xl`}
           />
           <Button type="submit" variant="primary" disabled={isScanning}>
-            {isScanning ? 'Scanning…' : 'Scan folder'}
+            {isScanning ? t('localFilesTab.scanning') : t('localFilesTab.scanFolder')}
           </Button>
         </div>
         <p className="text-xs text-text-muted">
-          Finds .mkv, .mp4, .webm and .avi files up to four folders deep, groups them into series and
-          matches each with AniList. Link a series to play it in the built-in player and keep your
-          lists in sync.
+          {t('localFilesTab.scanHint')}
         </p>
       </form>
 
       {isScanning ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <Spinner size="lg" label="Scanning folder" className="text-text-muted" />
+          <Spinner size="lg" label={t('localFilesTab.scanningFolder')} className="text-text-muted" />
           <p className="text-[13px] text-text-secondary">
-            Scanning <span className="select-text break-all">{scan.scannedDir}</span>
+            {tn('localFilesTab.scanningDir', { folder: <span className="select-text break-all">{scan.scannedDir}</span> })}
           </p>
-          <p className="text-xs text-text-muted">Large folders and network drives can take a while.</p>
+          <p className="text-xs text-text-muted">{t('localFilesTab.scanSlow')}</p>
         </div>
       ) : scan.status === 'error' ? (
         <ErrorState
-          title="The folder could not be scanned"
-          message={scan.error ?? 'Unknown error'}
+          title={t('localFilesTab.scanError')}
+          message={scan.error ?? t('localFilesTab.unknownError')}
           onRetry={() => scan.scan()}
         />
       ) : scan.status === 'idle' || !library ? (
         <EmptyState
           icon={<FolderSearch className="w-8 h-8" aria-hidden="true" />}
-          title="No folder scanned yet"
-          description="Enter the folder that holds your video files and scan it to list them here."
+          title={t('localFilesTab.noScan')}
+          description={t('localFilesTab.noScanHint')}
+          action={
+            <Button variant="primary" onClick={chooseFolder}>
+              <FolderOpen className="h-4 w-4" aria-hidden="true" />
+              {t('localFilesTab.chooseFolder')}
+            </Button>
+          }
         />
       ) : library.file_count === 0 ? (
         <EmptyState
           icon={<Film className="w-8 h-8" aria-hidden="true" />}
-          title="No video files found"
+          title={t('localFilesTab.noFiles')}
           description={
-            <>
-              Nothing playable was found in{' '}
-              <span className="select-text break-all">{scan.scannedDir}</span>.
-            </>
+            tn('localFilesTab.noFilesHint', { folder: <span className="select-text break-all">{scan.scannedDir}</span> })
+          }
+          action={
+            <Button variant="secondary" onClick={chooseFolder}>
+              <FolderOpen className="h-4 w-4" aria-hidden="true" />
+              {t('localFilesTab.chooseAnother')}
+            </Button>
           }
         />
       ) : (
@@ -186,10 +213,10 @@ const MatchingStatus: React.FC<{ state: MatchingState; onRetry: () => void }> = 
     return (
       <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-state-error">
         <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="select-text">Matching with AniList stopped: {state.message}</span>
+        <span className="select-text">{t('localFilesTab.matchingStopped', { message: state.message })}</span>
         <Button size="sm" variant="ghost" onClick={onRetry}>
           <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>Try again</span>
+          <span>{t('common.tryAgain')}</span>
         </Button>
       </div>
     );
@@ -198,8 +225,8 @@ const MatchingStatus: React.FC<{ state: MatchingState; onRetry: () => void }> = 
     <div role="status" className="flex items-center gap-2 text-xs text-text-muted tabular-nums">
       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
       {state.phase === 'waiting'
-        ? `AniList asked to slow down; continuing in ${state.seconds} s (${state.done} of ${state.total} matched)`
-        : `Matching with AniList… ${state.done} of ${state.total}`}
+        ? t('localFilesTab.matchingWaiting', { seconds: state.seconds, done: state.done, total: state.total })
+        : t('localFilesTab.matchingProgress', { done: state.done, total: state.total })}
     </div>
   );
 };
@@ -250,7 +277,7 @@ const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching
       scan.setMatches([await confirmSeriesMatch(series.key, candidate)]);
       setPicking(null);
     } catch (err) {
-      showToast({ type: 'error', title: 'Could not save the match', message: errorMessage(err) });
+      showToast({ type: 'error', title: t('localFilesTab.saveMatchError'), message: errorMessage(err) });
     } finally {
       setBusyKey(null);
     }
@@ -267,14 +294,14 @@ const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching
       if (batch.retry_after_s) {
         showToast({
           type: 'warning',
-          title: 'AniList asked to slow down',
-          message: `Try again in ${batch.retry_after_s} s.`,
+          title: t('localFilesTab.slowDown'),
+          message: t('localFilesTab.tryAgainIn', { seconds: batch.retry_after_s }),
         });
       } else if (batch.error) {
-        showToast({ type: 'error', title: 'The search failed', message: batch.error });
+        showToast({ type: 'error', title: t('localFilesTab.searchFailed'), message: batch.error });
       }
     } catch (err) {
-      showToast({ type: 'error', title: 'The search failed', message: errorMessage(err) });
+      showToast({ type: 'error', title: t('localFilesTab.searchFailed'), message: errorMessage(err) });
     } finally {
       setBusyKey(null);
     }
@@ -292,11 +319,11 @@ const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching
       const count = result.episodes.length;
       showToast({
         type: 'success',
-        title: `Linked to ${candidateTitle(candidate)}`,
-        message: `${count} ${count === 1 ? 'episode plays' : 'episodes play'} from your files on the title's page.`,
+        title: t('localFilesTab.linkedTo', { title: candidateTitle(candidate) }),
+        message: t('localFilesTab.linkedEpisodes', { count }),
       });
     } catch (err) {
-      showToast({ type: 'error', title: 'Could not link the files', message: errorMessage(err) });
+      showToast({ type: 'error', title: t('localFilesTab.linkError'), message: errorMessage(err) });
     } finally {
       setBusyKey(null);
     }
@@ -306,19 +333,22 @@ const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-text-muted">
-          {library.series.length} series ·{' '}
-          {library.file_count} {library.file_count === 1 ? 'file' : 'files'} in{' '}
-          <span className="select-text break-all">{library.root}</span>
+          {t('localFilesTab.seriesCount', { count: library.series.length })} ·{' '}
+          {tn(
+            'localFilesTab.filesIn',
+            { folder: <span className="select-text break-all">{library.root}</span> },
+            { count: library.file_count }
+          )}
         </p>
-        <div className="flex items-center gap-1.5" role="group" aria-label="Show">
+        <div className="flex items-center gap-1.5" role="group" aria-label={t('localFilesTab.show')}>
           <Chip selected={filter === 'all'} onClick={() => setFilter('all')}>
-            All
+            {t('localFilesTab.all')}
           </Chip>
           <Chip selected={filter === 'review'} onClick={() => setFilter('review')}>
-            To review ({counts.review})
+            {t('localFilesTab.toReview', { count: counts.review })}
           </Chip>
           <Chip selected={filter === 'linked'} onClick={() => setFilter('linked')}>
-            Linked ({counts.linked})
+            {t('localFilesTab.linkedCount', { count: counts.linked })}
           </Chip>
         </div>
       </div>
@@ -326,7 +356,7 @@ const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching
       <MatchingStatus state={matching} onRetry={onRetryMatching} />
 
       {visible.length === 0 ? (
-        <p className="py-10 text-center text-xs text-text-muted">Nothing to show with this filter.</p>
+        <p className="py-10 text-center text-xs text-text-muted">{t('localFilesTab.filterEmpty')}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {list.visible.map((series) => (
@@ -401,20 +431,22 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
 
   const localDetails = [
     series.episodes.length
-      ? `${series.episodes.length === 1 ? 'Episode' : 'Episodes'} ${episodeRanges(series.episodes)}`
+      ? series.episodes.length === 1
+        ? t('common.episodeNumber', { number: episodeRanges(series.episodes) })
+        : t('localFilesTab.episodesRange', { range: episodeRanges(series.episodes) })
       : null,
-    `${series.files.length} ${series.files.length === 1 ? 'file' : 'files'}`,
-    series.extras ? `${series.extras} ${series.extras === 1 ? 'extra' : 'extras'}` : null,
+    t('localFilesTab.fileCount', { count: series.files.length }),
+    series.extras ? t('localFilesTab.extraCount', { count: series.extras }) : null,
     series.release_groups.slice(0, 2).join(', ') || null,
     series.resolutions.slice(0, 2).join(', ') || null,
     formatBytes(series.total_size) || null,
   ].filter(Boolean);
 
   const parsedLabel = [
-    series.title || 'Files without a recognisable title',
-    series.season ? `Season ${series.season}` : null,
-    series.part ? `Part ${series.part}` : null,
-    KIND_LABELS[series.kind] ?? null,
+    series.title || t('localFilesTab.noTitle'),
+    series.season ? t('localFilesTab.season', { season: series.season }) : null,
+    series.part ? t('localFilesTab.part', { part: series.part }) : null,
+    KIND_LABELS[series.kind] ? t(KIND_LABELS[series.kind]) : null,
     series.year ? String(series.year) : null,
   ]
     .filter(Boolean)
@@ -422,26 +454,26 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
 
   let badge: React.ReactNode = null;
   if (!series.matchable) {
-    badge = <span className="text-xs text-text-muted">Not matched: no title in the file names</span>;
+    badge = <span className="text-xs text-text-muted">{t('localFilesTab.notMatchable')}</span>;
   } else if (isLinked) {
     badge = (
       <span className="flex items-center gap-1 text-xs text-state-success">
         <Check className="h-3.5 w-3.5" aria-hidden="true" />
-        Linked
+        {t('localFilesTab.linked')}
       </span>
     );
   } else if (!match) {
-    badge = <span className="text-xs text-text-muted">Waiting for a match…</span>;
+    badge = <span className="text-xs text-text-muted">{t('localFilesTab.waiting')}</span>;
   } else if (match.status === 'confirmed') {
-    badge = <span className="text-xs text-accent-300">Match confirmed</span>;
+    badge = <span className="text-xs text-accent-300">{t('localFilesTab.confirmed')}</span>;
   } else if (match.status === 'auto' && media) {
     badge = (
       <span className="text-xs text-state-warning tabular-nums">
-        Suggested match · {Math.round(media.score * 100)}% fit
+        {t('localFilesTab.suggested', { percent: Math.round(media.score * 100) })}
       </span>
     );
   } else {
-    badge = <span className="text-xs text-state-warning">No good match found</span>;
+    badge = <span className="text-xs text-state-warning">{t('localFilesTab.noMatch')}</span>;
   }
 
   return (
@@ -454,52 +486,52 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
               className="truncate text-[14px] font-semibold text-text-primary select-text"
               title={media ? candidateTitle(media) : parsedLabel}
             >
-              {media ? candidateTitle(media) : series.title || 'Unrecognised files'}
+              {media ? candidateTitle(media) : series.title || t('localFilesTab.unrecognised')}
             </span>
             {badge}
           </div>
           {media && <span className="text-xs text-text-secondary">{candidateDetails(media)}</span>}
           <span className="truncate text-xs text-text-muted select-text" title={parsedLabel}>
-            From files: {parsedLabel}
+            {t('localFilesTab.fromFiles', { label: parsedLabel })}
           </span>
           <span className="text-xs text-text-muted tabular-nums">{localDetails.join(' · ')}</span>
           {linkedElsewhere && (
-            <span className="text-xs text-text-muted">Some files are linked to another title.</span>
+            <span className="text-xs text-text-muted">{t('localFilesTab.linkedElsewhere')}</span>
           )}
 
           <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
             {media && !isLinked && episodeCount > 0 && (
               <Button size="sm" variant="primary" disabled={busy} onClick={() => onLink(media)}>
                 <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Link to this title</span>
+                <span>{t('localFilesTab.linkToTitle')}</span>
               </Button>
             )}
             {media && isLinked && firstEpisode !== undefined && (
               <Button size="sm" variant="primary" onClick={() => onPlay(media.id, firstEpisode)}>
                 <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-                <span>Play {episodeLabel(firstEpisode)}</span>
+                <span>{t('localFilesTab.playEpisode', { episode: episodeLabel(firstEpisode) })}</span>
               </Button>
             )}
             {media && (
               <Button size="sm" variant="neutral" onClick={() => onOpen(media.id)}>
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Open title</span>
+                <span>{t('localFilesTab.openTitle')}</span>
               </Button>
             )}
             {series.matchable && (
               <Button size="sm" variant="ghost" disabled={busy} onClick={onChange}>
-                {media ? 'Change match' : 'Find the title'}
+                {media ? t('localFilesTab.changeMatch') : t('localFilesTab.findTitle')}
               </Button>
             )}
-            {busy && <Spinner size="sm" label="Working" className="text-text-muted" />}
+            {busy && <Spinner size="sm" label={t('localFilesTab.working')} className="text-text-muted" />}
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setOpen((v) => !v)}
               aria-expanded={open}
-              className="ml-auto"
+              className="ms-auto"
             >
-              <span>Files</span>
+              <span>{t('localFilesTab.files')}</span>
               <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden="true" />
             </Button>
           </div>
@@ -512,12 +544,12 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
             const p = file.parsed;
             const what =
               p.kind === 'extra'
-                ? 'Extra'
+                ? t('localFilesTab.extra')
                 : p.episode !== null
                   ? p.episode_end !== null
-                    ? `Episodes ${p.episode}–${p.episode_end}`
+                    ? t('localFilesTab.episodesFromTo', { from: p.episode, to: p.episode_end })
                     : episodeLabel(p.episode)
-                  : 'No episode number';
+                  : t('localFilesTab.noEpisodeNumber');
             return (
               <li key={file.file_path} className="flex items-center gap-3 py-1.5">
                 <div className="flex min-w-0 flex-1 flex-col">
@@ -534,7 +566,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                   variant="ghost"
                   size="sm"
                   onClick={() => onPlayFile(file)}
-                  aria-label={`Play ${file.file_name} in ${playerName}`}
+                  aria-label={t('localFilesTab.playFileIn', { file: file.file_name, player: playerName })}
                   className="flex-shrink-0"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />

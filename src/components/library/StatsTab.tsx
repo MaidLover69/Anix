@@ -1,18 +1,20 @@
 import React, { useId, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { BarChart3 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { BarChart3, Compass } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { EmptyState, ErrorState, Spinner } from '../ui';
+import { Button, EmptyState, ErrorState, Spinner } from '../ui';
 import { useWatchedHistory } from '../../hooks/useLibrary';
 import { useAccountStatus } from '../../hooks/useAccounts';
+import { usePlayful } from '../../hooks/useSettings';
 import { useUIStore } from '../../stores/uiStore';
 import { ShimmerImage } from '../ShimmerImage';
+import { watchStreak } from './format';
 import type { AniListStats, AniListStatsEntry, WatchedEpisodeRow } from '../../types';
+import { formatNumber, locale, t, tn, type TKey } from '../../i18n';
 
 /** Minutes assumed for an episode whose length nobody knows. */
 const FALLBACK_EPISODE_MINUTES = 24;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** The AniList half; one list request plus two voice-actor batches, cached for an hour. */
 function useAniListStats(connected: boolean) {
@@ -28,8 +30,10 @@ function useAniListStats(connected: boolean) {
 
 function formatHours(minutes: number): string {
   const hours = minutes / 60;
-  if (hours < 1) return `${Math.round(minutes)} min`;
-  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours).toLocaleString()} h`;
+  if (hours < 1) return t('statsTab.minutes', { count: Math.round(minutes) });
+  return t('statsTab.hours', {
+    hours: hours < 10 ? formatNumber(hours, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : formatNumber(Math.round(hours)),
+  });
 }
 
 interface Bucket {
@@ -76,7 +80,8 @@ const Stat: React.FC<{ label: string; value: string; detail?: string }> = ({ lab
  * Vertical bars, one series in the accent. Each bar has a tooltip (its <title>); the same
  * numbers are in a table for screen readers.
  */
-const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: string; highlight?: number }> = ({
+/** `unit` is a plural key such as "{count} titles". */
+const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: TKey; highlight?: number }> = ({
   data,
   label,
   unit,
@@ -111,7 +116,7 @@ const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: string; highl
             <g key={d.label}>
               {/* Hit area larger than the bar, for the tooltip. */}
               <rect x={i * slot} y={0} width={slot} height={plot} fill="transparent">
-                <title>{`${d.title ?? d.label}: ${d.value.toLocaleString()} ${unit}`}</title>
+                <title>{t('statsTab.barTooltip', { label: d.title ?? d.label, value: t(unit, { count: d.value }) })}</title>
               </rect>
               {h > 0 && (
                 <path
@@ -127,7 +132,7 @@ const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: string; highl
                   textAnchor="middle"
                   className="fill-[var(--text-secondary)] text-[11px] tabular-nums"
                 >
-                  {d.value.toLocaleString()}
+                  {formatNumber(d.value)}
                 </text>
               )}
               <text
@@ -148,9 +153,7 @@ const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: string; highl
           {data.map((d) => (
             <tr key={d.label}>
               <th scope="row">{d.title ?? d.label}</th>
-              <td>
-                {d.value} {unit}
-              </td>
+              <td>{t(unit, { count: d.value })}</td>
             </tr>
           ))}
         </tbody>
@@ -160,7 +163,7 @@ const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: string; highl
 };
 
 /** A ranked list with a bar per row: labels stay readable at any length. */
-const RankedBars: React.FC<{ data: Bucket[]; label: string; unit: string }> = ({ data, label, unit }) => {
+const RankedBars: React.FC<{ data: Bucket[]; label: string; unit: TKey }> = ({ data, label, unit }) => {
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <ol aria-label={label} className="flex flex-col gap-2">
@@ -169,7 +172,8 @@ const RankedBars: React.FC<{ data: Bucket[]; label: string; unit: string }> = ({
           <span className="flex items-baseline justify-between gap-3 text-xs">
             <span className="truncate text-text-secondary">{d.label}</span>
             <span className="flex-shrink-0 tabular-nums text-text-muted">
-              {d.value.toLocaleString()} <span className="sr-only">{unit}</span>
+              <span aria-hidden="true">{formatNumber(d.value)}</span>
+              <span className="sr-only">{t(unit, { count: d.value })}</span>
             </span>
           </span>
           <span aria-hidden="true" className="h-1.5 w-full rounded-full bg-ink/[0.08]">
@@ -198,10 +202,18 @@ export const StatsTab: React.FC = () => {
   const accounts = useAccountStatus().data;
   const connected = accounts?.anilist.connected ?? false;
   const openAuthDialog = useUIStore((s) => s.setAuthDialogOpen);
+  const navigate = useNavigate();
   const historyQuery = useWatchedHistory();
   const statsQuery = useAniListStats(connected);
+  const playful = usePlayful();
 
   const rows = historyQuery.data ?? [];
+  // Every day an episode was watched; a rewatch adds a day instead of moving the old one.
+  const watchTimes = useQuery<number[]>({ queryKey: ['watchTimes'], queryFn: () => invoke<number[]>('get_watch_times') });
+  const streak = useMemo(
+    () => watchStreak(watchTimes.data ?? rows.map((r) => r.updated_at)),
+    [watchTimes.data, rows]
+  );
   const entries: AniListStatsEntry[] = statsQuery.data?.entries ?? [];
   const year = new Date().getFullYear();
 
@@ -217,7 +229,7 @@ export const StatsTab: React.FC = () => {
     const scored = entries.filter((e) => e.score > 0);
     const scoreBuckets: Bucket[] = Array.from({ length: 10 }, (_, i) => ({
       label: String((i + 1) * 10),
-      title: `Scores ${i * 10 + 1}–${(i + 1) * 10}`,
+      title: t('statsTab.scoreRange', { from: i * 10 + 1, to: (i + 1) * 10 }),
       value: scored.filter((e) => Math.min(9, Math.floor((e.score - 1) / 10)) === i).length,
     }));
     const episodes = started.reduce((sum, e) => sum + e.progress * (1 + e.repeat), 0);
@@ -239,8 +251,9 @@ export const StatsTab: React.FC = () => {
 
   const review = useMemo(() => {
     const thisYear = rows.filter((r) => new Date(r.updated_at).getFullYear() === year);
-    const months: Bucket[] = MONTHS.map((label, i) => ({
-      label,
+    const monthName = new Intl.DateTimeFormat(locale(), { month: 'short' });
+    const months: Bucket[] = Array.from({ length: 12 }, (_, i) => ({
+      label: monthName.format(new Date(year, i, 1)),
       value: thisYear.filter((r) => new Date(r.updated_at).getMonth() === i).length,
     }));
     const byTitle = new Map<number, { title: string; cover: string | null; count: number }>();
@@ -259,21 +272,36 @@ export const StatsTab: React.FC = () => {
   if (historyQuery.isLoading) {
     return (
       <div className="flex justify-center py-20">
-        <Spinner size="lg" label="Loading statistics" className="text-text-muted" />
+        <Spinner size="lg" label={t('statsTab.loading')} className="text-text-muted" />
       </div>
     );
   }
   if (historyQuery.isError) {
     return (
-      <ErrorState title="Could not load your watch history" error={historyQuery.error} onRetry={() => historyQuery.refetch()} />
+      <ErrorState title={t('statsTab.historyError')} error={historyQuery.error} onRetry={() => historyQuery.refetch()} />
     );
   }
   if (rows.length === 0 && !connected) {
     return (
       <EmptyState
         icon={<BarChart3 className="h-8 w-8" aria-hidden="true" />}
-        title="No statistics yet"
-        description="Watch a few episodes, or connect AniList in Settings to see your whole list here."
+        title={t('statsTab.empty')}
+        description={
+          playful
+            ? t('statsTab.emptyHintPlayful')
+            : t('statsTab.emptyHint')
+        }
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button variant="primary" onClick={() => navigate('/discover')}>
+              <Compass className="h-4 w-4" aria-hidden="true" />
+              {t('statsTab.browseAnime')}
+            </Button>
+            <Button variant="secondary" onClick={() => openAuthDialog(true)}>
+              {t('statsTab.connectAniList')}
+            </Button>
+          </div>
+        }
       />
     );
   }
@@ -283,62 +311,85 @@ export const StatsTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${connected && statsQuery.data ? 'lg:grid-cols-5' : 'lg:grid-cols-3'}`}>
         <Stat
-          label="Episodes watched here"
-          value={rows.length.toLocaleString()}
-          detail={`${local.titles.toLocaleString()} ${local.titles === 1 ? 'title' : 'titles'}`}
+          label={t('statsTab.episodesHere')}
+          value={formatNumber(rows.length)}
+          detail={t('statsTab.titleCount', { count: local.titles })}
         />
         <Stat
-          label="Time watched here"
+          label={t('statsTab.timeHere')}
           value={formatHours(totalMinutes)}
           detail={
             local.estimatedMinutes > 0
-              ? `${formatHours(local.estimatedMinutes)} estimated from episode length`
-              : 'From playback history'
+              ? t('statsTab.estimated', { time: formatHours(local.estimatedMinutes) })
+              : t('statsTab.fromPlayback')
+          }
+        />
+        <Stat
+          label={t('statsTab.streak')}
+          value={
+            streak.current > 0
+              ? t('statsTab.streakDays', { count: streak.current })
+              : t('statsTab.longestValue', { count: streak.longest })
+          }
+          detail={
+            streak.current > 0
+              ? `${t('statsTab.longestDetail', { count: streak.longest })}${playful && streak.current >= 7 ? ' (^o^)/' : ''}`
+              : t('statsTab.streakHint')
           }
         />
         {connected && statsQuery.data && (
           <>
             <Stat
-              label="AniList episodes"
-              value={aniList.episodes.toLocaleString()}
-              detail={`${formatHours(aniList.minutes)} · ${aniList.completed.toLocaleString()} completed`}
+              label={t('statsTab.aniListEpisodes')}
+              value={formatNumber(aniList.episodes)}
+              detail={`${formatHours(aniList.minutes)} · ${t('statsTab.completedCount', { count: aniList.completed })}`}
             />
             <Stat
-              label="Mean score"
-              value={aniList.meanScore !== null ? aniList.meanScore.toFixed(1) : '—'}
-              detail={`${aniList.scoredCount.toLocaleString()} scored ${aniList.scoredCount === 1 ? 'title' : 'titles'}`}
+              label={t('statsTab.meanScore')}
+              value={
+                aniList.meanScore !== null
+                  ? formatNumber(aniList.meanScore, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                  : '—'
+              }
+              detail={t('statsTab.scoredTitles', { count: aniList.scoredCount })}
             />
           </>
         )}
       </div>
 
-      <Card title={`${year} in review`} note={`${review.thisYear.length.toLocaleString()} episodes · ${formatHours(review.totals.knownMinutes + review.totals.estimatedMinutes)}`}>
+      <Card
+        title={t('statsTab.inReview', { year })}
+        note={t('statsTab.reviewNote', {
+          count: review.thisYear.length,
+          time: formatHours(review.totals.knownMinutes + review.totals.estimatedMinutes),
+        })}
+      >
         {review.thisYear.length === 0 && review.completed.length === 0 ? (
-          <p className="text-xs text-text-muted">Nothing watched in {year} yet.</p>
+          <p className="text-xs text-text-muted">{t('statsTab.nothingThisYear', { year })}</p>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <ColumnChart
               data={review.months}
-              label={`Episodes watched per month in ${year}`}
-              unit="episodes"
+              label={t('statsTab.perMonth', { year })}
+              unit="common.episodeCount"
               highlight={currentMonth}
             />
             <div className="flex flex-col gap-4">
               {review.topTitles.length > 0 && (
                 <div className="flex flex-col gap-2">
-                  <h4 className="text-xs font-medium text-text-muted">Most watched</h4>
+                  <h4 className="text-xs font-medium text-text-muted">{t('statsTab.mostWatched')}</h4>
                   <ol className="flex flex-col gap-1.5">
-                    {review.topTitles.map(([id, t]) => (
+                    {review.topTitles.map(([id, top]) => (
                       <li key={id}>
                         <Link
                           to={`/detail/${id}`}
                           className="flex items-center gap-2 rounded-md text-xs transition-colors hover:text-text-primary"
                         >
-                          <ShimmerImage src={t.cover} alt="" className="aspect-[2/3] w-6 flex-shrink-0 rounded-sm" />
-                          <span className="min-w-0 flex-1 truncate text-text-secondary">{t.title}</span>
-                          <span className="tabular-nums text-text-muted">{t.count} ep</span>
+                          <ShimmerImage src={top.cover} alt="" className="aspect-[2/3] w-6 flex-shrink-0 rounded-sm" />
+                          <span className="min-w-0 flex-1 truncate text-text-secondary">{top.title}</span>
+                          <span className="tabular-nums text-text-muted">{t('statsTab.episodesShort', { count: top.count })}</span>
                         </Link>
                       </li>
                     ))}
@@ -347,13 +398,13 @@ export const StatsTab: React.FC = () => {
               )}
               {review.completed.length > 0 && (
                 <p className="text-xs text-text-secondary">
-                  Completed on AniList this year:{' '}
-                  <span className="font-semibold tabular-nums text-text-primary">{review.completed.length}</span>
-                  {review.completed[0].score > 0 && (
-                    <>
-                      {' '}· highest rated <span className="text-text-primary">{review.completed[0].title}</span> (
-                      {review.completed[0].score})
-                    </>
+                  {tn(
+                    review.completed[0].score > 0 ? 'statsTab.completedThisYearTop' : 'statsTab.completedThisYear',
+                    {
+                      number: <span className="font-semibold tabular-nums text-text-primary">{review.completed.length}</span>,
+                      title: <span className="text-text-primary">{review.completed[0].title}</span>,
+                    },
+                    { score: review.completed[0].score }
                   )}
                 </p>
               )}
@@ -363,38 +414,38 @@ export const StatsTab: React.FC = () => {
       </Card>
 
       {!connected ? (
-        <Card title="Your AniList list">
+        <Card title={t('statsTab.yourList')}>
           <p className="text-xs text-text-muted">
-            Connect AniList to add your score distribution, top genres, studios and voice actors.
+            {t('statsTab.connectHint')}
           </p>
           <button
             type="button"
             onClick={() => openAuthDialog(true)}
             className="self-start cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 hover:text-accent-200"
           >
-            Connect AniList
+            {t('statsTab.connectAniList')}
           </button>
         </Card>
       ) : statsQuery.isLoading ? (
         <div className="flex items-center gap-2 py-6 text-xs text-text-muted">
-          <Spinner size="sm" /> Loading your AniList list…
+          <Spinner size="sm" /> {t('statsTab.loadingList')}
         </div>
       ) : statsQuery.isError ? (
-        <ErrorState title="Could not load your AniList list" error={statsQuery.error} onRetry={() => statsQuery.refetch()} />
+        <ErrorState title={t('statsTab.listError')} error={statsQuery.error} onRetry={() => statsQuery.refetch()} />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card title="Score distribution" note={aniList.scoredCount ? undefined : 'No scores yet'} className="lg:col-span-2">
-            <ColumnChart data={aniList.scoreBuckets} label="Number of titles per score range, out of 100" unit="titles" />
+          <Card title={t('statsTab.scoreDistribution')} note={aniList.scoredCount ? undefined : t('statsTab.noScores')} className="lg:col-span-2">
+            <ColumnChart data={aniList.scoreBuckets} label={t('statsTab.scoreChartLabel')} unit="statsTab.titleCount" />
           </Card>
-          <Card title="Top genres" note="Started or finished titles">
-            {aniList.genres.length ? <RankedBars data={aniList.genres} label="Top genres" unit="titles" /> : <p className="text-xs text-text-muted">No genres yet.</p>}
+          <Card title={t('statsTab.topGenres')} note={t('statsTab.startedOrFinished')}>
+            {aniList.genres.length ? <RankedBars data={aniList.genres} label={t('statsTab.topGenres')} unit="statsTab.titleCount" /> : <p className="text-xs text-text-muted">{t('statsTab.noGenres')}</p>}
           </Card>
-          <Card title="Top studios">
-            {aniList.studios.length ? <RankedBars data={aniList.studios} label="Top studios" unit="titles" /> : <p className="text-xs text-text-muted">No studios yet.</p>}
+          <Card title={t('statsTab.topStudios')}>
+            {aniList.studios.length ? <RankedBars data={aniList.studios} label={t('statsTab.topStudios')} unit="statsTab.titleCount" /> : <p className="text-xs text-text-muted">{t('statsTab.noStudios')}</p>}
           </Card>
           <Card
-            title="Top voice actors"
-            note={statsQuery.data?.voice_actor_titles ? `Main casts of your ${statsQuery.data.voice_actor_titles} best-rated completed titles` : undefined}
+            title={t('statsTab.topVoiceActors')}
+            note={statsQuery.data?.voice_actor_titles ? t('statsTab.voiceActorsNote', { count: statsQuery.data.voice_actor_titles }) : undefined}
             className="lg:col-span-2"
           >
             {statsQuery.data && statsQuery.data.voice_actors.length > 0 ? (
@@ -405,7 +456,7 @@ export const StatsTab: React.FC = () => {
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-xs font-medium text-text-primary">{va.name}</span>
                       <span className="text-xs tabular-nums text-text-muted">
-                        {va.count} {va.count === 1 ? 'title' : 'titles'}
+                        {t('statsTab.titleCount', { count: va.count })}
                       </span>
                     </span>
                   </li>
@@ -414,8 +465,8 @@ export const StatsTab: React.FC = () => {
             ) : (
               <p className="text-xs text-text-muted">
                 {statsQuery.data?.voice_actor_titles
-                  ? 'AniList did not share voice actors for these titles.'
-                  : 'Complete a few titles on AniList to see the voice actors you hear most.'}
+                  ? t('statsTab.noVoiceActors')
+                  : t('statsTab.voiceActorsHint')}
               </p>
             )}
           </Card>

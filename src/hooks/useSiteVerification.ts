@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { errorMessage } from '../components/ui/ErrorState';
 import { useUIStore } from '../stores/uiStore';
+import { t } from '../i18n';
 
 /** A site that refused the app's own browser window until the user passes its check. */
 export interface SiteVerificationStatus {
@@ -70,8 +71,8 @@ export function useSiteVerification({ enabled, attempt, provider, onVerified }: 
     listen<SiteVerificationEvent>('site-verification-cancelled', (event) => {
       showToast({
         type: 'info',
-        title: 'Verification not completed',
-        message: `${event.payload.label} still refuses requests from the app.`,
+        title: t('useSiteVerification.notCompleted'),
+        message: t('useSiteVerification.stillRefuses', { site: event.payload.label }),
       });
       refetchStatus();
     })
@@ -91,7 +92,7 @@ export function useSiteVerification({ enabled, attempt, provider, onVerified }: 
       } catch (err) {
         showToast({
           type: 'error',
-          title: 'Could not open the verification window',
+          title: t('useSiteVerification.openFailed'),
           message: errorMessage(err),
         });
       }

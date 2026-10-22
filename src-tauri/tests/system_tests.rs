@@ -1,4 +1,5 @@
-//! Tests of the offline AniList cache, the autostart entry, the hardware report's parsing and
+//! Tests of the offline AniList cache, the autostart entry, the background release checks' units
+//! and lock hand-off, the hardware report's parsing and
 //! tips, the tray's "Airing next" list, and the plugin health and directory helpers.
 
 use anix_lib::db;
@@ -7,7 +8,7 @@ use anix_lib::models::AiringEntry;
 use anix_lib::notifier::{Airing, Bell};
 use anix_lib::offline::{self, Kind};
 use anix_lib::plugins::health;
-use anix_lib::system::{autostart, hwaccel, tray, SystemSettings};
+use anix_lib::system::{autostart, background, hwaccel, tray, SystemSettings};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -141,6 +142,19 @@ fn saved_schedules_are_merged_for_the_requested_window() {
     let (none, at) = offline::saved_schedule(vec![("0-50".into(), json!([airing(9, 10)]), 1)], 100, 200);
     assert!(none.is_empty());
     assert_eq!(at, None);
+}
+
+#[test]
+fn saved_schedule_prefers_anilist_over_an_estimate() {
+    // A newer estimated schedule (negative ids) overlaps AniList's: each episode once, AniList's.
+    let estimate = AiringEntry { id: -300_001, airing_at: 255, ..airing(3, 255) };
+    let saved = vec![
+        ("200-300".to_string(), json!([estimate]), 5_000),
+        ("100-260".to_string(), json!([airing(3, 250)]), 4_000),
+    ];
+    let (entries, _) = offline::saved_schedule(saved, 150, 260);
+    assert_eq!(entries.len(), 1);
+    assert_eq!((entries[0].id, entries[0].airing_at), (3, 250));
 }
 
 // ------------------------------------------------------------------ autostart
@@ -444,4 +458,123 @@ fn the_test_title_is_a_complete_media_object() {
     for key in ["id", "idMal", "englishTitle", "romajiTitle", "synonyms", "startDate", "isAdult", "format"] {
         assert!(media.get(key).is_some(), "{} is set", key);
     }
+}
+
+// ------------------------------------------------------------------ background release checks
+
+const APPIMAGE: &str = "/run/media/me/Extra Volume/Anix.AppImage";
+
+#[test]
+fn background_switch_is_read_from_settings() {
+    assert!(!SystemSettings::from_json(&json!({})).background_alerts);
+    assert!(SystemSettings::from_json(&json!({ "background_alerts": true })).background_alerts);
+    assert_eq!(background::starter(true), background::Starter::SystemdTimer);
+    assert_eq!(background::starter(false), background::Starter::Autostart);
+}
+
+#[test]
+fn background_units_start_the_appimage_without_a_window() {
+    let service = background::service_unit(Path::new(APPIMAGE));
+    assert!(service.contains("ExecStart=\"/run/media/me/Extra Volume/Anix.AppImage\" --background\n"));
+    assert!(service.contains("Type=simple"));
+    // Stopping the unit must not take down an app window opened from one of its alerts.
+    assert!(service.contains("KillMode=process\n"));
+    assert!(service.contains("X-Anix-Background=true"));
+
+    let timer = background::timer_unit();
+    assert!(timer.contains("OnStartupSec=1min"));
+    assert!(timer.contains("OnUnitInactiveSec=15min"));
+    assert!(timer.contains("Unit=anix-release-check.service"));
+    assert!(timer.contains("WantedBy=timers.target"));
+
+    let entry = background::autostart_entry(Path::new(APPIMAGE));
+    assert!(entry.contains("Exec=\"/run/media/me/Extra Volume/Anix.AppImage\" --background\n"));
+    assert!(entry.contains("NoDisplay=true"));
+
+    assert_eq!(background::quote_systemd_arg("/usr/bin/anix"), "/usr/bin/anix");
+    assert_eq!(background::quote_systemd_arg("/a/100%/$HOME"), "/a/100%%/$$HOME");
+    assert_eq!(background::quote_systemd_arg("/a b/\"c\\"), "\"/a b/\\\"c\\\\\"");
+}
+
+#[test]
+fn background_switch_writes_and_removes_its_files() {
+    let dir = TempDir::new("background");
+    let exec = Path::new(APPIMAGE);
+    let (service, timer) = background::unit_paths(&dir.0);
+    let entry = background::autostart_path(&dir.0);
+    assert!(service.ends_with("systemd/user/anix-release-check.service"));
+    assert!(timer.ends_with("systemd/user/anix-release-check.timer"));
+    assert!(entry.ends_with("autostart/anix-release-check.desktop"));
+
+    // On with systemd: the two units, and they changed.
+    assert!(background::install_files(&dir.0, Some(exec), background::Starter::SystemdTimer).unwrap());
+    assert_eq!(std::fs::read_to_string(&service).unwrap(), background::service_unit(exec));
+    assert_eq!(std::fs::read_to_string(&timer).unwrap(), background::timer_unit());
+    assert!(!entry.exists());
+    assert!(background::is_installed(&dir.0));
+    // Writing the same again changes nothing.
+    assert!(!background::install_files(&dir.0, Some(exec), background::Starter::SystemdTimer).unwrap());
+
+    // Without systemd the autostart entry replaces the units.
+    background::install_files(&dir.0, Some(exec), background::Starter::Autostart).unwrap();
+    assert_eq!(std::fs::read_to_string(&entry).unwrap(), background::autostart_entry(exec));
+    assert!(!service.exists() && !timer.exists());
+
+    // Off: everything goes.
+    background::install_files(&dir.0, None, background::Starter::SystemdTimer).unwrap();
+    assert!(!entry.exists() && !service.exists() && !timer.exists());
+    assert!(!background::is_installed(&dir.0));
+
+    // A file of the same name that Anix did not write is left alone.
+    std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+    std::fs::write(&entry, "[Desktop Entry]\nExec=mine\n").unwrap();
+    assert!(background::install_files(&dir.0, Some(exec), background::Starter::Autostart).is_err());
+    background::install_files(&dir.0, None, background::Starter::Autostart).unwrap();
+    assert_eq!(std::fs::read_to_string(&entry).unwrap(), "[Desktop Entry]\nExec=mine\n");
+}
+
+#[test]
+fn locks_are_exclusive_until_dropped() {
+    let dir = TempDir::new("locks");
+    let path = dir.0.join(background::BACKGROUND_LOCK);
+    let first = background::try_lock(&path).unwrap();
+    assert!(first.is_some());
+    // A second background process (another open of the file) does not get it.
+    assert!(background::try_lock(&path).unwrap().is_none());
+    assert!(background::is_held(&path));
+    drop(first);
+    assert!(!background::is_held(&path));
+    assert!(background::try_lock(&path).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn exactly_one_process_owns_the_checking() {
+    let dir = TempDir::new("handoff");
+    let checker = dir.0.join(background::CHECKER_LOCK);
+
+    // Only the background process runs: it checks.
+    let mut handoff = background::Handoff::new(&dir.0);
+    assert!(handoff.may_check());
+    assert!(handoff.holds_checker());
+
+    // The app starts: it takes its own lock at once, but waits for the checker lock.
+    let claim_dir = dir.0.clone();
+    let app = tokio::spawn(async move { background::claim_in(&claim_dir, Duration::from_millis(20)).await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(!app.is_finished(), "the app must not check while the background process does");
+    assert!(background::is_held(&dir.0.join(background::APP_LOCK)));
+
+    // The background process's next step stands by and lets go; the app takes over.
+    assert!(!handoff.may_check());
+    assert!(!handoff.holds_checker());
+    let held = tokio::time::timeout(Duration::from_secs(2), app).await.unwrap().unwrap();
+    assert_eq!(held.len(), 2);
+    assert!(background::is_held(&checker));
+    // While the app runs, the background process keeps standing by.
+    assert!(!handoff.may_check());
+
+    // The app quits: the background process checks again.
+    drop(held);
+    assert!(handoff.may_check());
+    assert!(handoff.holds_checker());
 }

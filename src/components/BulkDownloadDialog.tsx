@@ -1,19 +1,30 @@
 import React, { useId, useMemo, useRef, useState } from 'react';
-import { Button, Modal, SegmentedControl, errorMessage } from './ui';
+import clsx from 'clsx';
+import { Button, Chip, Modal, SegmentedControl, Switch, errorMessage } from './ui';
 import { useUIStore } from '../stores/uiStore';
-import { useEpisodes } from '../hooks/useProviders';
+import { useEpisodes, useFillerEpisodes } from '../hooks/useProviders';
 import { useSettings } from '../hooks/useSettings';
+import { useWatchedEpisodes } from '../hooks/useLibrary';
 import { useStreamingProviders } from '../hooks/usePlugins';
 import { NoPluginsNotice } from './NoPluginsNotice';
-import { newQueuedDownload, useCheckStorage, useQueueDownloads } from '../hooks/useDownloads';
+import {
+  isDownloadActive,
+  newQueuedDownload,
+  useAllDownloads,
+  useCheckStorage,
+  useDownloadFolder,
+  useQueueDownloads,
+} from '../hooks/useDownloads';
+import { downloadLanguageLabel, nextUnwatched, pickEpisodes, storageState, type EpisodePick } from '../lib/downloadPicks';
 import type { EpisodesResult, Media } from '../types';
 import { CoverThumb } from './library/CoverThumb';
 import { INPUT_CLASS, LABEL_CLASS, formatBytes } from './library/format';
+import { t, tn } from '../i18n';
 
 type Category = 'sub' | 'dub';
 
-const QUALITY_OPTIONS = [
-  { value: 'best', label: 'Best' },
+const qualityOptions = () => [
+  { value: 'best', label: t('bulkDownloadDialog.best') },
   { value: '1080p', label: '1080p' },
   { value: '720p', label: '720p' },
   { value: '480p', label: '480p' },
@@ -21,6 +32,20 @@ const QUALITY_OPTIONS = [
 
 /** Upper bound for one batch when the anime's episode count is not known. */
 const MAX_BATCH_WITHOUT_COUNT = 100;
+/** Space the backend wants left over after a download (`HEADROOM_BYTES`). */
+const HEADROOM_BYTES = 1_048_576_000;
+
+const DialogSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-2">
+      <h3 id={id} className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+};
 
 function highestEpisode(episodes: EpisodesResult | undefined, category: Category): number {
   let highest = 0;
@@ -53,11 +78,17 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
   const { data: settings } = useSettings();
   const episodesQuery = useEpisodes(media.id, media.id_mal, media.title.romaji);
   const queueDownloads = useQueueDownloads();
+  const folder = useDownloadFolder();
   const { label: providerLabel, none: noPlugins, installed: installedPlugins } = useStreamingProviders();
+  const watched = useWatchedEpisodes(media.id).data ?? [];
+  const filler = useFillerEpisodes(media.id_mal).data ?? [];
+  const allDownloads = useAllDownloads().data;
 
   // null means "not chosen yet": the value then follows the settings / episode data as they load.
   const [categoryChoice, setCategoryChoice] = useState<Category | null>(null);
   const [qualityChoice, setQualityChoice] = useState<string | null>(null);
+  const [pick, setPick] = useState<EpisodePick>('range');
+  const [skipFiller, setSkipFiller] = useState(false);
   const [fromInput, setFromInput] = useState<string | null>(null);
   const [toInput, setToInput] = useState<string | null>(null);
   // Episodes the backend refused in the last attempt; the next attempt retries only these.
@@ -68,7 +99,7 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
   const submittingRef = useRef(false);
 
   const title =
-    media.title.english || media.title.user_preferred || media.title.romaji || 'Anime';
+    media.title.english || media.title.user_preferred || media.title.romaji || 'Anime'; // i18n-ignore: stored as the series title
   const cover = media.cover_image.large || media.cover_image.extra_large || null;
 
   const episodesData = episodesQuery.data;
@@ -78,7 +109,7 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
 
   const quality =
     qualityChoice ??
-    QUALITY_OPTIONS.find((option) => option.value === settings?.download_quality)?.value ??
+    qualityOptions().find((option) => option.value === settings?.download_quality)?.value ??
     'best';
 
   // What the providers list for this audio is what can be downloaded; AniList's count caps it
@@ -89,6 +120,16 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
     if (listed > 0) return catalog ? Math.min(listed, catalog) : listed;
     return catalog;
   }, [episodesData, category, media.episodes]);
+
+  // Episodes of this anime in this audio that are saved, queued or downloading are not queued again.
+  const ownRows = (allDownloads ?? []).filter(
+    (row) => row.anilist_id === media.id && row.category.toLowerCase() === category
+  );
+  const savedEpisodes = ownRows.filter((row) => row.status === 'COMPLETED').map((row) => row.episode_num);
+  const skippedEpisodes = ownRows
+    .filter((row) => row.status === 'COMPLETED' || isDownloadActive(row))
+    .map((row) => row.episode_num);
+  const savedCount = new Set(savedEpisodes.map(Math.round)).size;
 
   const clamp = (value: number) =>
     Math.max(1, totalEpisodes ? Math.min(totalEpisodes, value) : value);
@@ -110,15 +151,31 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
   const toValue = toInput ?? String(totalEpisodes ?? 1);
   const from = parse(fromValue);
   const to = parse(toValue);
-  const start = from !== null && to !== null ? Math.min(from, to) : null;
-  const end = from !== null && to !== null ? Math.max(from, to) : null;
-  const count = start !== null && end !== null ? end - start + 1 : 0;
+  const resumeFrom = nextUnwatched(watched, totalEpisodes);
+
+  const episodes = pickEpisodes({
+    pick,
+    total: totalEpisodes,
+    from,
+    to,
+    watched,
+    saved: skippedEpisodes,
+    filler,
+    skipFiller,
+  });
+  const count = episodes.length;
+  const inRange = pick === 'range' && from !== null && to !== null ? Math.abs(to - from) + 1 : count;
+  const leftOut = Math.max(0, inRange - count);
 
   const rangeError =
-    count === 0
-      ? 'Enter the first and last episode to download.'
+    pick === 'range' && (from === null || to === null)
+      ? t('bulkDownloadDialog.enterRange')
       : !totalEpisodes && count > MAX_BATCH_WITHOUT_COUNT
-      ? `The episode count for this anime is unknown, so one batch is limited to ${MAX_BATCH_WITHOUT_COUNT} episodes.`
+      ? t('bulkDownloadDialog.batchLimit', { count: MAX_BATCH_WITHOUT_COUNT })
+      : count === 0
+      ? pick === 'unwatched'
+        ? t('bulkDownloadDialog.allWatchedOrSaved')
+        : t('bulkDownloadDialog.allInRangeSaved')
       : null;
 
   // The saved preference only applies if it is a provider that actually lists this anime.
@@ -134,11 +191,20 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
   const storageQuery = useCheckStorage(quality === 'best' ? '1080p' : quality);
   const storage = storageQuery.data;
   const neededBytes = storage ? storage.needed_bytes * Math.max(1, count) : 0;
-  const lowSpace = !!storage && (!storage.ok || storage.free_bytes < neededBytes);
+  const space = storage ? storageState(neededBytes, storage.free_bytes, HEADROOM_BYTES) : 'ok';
+  const noSpace = space === 'full';
 
   const pending = queueDownloads.isPending;
   const retrying = failed.length > 0;
-  const canSubmit = !noPlugins && !pending && (retrying || rangeError === null);
+  const canSubmit = !noPlugins && !pending && !noSpace && (retrying || rangeError === null);
+
+  const preferredLanguage =
+    (category === 'dub' ? settings?.preferred_dub_languages : settings?.preferred_sub_languages)?.[0] ?? null;
+  const languageLine = downloadLanguageLabel({
+    category,
+    audio_lang: category === 'dub' ? preferredLanguage : 'ja',
+    sub_lang: category === 'sub' ? preferredLanguage : null,
+  });
 
   const handleClose = () => {
     if (!pending) onClose();
@@ -150,25 +216,29 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
     setSubmitError(null);
   };
 
+  const choosePick = (next: EpisodePick, range?: { from: number; to: number | null }) => {
+    startNewBatch();
+    setPick(next);
+    if (range) {
+      setFromInput(String(range.from));
+      setToInput(range.to === null ? null : String(range.to));
+    }
+  };
+
   const handleQueue = async () => {
     if (!canSubmit || submittingRef.current) return;
-    const episodes: number[] = [];
-    if (retrying) {
-      episodes.push(...failed.map((failure) => failure.episode));
-    } else if (start !== null && end !== null) {
-      for (let episode = start; episode <= end; episode++) episodes.push(episode);
-    }
-    if (episodes.length === 0) return;
+    const batch = retrying ? failed.map((failure) => failure.episode) : episodes;
+    if (batch.length === 0) return;
 
     submittingRef.current = true;
     setSubmitError(null);
 
     const seriesCover = media.cover_image.extra_large || media.cover_image.large || null;
-    const records = episodes.map((episode) =>
+    const records = batch.map((episode) =>
       newQueuedDownload({
         anilistId: media.id,
         episodeNum: episode,
-        episodeTitle: `Episode ${episode}`,
+        episodeTitle: `Episode ${episode}`, // i18n-ignore: stored with the download
         seriesTitle: title,
         seriesCover,
         provider,
@@ -184,8 +254,8 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
       if (result.failures.length === 0) {
         showToast({
           type: 'success',
-          title: `Queued ${total} ${total === 1 ? 'episode' : 'episodes'} of "${title}"`,
-          message: 'Track them in Library, on the Downloads tab.',
+          title: t('bulkDownloadDialog.queuedToast', { count: total, title }),
+          message: t('bulkDownloadDialog.trackThem'),
         });
         onClose();
         return;
@@ -196,37 +266,46 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
         result.failures.map(({ record, reason }) => ({ episode: record.episode_num, reason }))
       );
     } catch (err) {
-      setSubmitError(errorMessage(err, 'The downloads could not be queued.'));
+      setSubmitError(errorMessage(err, t('bulkDownloadDialog.couldNotQueue')));
     } finally {
       submittingRef.current = false;
     }
   };
 
-  const episodeCountText = totalEpisodes
-    ? `${totalEpisodes} ${totalEpisodes === 1 ? 'episode' : 'episodes'} available`
-    : episodesQuery.isLoading && !noPlugins
-    ? 'Checking available episodes…'
-    : 'Episode count unknown';
+  const episodeCountText = [
+    totalEpisodes
+      ? t('common.episodeCount', { count: totalEpisodes })
+      : episodesQuery.isLoading && !noPlugins
+      ? t('bulkDownloadDialog.checkingEpisodes')
+      : t('bulkDownloadDialog.countUnknown'),
+    savedCount > 0 ? t('bulkDownloadDialog.alreadySaved', { count: savedCount }) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const fraction = storage && storage.free_bytes > 0 ? Math.min(1, neededBytes / storage.free_bytes) : 0;
 
   return (
     <Modal
       isOpen
       onClose={handleClose}
-      title="Download episodes"
-      size="md"
+      title={t('bulkDownloadDialog.title')}
+      size="lg"
       footer={
         <>
           <Button variant="ghost" onClick={handleClose} disabled={pending}>
-            {queuedSoFar > 0 ? 'Close' : 'Cancel'}
+            {queuedSoFar > 0 ? t('common.close') : t('common.cancel')}
           </Button>
           <Button variant="primary" onClick={handleQueue} disabled={!canSubmit}>
             {pending
-              ? 'Queuing…'
+              ? t('bulkDownloadDialog.queuing')
+              : noSpace
+              ? t('bulkDownloadDialog.notEnoughSpace')
               : retrying
-              ? `Retry ${failed.length} failed`
+              ? t('bulkDownloadDialog.retryFailed', { count: failed.length })
               : count > 0
-              ? `Queue ${count} ${count === 1 ? 'episode' : 'episodes'}`
-              : 'Queue episodes'}
+              ? t('bulkDownloadDialog.queueCount', { count })
+              : t('bulkDownloadDialog.queueEpisodes')}
           </Button>
         </>
       }
@@ -235,136 +314,238 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
         {noPlugins && (
           <NoPluginsNotice
             installed={installedPlugins}
-            detail="Downloads are fetched through streaming plugins. Add or turn one on in Settings, then queue the episodes."
+            detail={t('bulkDownloadDialog.noPluginsDetail')}
             onOpenSettings={onClose}
           />
         )}
 
         <div className="flex items-center gap-3 min-w-0">
-          <CoverThumb src={cover} className="w-10 h-14 rounded-md flex-shrink-0" />
+          <CoverThumb src={cover} className="w-14 h-20 rounded-md flex-shrink-0" />
           <div className="flex flex-col min-w-0 gap-0.5">
-            <span className="text-[13px] font-medium text-text-primary truncate">{title}</span>
+            <span className="text-sm font-semibold text-text-primary truncate">{title}</span>
             <span className="text-xs text-text-muted">{episodeCountText}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label htmlFor={`${fieldId}-from`} className={LABEL_CLASS}>
-              From episode
-            </label>
-            <input
-              id={`${fieldId}-from`}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={totalEpisodes ?? undefined}
-              step={1}
-              value={fromValue}
-              onChange={(event) => {
-                startNewBatch();
-                setFromInput(capToTotal(event.target.value));
-              }}
-              onBlur={() => from !== null && setFromInput(String(from))}
-              disabled={pending}
-              className={`${INPUT_CLASS} tabular-nums`}
-            />
-          </div>
-          <div>
-            <label htmlFor={`${fieldId}-to`} className={LABEL_CLASS}>
-              To episode
-            </label>
-            <input
-              id={`${fieldId}-to`}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={totalEpisodes ?? undefined}
-              step={1}
-              value={toValue}
-              onChange={(event) => {
-                startNewBatch();
-                setToInput(capToTotal(event.target.value));
-              }}
-              onBlur={() => to !== null && setToInput(String(to))}
-              disabled={pending}
-              className={`${INPUT_CLASS} tabular-nums`}
-            />
-          </div>
-          {rangeError && !retrying && (
-            <p className="col-span-2 text-xs text-state-warning">{rangeError}</p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
-          <div>
-            <span className={LABEL_CLASS}>Audio</span>
-            <SegmentedControl<Category>
-              aria-label="Audio"
-              value={category}
-              onChange={(value) => {
-                startNewBatch();
-                setCategoryChoice(value);
-              }}
-              options={[
-                { value: 'sub', label: 'Sub' },
-                {
-                  value: 'dub',
-                  label: 'Dub',
-                  disabled: !dubAvailable,
-                  title: dubAvailable ? undefined : 'No provider lists a dub for this anime',
-                },
-              ]}
-            />
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>Quality</span>
-            <SegmentedControl
-              aria-label="Quality"
-              value={quality}
-              onChange={(value) => {
-                startNewBatch();
-                setQualityChoice(value);
-              }}
-              options={QUALITY_OPTIONS}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1 text-xs text-text-muted">
-          {!noPlugins && (
-            <p>
-              Provider:{' '}
-              <span className="text-text-secondary">
-                {provider === 'auto' ? 'automatic (the first one that works)' : providerLabel(provider)}
+            {!noPlugins && (
+              <span className="text-xs text-text-muted">
+                {tn(
+                  wantsProvider && !matchedProvider && episodesData
+                    ? 'bulkDownloadDialog.providerNotListed'
+                    : 'bulkDownloadDialog.provider',
+                  {
+                    provider: (
+                      <span className="text-text-secondary">
+                        {provider === 'auto' ? t('bulkDownloadDialog.automaticProvider') : providerLabel(provider)}
+                      </span>
+                    ),
+                  },
+                  { name: wantsProvider ? providerLabel(preferredProvider) : '' }
+                )}
               </span>
-              {wantsProvider && !matchedProvider && episodesData
-                ? ` — your preferred provider "${providerLabel(preferredProvider)}" does not list this anime.`
-                : ''}
-            </p>
-          )}
-          {storage && (
-            <p className={lowSpace ? 'text-state-error' : undefined}>
-              {formatBytes(storage.free_bytes) || '0 MB'} free in the download folder
-              {count > 0 ? ` · about ${formatBytes(neededBytes)} needed` : ''}
-              {lowSpace ? ' — there may not be enough space.' : ''}
-            </p>
-          )}
+            )}
+          </div>
         </div>
+
+        <DialogSection title={t('bulkDownloadDialog.audio')}>
+          <SegmentedControl<Category>
+            aria-label={t('bulkDownloadDialog.audio')}
+            value={category}
+            onChange={(value) => {
+              startNewBatch();
+              setCategoryChoice(value);
+            }}
+            options={[
+              { value: 'sub', label: t('common.sub') },
+              {
+                value: 'dub',
+                label: t('common.dub'),
+                disabled: !dubAvailable,
+                title: dubAvailable ? undefined : t('bulkDownloadDialog.noDub'),
+              },
+            ]}
+          />
+          <p className="text-xs text-text-muted">{t('bulkDownloadDialog.whenProviderHas', { language: languageLine })}</p>
+        </DialogSection>
+
+        <DialogSection title={t('bulkDownloadDialog.quality')}>
+          <SegmentedControl
+            aria-label={t('bulkDownloadDialog.quality')}
+            value={quality}
+            onChange={(value) => {
+              startNewBatch();
+              setQualityChoice(value);
+            }}
+            options={qualityOptions()}
+          />
+        </DialogSection>
+
+        <DialogSection title={t('common.episodes')}>
+          <div role="group" aria-label={t('bulkDownloadDialog.quickPicks')} className="flex flex-wrap gap-2">
+            <Chip
+              selected={pick === 'range' && from === 1 && to === (totalEpisodes ?? to)}
+              onClick={() => choosePick('range', { from: 1, to: totalEpisodes })}
+              disabled={pending}
+            >
+              {t('bulkDownloadDialog.all')}
+            </Chip>
+            <Chip selected={pick === 'unwatched'} onClick={() => choosePick('unwatched')} disabled={pending || !totalEpisodes}>
+              {t('bulkDownloadDialog.unwatched')}
+            </Chip>
+            {resumeFrom !== null && (
+              <Chip
+                selected={pick === 'range' && from === resumeFrom && to === (totalEpisodes ?? to)}
+                onClick={() => choosePick('range', { from: resumeFrom, to: totalEpisodes })}
+                disabled={pending}
+              >
+                {t('bulkDownloadDialog.fromEpisodeNumber', { number: resumeFrom })}
+              </Chip>
+            )}
+          </div>
+
+          {pick === 'range' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor={`${fieldId}-from`} className={LABEL_CLASS}>
+                  {t('bulkDownloadDialog.fromEpisode')}
+                </label>
+                <input
+                  id={`${fieldId}-from`}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={totalEpisodes ?? undefined}
+                  step={1}
+                  value={fromValue}
+                  onChange={(event) => {
+                    startNewBatch();
+                    setFromInput(capToTotal(event.target.value));
+                  }}
+                  onBlur={() => from !== null && setFromInput(String(from))}
+                  disabled={pending}
+                  className={`${INPUT_CLASS} tabular-nums`}
+                />
+              </div>
+              <div>
+                <label htmlFor={`${fieldId}-to`} className={LABEL_CLASS}>
+                  {t('bulkDownloadDialog.toEpisode')}
+                </label>
+                <input
+                  id={`${fieldId}-to`}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={totalEpisodes ?? undefined}
+                  step={1}
+                  value={toValue}
+                  onChange={(event) => {
+                    startNewBatch();
+                    setToInput(capToTotal(event.target.value));
+                  }}
+                  onBlur={() => to !== null && setToInput(String(to))}
+                  disabled={pending}
+                  className={`${INPUT_CLASS} tabular-nums`}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-4">
+            <span id={`${fieldId}-filler`} className="text-[13px] text-text-primary">
+              {t('bulkDownloadDialog.skipFiller')}
+              <span className="block text-xs text-text-muted">
+                {filler.length > 0
+                  ? t('bulkDownloadDialog.fillerKnown', { count: filler.length })
+                  : t('bulkDownloadDialog.noFiller')}
+              </span>
+            </span>
+            <Switch
+              aria-labelledby={`${fieldId}-filler`}
+              checked={skipFiller}
+              disabled={pending || filler.length === 0}
+              onChange={(checked) => {
+                startNewBatch();
+                setSkipFiller(checked);
+              }}
+            />
+          </div>
+
+          {rangeError && !retrying ? (
+            <p className="text-xs text-state-warning">{rangeError}</p>
+          ) : (
+            <p className="text-xs text-text-muted" aria-live="polite">
+              {t('bulkDownloadDialog.selected', { count })}
+              {leftOut > 0 ? ` · ${t('bulkDownloadDialog.leftOut', { count: leftOut })}` : ''}
+            </p>
+          )}
+        </DialogSection>
+
+        <DialogSection title={t('bulkDownloadDialog.storage')}>
+          {storage ? (
+            <>
+              <div
+                role="meter"
+                aria-label={t('bulkDownloadDialog.spaceNeeded')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(fraction * 100)}
+                aria-valuetext={t('bulkDownloadDialog.neededOfFree', {
+                  needed: formatBytes(neededBytes) || t('bulkDownloadDialog.zeroSize'),
+                  free: formatBytes(storage.free_bytes) || t('bulkDownloadDialog.zeroSize'),
+                })}
+                className="h-2 w-full overflow-hidden rounded-full bg-ink/10"
+              >
+                <div
+                  className={clsx(
+                    'h-full rounded-full motion-safe:transition-[width]',
+                    space === 'full' ? 'bg-state-error' : space === 'tight' ? 'bg-state-warning' : 'bg-accent-500'
+                  )}
+                  style={{ width: `${Math.max(2, fraction * 100)}%` }}
+                />
+              </div>
+              <p className={clsx('text-xs', space === 'full' ? 'text-state-error' : 'text-text-muted')}>
+                {count > 0 ? `${t('bulkDownloadDialog.aboutNeeded', { size: formatBytes(neededBytes) })} · ` : ''}
+                {t(
+                  space === 'full'
+                    ? 'bulkDownloadDialog.freeNotEnough'
+                    : space === 'tight'
+                    ? 'bulkDownloadDialog.freeTight'
+                    : 'bulkDownloadDialog.free',
+                  { size: formatBytes(storage.free_bytes) || t('bulkDownloadDialog.zeroSize') }
+                )}
+              </p>
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-xs text-text-muted select-text" title={storage.dir}>
+                  {storage.dir}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={pending || folder.change.isPending}
+                  onClick={() =>
+                    folder.change.mutate(undefined, {
+                      onError: (err) =>
+                        showToast({ type: 'error', title: t('bulkDownloadDialog.couldNotUseFolder'), message: errorMessage(err) }),
+                    })
+                  }
+                >
+                  {t('bulkDownloadDialog.changeFolder')}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-text-muted">{storageQuery.isError ? t('bulkDownloadDialog.couldNotReadSpace') : t('bulkDownloadDialog.checkingSpace')}</p>
+          )}
+        </DialogSection>
 
         {retrying && (
           <div role="alert" className="p-3 rounded-md bg-state-error/10">
             <p className="text-[13px] font-medium text-state-error">
               {queuedSoFar > 0
-                ? `Queued ${queuedSoFar}, but ${failed.length} could not be queued`
-                : failed.length === 1
-                ? '1 episode could not be queued'
-                : `${failed.length} episodes could not be queued`}
+                ? t('bulkDownloadDialog.queuedButFailed', { queued: queuedSoFar, count: failed.length })
+                : t('bulkDownloadDialog.couldNotQueueCount', { count: failed.length })}
             </p>
             <ul className="mt-1.5 flex flex-col gap-1 max-h-28 overflow-y-auto text-xs text-text-secondary select-text">
               {failed.map(({ episode, reason }) => (
                 <li key={episode} className="break-words">
-                  Episode {episode}: {reason}
+                  {t('bulkDownloadDialog.failureLine', { episode, reason })}
                 </li>
               ))}
             </ul>

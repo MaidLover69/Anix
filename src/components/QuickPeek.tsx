@@ -9,6 +9,7 @@ import { useContinueWatching } from '../hooks/useLibrary';
 import { useSettings, AUTO_PROVIDER } from '../hooks/useSettings';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
+import { t } from '../i18n';
 import type { AnimeDetails, Media } from '../types';
 
 /** Hover (or keyboard focus) this long before a card's quick look opens. */
@@ -100,14 +101,14 @@ function plainText(html: string | null | undefined): string {
     .trim();
 }
 
-function countdown(seconds: number): string {
-  if (seconds <= 0) return 'now';
+function airsIn(episode: number, seconds: number): string {
+  if (seconds <= 0) return t('quickPeek.airsNow', { episode });
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (days > 0) return `in ${days}d ${hours}h`;
-  if (hours > 0) return `in ${hours}h ${minutes}m`;
-  return `in ${Math.max(1, minutes)}m`;
+  if (days > 0) return t('quickPeek.airsInDays', { episode, days, hours });
+  if (hours > 0) return t('quickPeek.airsInHours', { episode, hours, minutes });
+  return t('quickPeek.airsInMinutes', { episode, minutes: Math.max(1, minutes) });
 }
 
 /** What the card's own data lacks that a quick look shows, so details must be fetched. */
@@ -175,7 +176,7 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({
 
   const meta = [
     mediaFormatLabel(format) || null,
-    episodes ? `${episodes} ${episodes === 1 ? 'episode' : 'episodes'}` : null,
+    episodes ? t('common.episodeCount', { count: episodes }) : null,
     seasonYear,
     score ? `${score}%` : null,
   ]
@@ -226,7 +227,7 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({
       ref={ref}
       id={id}
       role="group"
-      aria-label={`Quick look: ${title}`}
+      aria-label={t('quickPeek.quickLook', { title })}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       style={{
@@ -235,13 +236,13 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({
         top: position?.top ?? 0,
         visibility: position ? 'visible' : 'hidden',
       }}
-      className="ui-menu ui-pop-in fixed z-[60] flex flex-col gap-2 rounded-xl border border-border-strong bg-bg-elevated p-4 text-left shadow-pop select-none"
+      className="ui-menu ui-pop-in fixed z-[60] flex flex-col gap-2 rounded-xl border border-border-strong bg-bg-elevated p-4 text-start shadow-pop select-none"
     >
       <p className="text-sm font-semibold leading-5 text-text-primary line-clamp-2">{title}</p>
       {meta && <p className="text-xs tabular-nums text-text-muted">{meta}</p>}
       {next && next.airing_at > now - 3600 && (
         <p className="text-xs font-medium text-accent-300">
-          Episode {next.episode} airs {countdown(next.airing_at - now)}
+          {airsIn(next.episode, next.airing_at - now)}
         </p>
       )}
       {description ? (
@@ -275,7 +276,7 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({
             }
           >
             <Play aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
-            {target ? `Continue Ep ${playEpisode}` : 'Play Ep 1'}
+            {target ? t('quickPeek.continueEpisode', { episode: playEpisode }) : t('quickPeek.playFirstEpisode')}
           </Button>
         )}
         <Link
@@ -285,7 +286,7 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({
           data-variant="neutral"
         >
           <Info aria-hidden="true" className="h-3.5 w-3.5" />
-          Details
+          {t('common.details')}
         </Link>
       </div>
     </div>

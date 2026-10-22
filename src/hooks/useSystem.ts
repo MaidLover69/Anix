@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { DesktopStatus, HardwareReport, OfflineStatus } from '../types';
 
-const ONLINE: OfflineStatus = { offline: false, saved_at: null };
+const ONLINE: OfflineStatus = { offline: false, saved_at: null, fallback: null };
 
-/** Whether AniList data is currently served from the saved copy; follows `offline-status`. */
+/** Whether saved data, or another catalogue than AniList, is being shown; follows `offline-status`. */
 export function useOfflineStatus(): OfflineStatus {
   const [status, setStatus] = useState<OfflineStatus>(ONLINE);
 
@@ -56,4 +56,14 @@ export function useHardwareReport(enabled: boolean) {
     staleTime: Infinity,
     retry: false,
   });
+}
+
+/** Settings › System › Save report: asks where to save and returns the path, or null when cancelled. */
+export function useSaveDiagnosticsReport() {
+  return useMutation({ mutationFn: () => invoke<string | null>('save_diagnostics_report') });
+}
+
+/** Opens the folder with the log file in the file manager. */
+export function useOpenLogFolder() {
+  return useMutation({ mutationFn: () => invoke<void>('open_log_folder') });
 }

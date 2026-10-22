@@ -5,6 +5,7 @@ import type { StreamItem, SubtitleItem } from '../types';
 import type { MediaTrackOption } from './usePlayerEngine';
 import { useLanguagePrefs } from './useLanguagePrefs';
 import { normalizeLanguage } from '../lib/languages';
+import { t } from '../i18n';
 
 export const SUBTITLES_OFF = 'off';
 
@@ -46,9 +47,9 @@ interface SubtitleTracksOptions {
   localFiles?: LocalSubtitle[];
 }
 
-/** The first track in the most wanted subtitle language, else the provider's default. */
-function defaultSelection(subtitles: SubtitleItem[], wanted: string[]): string {
-  if (subtitles.length === 0) return SUBTITLES_OFF;
+/** Index of the first file in the most wanted subtitle language, else the provider's default; -1 for none. */
+export function defaultSubtitleIndex(subtitles: SubtitleItem[], wanted: string[]): number {
+  if (subtitles.length === 0) return -1;
   const codes = subtitles.map((sub) => normalizeLanguage(sub.language));
   let index = -1;
   for (const code of wanted) {
@@ -56,7 +57,12 @@ function defaultSelection(subtitles: SubtitleItem[], wanted: string[]): string {
     if (index !== -1) break;
   }
   if (index === -1) index = subtitles.findIndex((sub) => sub.is_default);
-  return `ext:${index === -1 ? 0 : index}`;
+  return index === -1 ? 0 : index;
+}
+
+function defaultSelection(subtitles: SubtitleItem[], wanted: string[]): string {
+  const index = defaultSubtitleIndex(subtitles, wanted);
+  return index === -1 ? SUBTITLES_OFF : `ext:${index}`;
 }
 
 /**
@@ -88,7 +94,7 @@ export function useSubtitleTracks({
     () => [
       ...subtitles.map((sub, index) => ({
         id: `ext:${index}`,
-        label: sub.language || `Track ${index + 1}`,
+        label: sub.language || t('useSubtitleTracks.trackNumber', { number: index + 1 }),
         format: sub.format || 'vtt',
         isDefault: !!sub.is_default,
       })),

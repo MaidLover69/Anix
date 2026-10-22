@@ -15,6 +15,7 @@ import { ComickTab } from '../components/library/ComickTab';
 import { useAccountStatus } from '../hooks/useAccounts';
 import { LocalFilesTab } from '../components/library/LocalFilesTab';
 import { StatsTab } from '../components/library/StatsTab';
+import { t } from '../i18n';
 
 const TAB_VALUES = ['watchlist', 'history', 'playlists', 'downloads', 'anilist', 'comick', 'local', 'stats'] as const;
 type LibraryTab = (typeof TAB_VALUES)[number];
@@ -41,32 +42,46 @@ export const Library: React.FC = () => {
   const showComick = Boolean(accounts?.comick_available || accounts?.comick.connected);
 
   const tabs: TabItem<LibraryTab>[] = [
-    { value: 'watchlist', label: 'Watchlist', count: watchlistQuery.data?.length },
-    { value: 'history', label: 'History', count: historyQuery.data?.length },
-    { value: 'playlists', label: 'Playlists', count: playlistsQuery.data?.length },
-    { value: 'downloads', label: 'Downloads', count: downloadsQuery.data?.length },
+    { value: 'watchlist', label: t('library.watchlist'), count: watchlistQuery.data?.length },
+    { value: 'history', label: t('library.history'), count: historyQuery.data?.length },
+    { value: 'playlists', label: t('library.playlists'), count: playlistsQuery.data?.length },
+    { value: 'downloads', label: t('library.downloads'), count: downloadsQuery.data?.length },
     { value: 'anilist', label: 'AniList' },
     ...(showComick ? [{ value: 'comick' as const, label: 'Comick' }] : []),
     {
       value: 'local',
-      label: 'Local files',
+      label: t('library.localFiles'),
       count: localScan.status === 'done' ? localScan.files.length : undefined,
     },
-    { value: 'stats', label: 'Stats' },
+    { value: 'stats', label: t('library.stats') },
   ];
 
   return (
     <div className="flex flex-col gap-6 pb-16 animate-fade-in">
-      <Tabs aria-label="Library sections" tabs={tabs} value={activeTab} onChange={setActiveTab} />
+      <h1 className="sr-only">{t('library.title')}</h1>
+      <Tabs
+        aria-label={t('library.sections')}
+        tabs={tabs}
+        value={activeTab}
+        onChange={setActiveTab}
+        panelId="library-panel"
+      />
 
-      {activeTab === 'watchlist' && <WatchlistTab query={watchlistQuery} />}
-      {activeTab === 'history' && <HistoryTab query={historyQuery} />}
-      {activeTab === 'playlists' && <PlaylistsTab />}
-      {activeTab === 'downloads' && <DownloadsTab query={downloadsQuery} />}
-      {activeTab === 'anilist' && <AniListTab />}
-      {activeTab === 'comick' && <ComickTab />}
-      {activeTab === 'local' && <LocalFilesTab scan={localScan} />}
-      {activeTab === 'stats' && <StatsTab />}
+      <div
+        id="library-panel"
+        role="tabpanel"
+        aria-labelledby={`library-panel-${activeTab}`}
+        className="flex flex-col gap-6"
+      >
+        {activeTab === 'watchlist' && <WatchlistTab query={watchlistQuery} />}
+        {activeTab === 'history' && <HistoryTab query={historyQuery} />}
+        {activeTab === 'playlists' && <PlaylistsTab />}
+        {activeTab === 'downloads' && <DownloadsTab query={downloadsQuery} />}
+        {activeTab === 'anilist' && <AniListTab />}
+        {activeTab === 'comick' && <ComickTab />}
+        {activeTab === 'local' && <LocalFilesTab scan={localScan} />}
+        {activeTab === 'stats' && <StatsTab />}
+      </div>
     </div>
   );
 };

@@ -1,4 +1,4 @@
-//! Saved AniList answers for when AniList cannot be reached.
+//! Saved catalogue answers for when no anime catalogue can be reached.
 //!
 //! Every successful read the app depends on (home lists, anime details, search results and
 //! airing schedules) is written to `anilist_cache`. When a later read of the same thing fails
@@ -204,6 +204,8 @@ pub struct OfflineStatus {
     pub offline: bool,
     /// When the saved data that was served last was saved (Unix seconds).
     pub saved_at: Option<i64>,
+    /// The catalogue that answered while AniList is unavailable (for example "MyAnimeList").
+    pub fallback: Option<&'static str>,
 }
 
 static STATUS: Lazy<Mutex<OfflineStatus>> = Lazy::new(|| Mutex::new(OfflineStatus::default()));
@@ -228,7 +230,12 @@ fn set_status(app: &tauri::AppHandle, next: OfflineStatus) {
 
 /// An AniList read succeeded.
 pub fn mark_online(app: &tauri::AppHandle) {
-    set_status(app, OfflineStatus::default());
+    mark_served(app, None);
+}
+
+/// A catalogue read succeeded; `fallback` names the catalogue when it was not AniList's turn.
+pub fn mark_served(app: &tauri::AppHandle, fallback: Option<&'static str>) {
+    set_status(app, OfflineStatus { fallback, ..Default::default() });
 }
 
 /// An AniList read failed for lack of a connection; `saved_at` is the age of what was served.
@@ -238,7 +245,7 @@ pub fn mark_offline(app: &tauri::AppHandle, saved_at: Option<i64>) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
-    set_status(app, OfflineStatus { offline: true, saved_at });
+    set_status(app, OfflineStatus { offline: true, saved_at, fallback: None });
 }
 
 /// The airing entries between `from_ts` and `to_ts` found in saved schedules (each saved under
@@ -249,8 +256,9 @@ pub fn saved_schedule(
     from_ts: i64,
     to_ts: i64,
 ) -> (Vec<crate::models::AiringEntry>, Option<i64>) {
-    let mut seen = std::collections::HashSet::new();
-    let mut entries = Vec::new();
+    // One entry per anime and episode; AniList's (positive id) over an estimate (negative).
+    let mut seen: std::collections::HashMap<(i64, i32), usize> = std::collections::HashMap::new();
+    let mut entries: Vec<crate::models::AiringEntry> = Vec::new();
     let mut saved_at: Option<i64> = None;
     for (_, value, at) in saved {
         let Ok(list) = serde_json::from_value::<Vec<crate::models::AiringEntry>>(value) else {
@@ -258,11 +266,18 @@ pub fn saved_schedule(
         };
         let mut used = false;
         for entry in list {
-            if entry.airing_at < from_ts || entry.airing_at > to_ts || !seen.insert(entry.id) {
+            if entry.airing_at < from_ts || entry.airing_at > to_ts {
                 continue;
             }
+            match seen.get(&(entry.media_id, entry.episode)) {
+                Some(&i) if entries[i].id <= 0 && entry.id > 0 => entries[i] = entry,
+                Some(_) => continue,
+                None => {
+                    seen.insert((entry.media_id, entry.episode), entries.len());
+                    entries.push(entry);
+                }
+            }
             used = true;
-            entries.push(entry);
         }
         if used {
             saved_at = Some(saved_at.map_or(at, |known| known.min(at)));

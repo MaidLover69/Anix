@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { LocalSubtitle } from './useSubtitleTracks';
+import { t } from '../i18n';
 
 const SUBTITLE_FILE = /\.(srt|ass|ssa|vtt)$/i;
 
@@ -42,7 +43,7 @@ export function useSubtitleDrop(onAdded: (file: LocalSubtitle, index: number) =>
         setFiles((prev) => [...prev, file]);
         callbacks.current.onAdded(file, index);
       } catch (err) {
-        if (!disposed) callbacks.current.onFailed(typeof err === 'string' ? err : 'That file could not be read');
+        if (!disposed) callbacks.current.onFailed(typeof err === 'string' ? err : t('useSubtitleDrop.readFailed'));
       }
     };
 
@@ -54,7 +55,7 @@ export function useSubtitleDrop(onAdded: (file: LocalSubtitle, index: number) =>
           setDragging(false);
           const subtitles = payload.paths.filter(isSubtitlePath);
           if (subtitles.length === 0) {
-            if (payload.paths.length > 0) callbacks.current.onFailed('Drop a .srt, .ass or .vtt file to use it as subtitles');
+            if (payload.paths.length > 0) callbacks.current.onFailed(t('useSubtitleDrop.wrongType'));
             return;
           }
           // One at a time keeps the order of the new tracks the order of the files.

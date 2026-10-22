@@ -8,7 +8,7 @@
  * - Manga and Comic also change structure (outlines, corners, hard shadows). Those rules hang
  *   on a few hooks the shared components carry: ui-btn, ui-chip, ui-switch, ui-seg, ui-tabs,
  *   ui-tab, ui-select, ui-menu, ui-modal, ui-backdrop, ui-toast, ui-card, ui-inset, ui-hero,
- *   ui-plate, ui-sidebar, ui-nav-active, ui-titlebar, ui-app, ui-theme-card.
+ *   ui-plate, ui-sidebar, ui-nav-active, ui-nav-indicator, ui-titlebar, ui-app, ui-theme-card, ui-stamp.
  *
  * This file must load after global.css (main.tsx imports them in that order).
  */
@@ -348,7 +348,7 @@
 }
 
 :root[data-theme="manga"] .ui-sidebar {
-  border-right-width: 2px;
+  border-inline-end-width: 2px;
 }
 
 :root[data-theme="manga"] .ui-tabs {
@@ -364,7 +364,7 @@
   font-weight: 700;
 }
 
-:root[data-theme="manga"] .ui-btn[data-variant="primary"]:hover {
+:root[data-theme="manga"] .ui-btn[data-variant="primary"]:enabled:hover {
   background-color: rgb(var(--bg-page));
   color: var(--text-primary);
 }
@@ -374,7 +374,7 @@
   color: var(--text-primary);
 }
 
-:root[data-theme="manga"] .ui-btn:is([data-variant="secondary"], [data-variant="neutral"], [data-variant="danger"]):hover,
+:root[data-theme="manga"] .ui-btn:is([data-variant="secondary"], [data-variant="neutral"], [data-variant="danger"]):enabled:hover,
 :root[data-theme="manga"] .ui-select:hover,
 :root[data-theme="manga"] .ui-chip:is(button):hover {
   background-image: var(--screentone);
@@ -400,7 +400,7 @@
   color: inherit;
 }
 
-:root[data-theme="manga"] .ui-nav-active > span[aria-hidden="true"] {
+:root[data-theme="manga"] .ui-nav-active > .ui-nav-indicator {
   display: none;
 }
 
@@ -440,6 +440,15 @@
   transform: translateX(19px);
 }
 
+/* Right to left: the knob starts at the right edge, so it moves the other way. */
+:root[dir="rtl"][data-theme="manga"] .ui-switch-knob {
+  transform: translateX(-3px);
+}
+
+:root[dir="rtl"][data-theme="manga"] .ui-switch[aria-checked="true"] .ui-switch-knob {
+  transform: translateX(-19px);
+}
+
 /* Loading placeholders and the episode number plate: hatching. */
 :root[data-theme="manga"] .shimmer-placeholder {
   background: repeating-linear-gradient(135deg, rgb(var(--ink) / 0.22) 0 1px, transparent 1px 7px);
@@ -449,6 +458,35 @@
 :root[data-theme="manga"] .ui-plate {
   background-image: repeating-linear-gradient(135deg, rgb(var(--ink) / 0.2) 0 1px, transparent 1px 6px);
   box-shadow: none;
+}
+
+/* The completed stamp on an anime page (CompletedStamp.tsx): one art variant per theme, set
+   down with a short thunk. Reduced motion cuts the animation through global.css. */
+@keyframes stamp-in {
+  from { transform: scale(1.15) rotate(var(--stamp-rot, 0deg)); opacity: 0; }
+  to   { transform: scale(1) rotate(var(--stamp-rot, 0deg)); opacity: 1; }
+}
+
+.ui-stamp {
+  transform: rotate(var(--stamp-rot, 0deg));
+  animation: stamp-in 300ms cubic-bezier(0.2, 0.8, 0.3, 1.2) both;
+}
+
+.ui-stamp [data-art] { display: none; }
+.ui-stamp [data-art="ring"] { display: inline-flex; }
+
+:root[data-theme="manga"] .ui-stamp { --stamp-rot: -6deg; }
+:root[data-theme="manga"] .ui-stamp [data-art="ring"] { display: none; }
+
+:root[data-theme="manga"] .ui-stamp [data-art="kan"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid currentColor;
+  color: var(--text-primary);
+  background-image: repeating-linear-gradient(135deg, rgb(var(--ink) / 0.2) 0 1px, transparent 1px 6px);
 }
 
 /* Dialogs sit on screened paper rather than on a dark veil. */
@@ -546,6 +584,8 @@
 :root[data-theme="comic"] .ui-titlebar {
   --bg-deepest:     206 32 32;
   --ink:            255 255 255;
+  /* The focus ring: blue on the red bar is about 1.2:1, white is visible. */
+  --accent-500:     255 255 255;
   --text-primary:   #ffffff;
   --text-muted:     #ffffff;
   --error:          17 17 17;
@@ -562,7 +602,7 @@
 /* Sidebar: the yellow gutter; the current page is a white panel. */
 :root[data-theme="comic"] .ui-sidebar {
   background-color: #ffd60a;
-  border-right-width: 2px;
+  border-inline-end-width: 2px;
 }
 
 :root[data-theme="comic"] .ui-nav-active {
@@ -572,7 +612,7 @@
   box-shadow: 2px 2px 0 #111111;
 }
 
-:root[data-theme="comic"] .ui-nav-active > span[aria-hidden="true"] {
+:root[data-theme="comic"] .ui-nav-active > .ui-nav-indicator {
   display: none;
 }
 
@@ -631,12 +671,12 @@
   transition: transform 80ms, box-shadow 80ms, background-color 150ms;
 }
 
-:root[data-theme="comic"] .ui-btn:not([data-variant="ghost"]):hover {
+:root[data-theme="comic"] .ui-btn:not([data-variant="ghost"]):enabled:hover {
   transform: translate(1px, 1px);
   box-shadow: 2px 2px 0 rgb(var(--border-rgb));
 }
 
-:root[data-theme="comic"] .ui-btn:not([data-variant="ghost"]):active {
+:root[data-theme="comic"] .ui-btn:not([data-variant="ghost"]):enabled:active {
   transform: translate(3px, 3px);
   box-shadow: 0 0 0 rgb(var(--border-rgb));
   opacity: 1;
@@ -646,13 +686,13 @@
   color: var(--on-tint);
 }
 
-:root[data-theme="comic"] .ui-btn[data-variant="secondary"]:hover,
+:root[data-theme="comic"] .ui-btn[data-variant="secondary"]:enabled:hover,
 :root[data-theme="comic"] .ui-chip.bg-accent-tint:is(button):hover {
   background-color: var(--accent-tint);
   filter: brightness(1.08);
 }
 
-:root[data-theme="comic"] .ui-btn:is([data-variant="neutral"], [data-variant="danger"]):not(:hover) {
+:root[data-theme="comic"] .ui-btn:is([data-variant="neutral"], [data-variant="danger"]):not(:enabled:hover) {
   background-color: rgb(var(--bg-card));
 }
 
@@ -701,6 +741,15 @@
   transform: translateX(19px);
 }
 
+/* Right to left: the knob starts at the right edge, so it moves the other way. */
+:root[dir="rtl"][data-theme="comic"] .ui-switch-knob {
+  transform: translateX(-3px);
+}
+
+:root[dir="rtl"][data-theme="comic"] .ui-switch[aria-checked="true"] .ui-switch-knob {
+  transform: translateX(-19px);
+}
+
 /* Dialogs sit on a halftone veil. */
 :root[data-theme="comic"] .ui-backdrop {
   background-color: rgb(17 17 17 / 0.55);
@@ -717,6 +766,30 @@
   background-size: 8px 8px;
   border: 2px solid rgb(var(--border-rgb));
   box-shadow: none;
+}
+
+/* The completed stamp: a yellow "THE END!" caption box. */
+:root[data-theme="comic"] .ui-stamp { --stamp-rot: -4deg; }
+:root[data-theme="comic"] .ui-stamp [data-art="ring"] { display: none; }
+
+:root[data-theme="comic"] .ui-stamp [data-art="end"] {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+  text-transform: uppercase;
+  color: var(--on-tint);
+  background-color: var(--accent-tint);
+  border: 2px solid rgb(var(--border-rgb));
+  box-shadow: 3px 3px 0 rgb(var(--border-rgb));
+}
+
+/* Letter spacing breaks the joins of Arabic script. */
+:root[dir="rtl"][data-theme="comic"] :is(.ui-titlebar > span, .ui-stamp [data-art="end"]) {
+  letter-spacing: 0;
 }
 
 /* ------------------------------------------------------------- OLED black */
@@ -742,7 +815,7 @@
 }
 
 :root[data-theme="oled"] .ui-sidebar {
-  border-right: 1px solid rgb(var(--border-rgb) / var(--border-alpha));
+  border-inline-end: 1px solid rgb(var(--border-rgb) / var(--border-alpha));
 }
 
 /* -------------------------------------------- Ambient colour, peek, sticky bar */
@@ -849,4 +922,78 @@
 :root[data-theme="comic"] :is(.ui-chart-bar, .ui-chart-bar-muted) {
   stroke: rgb(var(--border-rgb));
   stroke-width: 1.5;
+}
+
+/* ------------------------------------------------------- Look (Settings › Appearance)
+ * These sit on top of whichever theme is active (themes.ts `applyLook`), so they come last.
+ */
+
+/* Contrast: hairlines are drawn stronger (tailwind.config.js multiplies their alpha by
+   --contrast-border) and the quieter text levels move up one or two steps. */
+:root[data-contrast="medium"] {
+  --contrast-border: 1.6;
+  --text-muted: var(--text-secondary);
+}
+
+:root[data-contrast="high"] {
+  --contrast-border: 2.5;
+  --text-secondary: var(--text-primary);
+  --text-muted: var(--text-primary);
+}
+
+/* Interface size: everything sized in rem follows the root font size. */
+:root[data-ui-size="small"] {
+  font-size: 87.5%;
+}
+
+:root[data-ui-size="large"] {
+  font-size: 112.5%;
+}
+
+/* Background art: the chosen anime's art behind the screens, faint enough that text on the
+   page stays readable. "plain" only dims it; "blur" also softens it (one static layer, so it
+   is drawn once, not on every scroll). The sidebar, title bar and cards keep their surfaces. */
+:root[data-art] .ui-app {
+  position: relative;
+  isolation: isolate;
+}
+
+:root[data-art] .ui-app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--app-art) center / cover no-repeat;
+  opacity: 0.22;
+}
+
+:root[data-art="blur"] .ui-app::before {
+  inset: -48px;
+  filter: blur(28px) saturate(1.2);
+  opacity: 0.4;
+}
+
+/* Light themes: the art is lighter still, so dark text keeps its contrast. */
+:root:is([data-theme="light"], [data-theme="comic"])[data-art] .ui-app::before {
+  opacity: 0.16;
+}
+
+:root:is([data-theme="light"], [data-theme="comic"])[data-art="blur"] .ui-app::before {
+  opacity: 0.28;
+}
+
+/* Manga is black and white. */
+:root[data-theme="manga"][data-art] .ui-app::before {
+  filter: grayscale(1);
+  opacity: 0.14;
+}
+
+:root[data-theme="manga"][data-art="blur"] .ui-app::before {
+  filter: grayscale(1) blur(28px);
+}
+
+/* The embedded player draws under the page; nothing may cover it. */
+html.mpv-video .ui-app::before {
+  content: none;
 }

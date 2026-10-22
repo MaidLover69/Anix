@@ -534,3 +534,84 @@ fn named_seasons_and_subtitled_ovas() {
     };
     assert_eq!(rank_candidates(&req, vec![tv, ova])[0].id, 3);
 }
+
+// ---------------------------------------------------------------------------------------
+// Matcher fallback while AniList is down
+
+/// A local server: AniList refuses (403), MyAnimeList answers the search, the id-mapping sites
+/// fail. Returns its address and a log of the paths asked.
+fn catalogue_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use tiny_http::{Header, Response, Server, StatusCode};
+    let server = Server::http("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", server.server_addr().to_ip().unwrap().port());
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = log.clone();
+    std::thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let url = request.url().to_string();
+            seen.lock().unwrap().push(url.clone());
+            let fixtures = format!("{}/tests/fixtures/catalogue", env!("CARGO_MANIFEST_DIR"));
+            let (status, body) = if url == "/anilist" {
+                (403, std::fs::read_to_string(format!("{}/anilist_disabled.json", fixtures)).unwrap())
+            } else if url.starts_with("/mal/anime?") {
+                (200, std::fs::read_to_string(format!("{}/mal_search.json", fixtures)).unwrap())
+            } else {
+                (500, r#"{"error":"down"}"#.to_string())
+            };
+            let response = Response::from_string(body)
+                .with_status_code(StatusCode(status))
+                .with_header(Header::from_bytes("Content-Type", "application/json").unwrap());
+            let _ = request.respond(response);
+        }
+    });
+    (base, log)
+}
+
+fn test_catalogue(base: &str, pool: sqlx::SqlitePool) -> anix_lib::catalogue::Catalogue {
+    use anix_lib::catalogue::{Catalogue, Endpoints};
+    let at = |path: &str| format!("{}/{}", base, path);
+    let urls = Endpoints {
+        anilist: at("anilist"),
+        mal: at("mal"),
+        kitsu: at("kitsu"),
+        shikimori: at("shiki"),
+        comick: at("comick"),
+        jikan: at("jikan"),
+        imdb: at("imdb"),
+        arm: at("arm"),
+        anizip: at("anizip"),
+    };
+    Catalogue::with_endpoints(
+        reqwest::Client::new(),
+        Some(pool),
+        urls,
+        Some(anix_lib::clients::app_settings::CatalogueSource::Auto),
+    )
+    .with_timeout(std::time::Duration::from_secs(3))
+}
+
+#[tokio::test]
+async fn matcher_falls_back_and_honours_the_down_switch() {
+    use anix_lib::commands::local_library::search_with_fallback;
+    let (base, log) = catalogue_server();
+    let client = reqwest::Client::new();
+    let terms = vec!["Frieren".to_string()];
+
+    // AniList refuses: the same answer shape comes from MyAnimeList.
+    let catalogue = test_catalogue(&base, db::init_db_in_memory().await.unwrap());
+    let data = search_with_fallback(&catalogue, &client, &terms).await.unwrap();
+    let found = candidates_of_alias(&data, 0);
+    assert!(!found.is_empty(), "{}", data);
+    assert!(found.iter().any(|c| c.title.romaji.as_deref() == Some("Sousou no Frieren")), "{:?}", found);
+    let anilist_hits = || log.lock().unwrap().iter().filter(|u| *u == "/anilist").count();
+    assert_eq!(anilist_hits(), 1);
+    assert!(catalogue.breaker().is_open("AniList"));
+
+    // With the debug switch naming AniList, a fresh catalogue never asks it.
+    std::env::set_var("ANIX_CATALOGUE_DOWN", "AniList");
+    let catalogue = test_catalogue(&base, db::init_db_in_memory().await.unwrap());
+    let data = search_with_fallback(&catalogue, &client, &terms).await;
+    std::env::remove_var("ANIX_CATALOGUE_DOWN");
+    assert!(!candidates_of_alias(&data.unwrap(), 0).is_empty());
+    assert_eq!(anilist_hits(), 1, "AniList was asked although switched off");
+}

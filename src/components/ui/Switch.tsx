@@ -30,7 +30,9 @@ export const Switch: React.FC<SwitchProps> = ({ checked, onChange, disabled, cla
       aria-hidden="true"
       className={clsx(
         'ui-switch-knob inline-block h-5 w-5 rounded-full shadow-sm transition-transform duration-150',
-        checked ? 'translate-x-[18px] bg-on-accent' : 'translate-x-0.5 bg-[rgb(var(--switch-knob))]'
+        checked
+          ? 'translate-x-[18px] rtl:-translate-x-[18px] bg-on-accent'
+          : 'translate-x-0.5 rtl:-translate-x-0.5 bg-[rgb(var(--switch-knob))]'
       )}
     />
   </button>

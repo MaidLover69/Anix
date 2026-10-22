@@ -53,6 +53,12 @@ pub struct WatchlistEntry {
     pub format: Option<String>,
     pub average_score: Option<i32>,
     pub added_at: i64,
+    /// CURRENT, PLANNING, COMPLETED, PAUSED or DROPPED.
+    #[serde(default)]
+    pub status: String,
+    /// False while a status chosen here waits to be sent to the connected lists.
+    #[serde(default)]
+    pub synced: bool,
 }
 
 impl WatchlistEntry {
@@ -71,6 +77,8 @@ impl WatchlistEntry {
             format,
             average_score,
             added_at,
+            status: "PLANNING".to_string(),
+            synced: true,
         }
     }
 }

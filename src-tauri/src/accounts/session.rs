@@ -57,6 +57,11 @@ pub fn error_message(service: Service, connected_before: bool, error: &AppError)
     match error {
         AppError::AuthRequired if connected_before => signed_out_message(service),
         AppError::AuthRequired => not_connected_message(service),
+        // The account features have no fallback catalogue; say so instead of a raw HTTP error.
+        other if service == Service::AniList && crate::offline::is_offline_error(other) => format!(
+            "AniList is unavailable right now ({}). Your AniList list, sync and statistics will work again once it is back; browsing uses other catalogues meanwhile.",
+            other.reason()
+        ),
         other => other.to_string(),
     }
 }

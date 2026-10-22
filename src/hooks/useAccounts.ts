@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import { errorMessage } from '../components/ui/ErrorState';
 import { useUIStore } from '../stores/uiStore';
+import { t } from '../i18n';
 import type {
   AccountChangedEvent,
   AccountLoginEvent,
@@ -71,7 +72,7 @@ export function useStartAccountLogin() {
       setPending(service, false);
       showToast({
         type: 'error',
-        title: `Could not start the ${ACCOUNT_LABELS[service]} sign-in`,
+        title: t('useAccounts.startFailed', { service: ACCOUNT_LABELS[service] }),
         message: errorMessage(err),
       });
     }
@@ -98,12 +99,12 @@ export function useDisconnectAccount() {
     mutationFn: (service: AccountService) => invoke<AccountsStatus>('disconnect_account', { service }),
     onSuccess: (status, service) => {
       queryClient.setQueryData<AccountsStatus>(ACCOUNT_STATUS_KEY, status);
-      showToast({ type: 'info', title: `Disconnected from ${ACCOUNT_LABELS[service]}` });
+      showToast({ type: 'info', title: t('useAccounts.disconnected', { service: ACCOUNT_LABELS[service] }) });
     },
     onError: (err, service) =>
       showToast({
         type: 'error',
-        title: `Could not disconnect from ${ACCOUNT_LABELS[service]}`,
+        title: t('useAccounts.disconnectFailed', { service: ACCOUNT_LABELS[service] }),
         message: errorMessage(err),
       }),
   });
@@ -138,12 +139,14 @@ export function useAccountEvents() {
       if (outcome === 'connected') {
         showToast({
           type: 'success',
-          title: name ? `Connected to ${label} as ${name}` : `Connected to ${label}`,
+          title: name
+            ? t('useAccounts.connectedAs', { service: label, name })
+            : t('useAccounts.connected', { service: label }),
         });
       } else if (outcome === 'failed') {
         showToast({
           type: 'error',
-          title: `Could not connect to ${label}`,
+          title: t('useAccounts.connectFailed', { service: label }),
           message: message ?? undefined,
         });
       }
@@ -165,7 +168,7 @@ export function useAccountEvents() {
         else queryClient.removeQueries({ queryKey: ['comickLibrary'] });
       }
       if (!connected && message) {
-        showToast({ type: 'error', title: `Signed out of ${ACCOUNT_LABELS[service]}`, message });
+        showToast({ type: 'error', title: t('useAccounts.signedOut', { service: ACCOUNT_LABELS[service] }), message });
       }
     });
 

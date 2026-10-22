@@ -1,6 +1,7 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
+import { t } from '../../i18n';
 
 interface SpinnerProps {
   size?: 'sm' | 'md' | 'lg';
@@ -15,7 +16,7 @@ const SIZE_CLASSES = {
   lg: 'w-6 h-6',
 };
 
-export const Spinner: React.FC<SpinnerProps> = ({ size = 'md', label = 'Loading', className }) => (
+export const Spinner: React.FC<SpinnerProps> = ({ size = 'md', label = t('spinner.loading'), className }) => (
   <span role="status" className="inline-flex items-center">
     <Loader2 aria-hidden="true" className={clsx('animate-spin', SIZE_CLASSES[size], className)} />
     <span className="sr-only">{label}</span>

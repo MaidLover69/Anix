@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AUTO_PROVIDER } from './useSettings';
+import { t } from '../i18n';
 import type { PluginInfo, PluginRepo } from '../types';
 
 const PLUGINS_KEY = ['plugins'] as const;
@@ -73,10 +74,10 @@ export function useStreamingProviders(): StreamingProviders {
       usable,
       installed: plugins.length,
       none: listed && usable.length === 0,
-      label: (key) => (key === AUTO_PROVIDER ? 'Auto' : names.get(key) ?? key),
+      label: (key) => (key === AUTO_PROVIDER ? t('common.auto') : names.get(key) ?? key),
       accepts: (key) => !!key && key !== AUTO_PROVIDER && (!listed || usableIds.has(key)),
       options: [
-        { value: AUTO_PROVIDER, label: 'Auto (your languages first)' },
+        { value: AUTO_PROVIDER, label: t('usePlugins.autoOption') },
         ...usable.map((plugin) => ({ value: plugin.id, label: names.get(plugin.id) ?? plugin.id })),
       ],
     };

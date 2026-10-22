@@ -18,12 +18,12 @@ type IconButtonProps = CommonProps & { icon: true; 'aria-label': string };
 export type ButtonProps = LabelledButtonProps | IconButtonProps;
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: 'bg-accent-600 hover:bg-accent-700 text-on-accent',
-  secondary: 'bg-accent-tint hover:bg-accent-500/20 text-accent-300 border border-accent-500/30',
+  primary: 'bg-accent-600 enabled:hover:bg-accent-700 text-on-accent',
+  secondary: 'bg-accent-tint enabled:hover:bg-accent-500/20 text-accent-300 border border-accent-500/30',
   // A quiet filled button for secondary actions that still need a visible shape.
-  neutral: 'bg-ink/[0.08] hover:bg-ink/[0.14] text-text-primary',
-  ghost: 'text-text-secondary hover:text-text-primary hover:bg-ink/10',
-  danger: 'bg-state-error/15 hover:bg-state-error/25 text-state-error',
+  neutral: 'bg-ink/[0.08] enabled:hover:bg-ink/[0.14] text-text-primary',
+  ghost: 'text-text-secondary enabled:hover:text-text-primary enabled:hover:bg-ink/10',
+  danger: 'bg-state-error/15 enabled:hover:bg-state-error/25 text-state-error',
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
@@ -43,7 +43,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       type={type}
       data-variant={variant}
       className={clsx(
-        'ui-btn inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-md text-[13px] font-medium whitespace-nowrap select-none cursor-pointer transition-colors active:opacity-80 disabled:opacity-40 disabled:pointer-events-none',
+        'ui-btn inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-md text-[13px] font-medium whitespace-nowrap select-none cursor-pointer transition-colors enabled:active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed',
         VARIANT_CLASSES[variant],
         icon ? ICON_SIZE_CLASSES[size] : SIZE_CLASSES[size],
         className

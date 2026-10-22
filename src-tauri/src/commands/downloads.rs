@@ -116,6 +116,29 @@ pub async fn get_download_directory() -> Result<String, String> {
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// Asks for a new download folder, starting in the current one. Returns the folder, which the
+/// caller saves as `download_dir`, or `None` when the dialog was cancelled. A folder Anix
+/// cannot write to is refused with the reason.
+#[tauri::command]
+pub async fn pick_download_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app.dialog().file().set_title("Choose the download folder");
+        if let Ok(current) = downloads::get_download_dir() {
+            dialog = dialog.set_directory(current);
+        }
+        dialog.blocking_pick_folder().and_then(|p| p.into_path().ok())
+    })
+    .await
+    .map_err(|e| format!("The folder picker failed: {}", e))?;
+    let Some(dir) = picked else { return Ok(None) };
+    let checked = dir.clone();
+    tokio::task::spawn_blocking(move || downloads::check_writable_dir(&checked))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(Some(dir.to_string_lossy().into_owned()))
+}
+
 /// Downloads a stream the player has already resolved. `headers` and `stream_type` are the
 /// stream's own fields and may be omitted.
 #[tauri::command]
@@ -136,6 +159,7 @@ pub async fn start_episode_download(
         origin,
         headers: headers.unwrap_or_default(),
         subtitles,
+        language: None,
     };
 
     // Inserted as DOWNLOADING so the queue worker does not start it a second time.

@@ -4,6 +4,7 @@ import { Maximize2, Pause, Play, SkipForward } from 'lucide-react';
 import { IconButton } from './IconButton';
 import { PlayerTimeline } from './PlayerTimeline';
 import type { EpisodeStep } from './PlayerControls';
+import { t } from '../../i18n';
 
 interface MiniPlayerChromeProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -44,7 +45,7 @@ export const MiniPlayerChrome: React.FC<MiniPlayerChromeProps> = ({
       <span data-tauri-drag-region className="min-w-0 flex-1 truncate text-xs font-medium text-white">
         {title}
       </span>
-      <IconButton label="Back to the full window" onClick={onExit} onMouseDown={(e) => e.preventDefault()}>
+      <IconButton label={t('miniPlayerChrome.backToFullWindow')} onClick={onExit} onMouseDown={(e) => e.preventDefault()}>
         <Maximize2 aria-hidden="true" className="h-4 w-4" />
       </IconButton>
     </div>
@@ -55,7 +56,11 @@ export const MiniPlayerChrome: React.FC<MiniPlayerChromeProps> = ({
     >
       <PlayerTimeline videoRef={videoRef} duration={duration} onSeek={onSeek} />
       <div className="flex items-center gap-1">
-        <IconButton label={playing ? 'Pause' : 'Play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} onClick={onTogglePlay}>
+        <IconButton
+          label={playing ? t('common.pause') : t('common.play')}
+          title={playing ? t('playerControls.pauseWithKey') : t('playerControls.playWithKey')}
+          onClick={onTogglePlay}
+        >
           {playing ? (
             <Pause aria-hidden="true" className="h-4 w-4 fill-current" />
           ) : (
@@ -63,8 +68,8 @@ export const MiniPlayerChrome: React.FC<MiniPlayerChromeProps> = ({
           )}
         </IconButton>
         <IconButton
-          label="Next episode"
-          title={next?.label ?? 'No next episode'}
+          label={t('playerControls.nextEpisode')}
+          title={next?.label ?? t('playerControls.noNextEpisode')}
           disabled={!next}
           onClick={next?.onClick}
         >

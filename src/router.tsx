@@ -18,13 +18,16 @@ import { ToastContainer } from './components/Toast';
 import { AuthDialog } from './components/AuthDialog';
 import { BulkDownloadDialog } from './components/BulkDownloadDialog';
 import { UpdateDialog } from './components/UpdateDialog';
+import { EngineConfirmDialog } from './components/player/EngineConfirmDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { HotkeyCheatSheet } from './components/HotkeyCheatSheet';
 import { Button } from './components/ui/Button';
 import { EmptyState } from './components/ui/EmptyState';
 import { hasOpenModal } from './components/ui/Modal';
 import { usePluginEvents } from './hooks/usePlugins';
+import { usePlayful } from './hooks/useSettings';
 import { useUIStore } from './stores/uiStore';
+import { t } from './i18n';
 import { Home } from './screens/Home';
 import { Discover } from './screens/Discover';
 import { Detail } from './screens/Detail';
@@ -32,10 +35,12 @@ import { Watch } from './screens/Watch';
 import { Library } from './screens/Library';
 import { Schedule } from './screens/Schedule';
 import { Settings } from './screens/Settings';
+import { Notifications } from './screens/Notifications';
+import { Downloads } from './screens/Downloads';
 
-/** `anix://anime/<AniList id>` (or the older `anilili://…`) → the id, or null for anything else. */
+/** `anix://anime/<id>` (or the older `anilili://…`) → the id, or null for anything else. Negative ids are catalogue stand-ins. */
 function parseDeepLink(url: string): string | null {
-  const match = url.trim().match(/^(?:anix|anilili):\/\/anime\/(\d+)\/?(?:[?#].*)?$/i);
+  const match = url.trim().match(/^(?:anix|anilili):\/\/anime\/(-?[1-9]\d*)\/?(?:[?#].*)?$/i);
   return match ? match[1] : null;
 }
 
@@ -62,6 +67,7 @@ const AppLayout: React.FC = () => {
   usePluginEvents();
 
   const commandPaletteOpen = useUIStore((s) => s.commandPaletteOpen);
+  const playful = usePlayful();
   const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
   const hotkeyCheatSheetOpen = useUIStore((s) => s.hotkeyCheatSheetOpen);
   const setHotkeyCheatSheetOpen = useUIStore((s) => s.setHotkeyCheatSheetOpen);
@@ -178,6 +184,14 @@ const AppLayout: React.FC = () => {
     } else {
       main.scrollTop = navigationType === 'POP' ? scrollPositions.current.get(location.key) ?? 0 : 0;
     }
+    // The clicked link is often gone with the old screen: start keyboard and screen-reader users
+    // at the new screen's heading instead of the top of the window.
+    const active = document.activeElement;
+    if (navigationType === 'PUSH' && (!active || active === document.body || !active.isConnected)) {
+      const target = main.querySelector<HTMLElement>('h1') ?? main;
+      if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
   }, [location.key, navigationType]);
 
   return (
@@ -196,10 +210,10 @@ const AppLayout: React.FC = () => {
           className={`h-full min-w-0 flex-1 ${
             isWatchScreen
               ? 'overflow-hidden'
-              : 'overflow-y-scroll py-6 pl-6 pr-[18px] xl:py-8 xl:pl-8 xl:pr-[26px]'
+              : 'overflow-y-scroll py-6 ps-6 pe-[18px] xl:py-8 xl:ps-8 xl:pe-[26px]'
           }`}
         >
-          <ErrorBoundary resetKey={location.pathname}>
+          <ErrorBoundary resetKey={location.pathname} playful={playful}>
             {isWatchScreen ? (
               <Outlet />
             ) : (
@@ -215,6 +229,7 @@ const AppLayout: React.FC = () => {
       <AuthDialog />
       <BulkDownloadDialog />
       <UpdateDialog />
+      <EngineConfirmDialog />
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
@@ -231,21 +246,21 @@ const AppLayout: React.FC = () => {
 const WatchRoute: React.FC = () => {
   const { id, episodeNum } = useParams<{ id: string; episodeNum: string }>();
   const navigate = useNavigate();
-  const idValid = !!id && /^\d+$/.test(id);
+  const idValid = !!id && /^-?\d+$/.test(id);
   const episodeValid = !!episodeNum && /^\d+(\.\d+)?$/.test(episodeNum);
 
   if (!idValid || !episodeValid) {
     return (
       <EmptyState
         className="h-full"
-        title="This episode link is not valid"
-        description={`/watch/${id ?? ''}/${episodeNum ?? ''} does not point to an episode.`}
+        title={t('router.invalidEpisode')}
+        description={t('router.invalidEpisodeDetail', { path: `/watch/${id ?? ''}/${episodeNum ?? ''}` })}
         action={
           <Button
             variant="secondary"
             onClick={() => navigate(idValid ? `/detail/${id}` : '/', { replace: true })}
           >
-            {idValid ? 'Open the anime page' : 'Go to Home'}
+            {idValid ? t('router.openAnime') : t('router.goHome')}
           </Button>
         }
       />
@@ -267,6 +282,8 @@ export const router = createHashRouter([
       { path: 'library', element: <Library /> },
       { path: 'schedule', element: <Schedule /> },
       { path: 'settings', element: <Settings /> },
+      { path: 'notifications', element: <Notifications /> },
+      { path: 'downloads', element: <Downloads /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

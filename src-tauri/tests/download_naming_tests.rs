@@ -5,8 +5,9 @@
 use anix_lib::downloads::{
     build_ffmpeg_args, configured_download_dir, detect_subtitle_format, output_base_name,
     parse_hls_demuxer_help, pick_stream, preferred_provider, remove_stale_part_files,
-    request_headers, sanitize_filename, truncate_to_bytes, validate_stream_url, work_tag,
-    DownloadSource, FfmpegInput, HlsDemuxerOptions, RequestHeaders, SubtitleFormat, SubtitleInput,
+    request_headers, sanitize_filename, remember_work_dir, remove_part_files_in_old_dirs, hls_source_stamp, truncate_to_bytes, validate_stream_url, work_tag,
+    best_hls_variant, check_writable_dir, download_languages, hls_attribute, parse_content_range,
+    plan_hls_download, DownloadSource, FfmpegInput, HlsDemuxerOptions, RequestHeaders, SubtitleFormat, SubtitleInput,
     BROWSER_USER_AGENT, MAX_FILE_NAME_BYTES, PART_SUFFIX,
 };
 use anix_lib::models::StreamItem;
@@ -118,6 +119,8 @@ fn work_tag_separates_downloads_and_is_stable() {
     assert_ne!(work_tag("dl-1"), work_tag("dl-2"));
     assert_eq!(work_tag("dl-1").len(), 16);
     assert!(work_tag("../../x").chars().all(|c| c.is_ascii_hexdigit()));
+    // Fixed across builds and toolchains: the first 8 bytes of SHA-256("dl-1").
+    assert_eq!(work_tag("dl-1"), "f45e1b72e3715dc0");
 }
 
 #[test]
@@ -154,12 +157,12 @@ fn stale_part_files_are_removed_and_nothing_else() {
         std::fs::write(file, b"x").unwrap();
     }
 
-    assert_eq!(remove_stale_part_files(&dir), 2);
+    assert_eq!(remove_stale_part_files(&dir, &[]), 2);
     assert!(!part_a.exists() && !part_b.exists());
     assert!(finished.exists() && other.exists());
     assert!(dir.join(format!("folder{}", PART_SUFFIX)).is_dir(), "directories are left alone");
-    assert_eq!(remove_stale_part_files(&dir), 0);
-    assert_eq!(remove_stale_part_files(&dir.join("missing")), 0);
+    assert_eq!(remove_stale_part_files(&dir, &[]), 0);
+    assert_eq!(remove_stale_part_files(&dir.join("missing"), &[]), 0);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -200,6 +203,7 @@ fn source(referer: Option<&str>, origin: Option<&str>, headers: &[(&str, &str)])
         origin: origin.map(str::to_string),
         headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>(),
         subtitles: Vec::new(),
+        language: None,
     }
 }
 
@@ -519,4 +523,199 @@ fn text_that_is_not_a_playlist_has_no_length() {
     use anix_lib::downloads::parse_hls_playlist;
     assert_eq!(parse_hls_playlist("<html>blocked</html>", "https://x.example/"), None);
     assert_eq!(parse_hls_playlist("#EXTM3U\n#EXT-X-ENDLIST\n", "https://x.example/"), None);
+}
+
+#[test]
+fn resumable_part_files_of_queued_downloads_survive_the_startup_cleanup() {
+    let dir = std::env::temp_dir().join(format!("anix-resume-part-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let queued = work_tag("queued-row");
+    let gone = work_tag("deleted-row");
+    let name = |tag: &str, role: &str| dir.join(format!("Show - EP 01 [SUB 720p].{}.{}{}", tag, role, PART_SUFFIX));
+    for role in ["download", "resume", "video", "sub0"] {
+        std::fs::write(name(&queued, role), b"x").unwrap();
+        std::fs::write(name(&gone, role), b"x").unwrap();
+    }
+    std::fs::create_dir_all(name(&queued, "hls")).unwrap();
+    std::fs::write(name(&queued, "hls").join("seg0.ts"), b"x").unwrap();
+    std::fs::create_dir_all(name(&gone, "hls")).unwrap();
+
+    // Everything of the deleted row goes, and of the queued row only what cannot resume.
+    assert_eq!(remove_stale_part_files(&dir, &[queued.clone()]), 7);
+    for role in ["download", "resume", "hls"] {
+        assert!(name(&queued, role).exists(), "{} is kept", role);
+        assert!(!name(&gone, role).exists(), "{} of another row is removed", role);
+    }
+    assert!(name(&queued, "hls").join("seg0.ts").exists());
+    assert!(!name(&queued, "video").exists() && !name(&queued, "sub0").exists());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn partials_in_a_folder_the_user_moved_away_from_are_cleaned_up() {
+    let root = std::env::temp_dir().join(format!("anix-old-dirs-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (old, current, list) = (root.join("old"), root.join("current"), root.join("dirs.txt"));
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&current).unwrap();
+    let part = |dir: &Path| dir.join(format!("Show - EP 01 [SUB 720p].{}.download{}", work_tag("q"), PART_SUFFIX));
+    std::fs::write(part(&old), b"x").unwrap();
+    std::fs::write(part(&current), b"x").unwrap();
+    std::fs::write(old.join("Show - EP 01 [SUB 720p].mkv"), b"x").unwrap();
+
+    remember_work_dir(&list, &old);
+    remember_work_dir(&list, &old);
+    remember_work_dir(&list, &root.join("unplugged"));
+    remember_work_dir(&list, &current);
+    assert_eq!(std::fs::read_to_string(&list).unwrap().lines().count(), 3, "each folder once");
+
+    assert_eq!(remove_part_files_in_old_dirs(&list, &current), 1);
+    assert!(!part(&old).exists());
+    assert!(old.join("Show - EP 01 [SUB 720p].mkv").exists(), "finished downloads stay");
+    assert!(part(&current).exists(), "the current folder is left to the usual cleanup");
+    let kept = std::fs::read_to_string(&list).unwrap();
+    assert!(!kept.contains("/old"), "{}", kept);
+    assert!(kept.contains("unplugged"), "a folder that is not there now is tried again later: {}", kept);
+    assert_eq!(remove_part_files_in_old_dirs(&root.join("no-list"), &current), 0);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn resume_stamp_tells_variants_and_mirrors_apart_but_ignores_tokens() {
+    let playlist = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k.key?t=1\"\n#EXTINF:4,\na.ts?t=1\n#EXT-X-ENDLIST\n";
+    let plan = |base: &str, text: &str| plan_hls_download(text, base).unwrap();
+    let p720 = plan("https://cdn.example/720/i.m3u8", playlist);
+    let p1080 = plan("https://cdn.example/1080/i.m3u8", playlist);
+    let mirror = plan("https://mirror.example/720/i.m3u8", playlist);
+    let new_token = plan("https://cdn.example/720/i.m3u8", &playlist.replace("t=1", "t=2"));
+    assert_eq!(p720.playlist, p1080.playlist, "the local playlists alone look the same");
+    assert_ne!(hls_source_stamp(&p720), hls_source_stamp(&p1080));
+    assert_ne!(hls_source_stamp(&p720), hls_source_stamp(&mirror));
+    assert_eq!(hls_source_stamp(&p720), hls_source_stamp(&new_token));
+    assert_eq!(hls_source_stamp(&p720), "https://cdn.example/720/k.key\nhttps://cdn.example/720/a.ts");
+}
+
+#[test]
+fn content_range_is_read_as_start_and_total() {
+    assert_eq!(parse_content_range("bytes 1000-4999/5000"), Some((1000, 5000)));
+    assert_eq!(parse_content_range(" bytes 0-0/1 "), Some((0, 1)));
+    assert_eq!(parse_content_range("bytes 1000-4999/*"), None, "an unknown total cannot be checked");
+    assert_eq!(parse_content_range("bytes */5000"), None);
+    assert_eq!(parse_content_range("items 1-2/3"), None);
+}
+
+#[test]
+fn a_folder_that_cannot_be_written_is_refused_with_a_reason() {
+    let dir = std::env::temp_dir().join(format!("anix-writable-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(check_writable_dir(&dir.join("new/sub")).is_ok(), "a missing folder is created");
+    assert!(dir.join("new/sub").is_dir());
+    assert!(std::fs::read_dir(dir.join("new/sub")).unwrap().next().is_none(), "the check leaves nothing behind");
+
+    let message = check_writable_dir(Path::new("relative/folder")).unwrap_err();
+    assert!(message.contains("full path"), "{}", message);
+
+    use std::os::unix::fs::PermissionsExt;
+    let locked = dir.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // root writes anywhere, so the refusal can only be seen as a normal user.
+    if unsafe { libc::geteuid() } != 0 {
+        let message = check_writable_dir(&locked).unwrap_err();
+        assert!(message.starts_with("Anix cannot save downloads in"), "{}", message);
+        assert!(message.contains("Choose another folder"), "{}", message);
+    }
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn download_rows_get_audio_and_subtitle_languages() {
+    use anix_lib::models::SubtitleItem;
+    let track = |language: &str, is_default: bool| SubtitleItem {
+        url: "https://cdn.example/s.vtt".to_string(),
+        language: language.to_string(),
+        format: "vtt".to_string(),
+        is_default: Some(is_default),
+    };
+    let tracks = [track("Spanish", false), track("English [CC]", true)];
+    assert_eq!(download_languages("sub", None, &tracks), (Some("ja".into()), Some("en".into())));
+    assert_eq!(download_languages("sub", Some("pt"), &tracks), (Some("ja".into()), Some("pt".into())), "the provider's word wins");
+    assert_eq!(download_languages("sub", None, &[]), (Some("ja".into()), None));
+    assert_eq!(download_languages("dub", Some("HI"), &tracks), (Some("hi".into()), None));
+    assert_eq!(download_languages("dub", None, &tracks), (None, None));
+}
+
+#[test]
+fn hls_attributes_are_read_with_quotes_and_commas() {
+    let attrs = r#"METHOD=AES-128,URI="https://k.example/key?a=1,b=2",IV=0x01"#;
+    assert_eq!(hls_attribute(attrs, "METHOD"), Some("AES-128"));
+    assert_eq!(hls_attribute(attrs, "URI"), Some("https://k.example/key?a=1,b=2"));
+    assert_eq!(hls_attribute(attrs, "IV"), Some("0x01"));
+    assert_eq!(hls_attribute(attrs, "KEYFORMAT"), None);
+}
+
+#[test]
+fn the_best_variant_of_a_master_playlist_is_chosen() {
+    let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nlow/index.m3u8\n\
+                  #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nhigh/index.m3u8\n\
+                  #EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720\nmid/index.m3u8\n";
+    assert_eq!(
+        best_hls_variant(master, "https://cdn.example/v/master.m3u8").as_deref(),
+        Some("https://cdn.example/v/high/index.m3u8")
+    );
+    let separate_audio = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"ja\",URI=\"audio.m3u8\"\n\
+                          #EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"a\"\nvideo.m3u8\n";
+    assert_eq!(best_hls_variant(separate_audio, "https://cdn.example/m.m3u8"), None, "ffmpeg combines those itself");
+}
+
+#[test]
+fn a_vod_playlist_is_planned_file_by_file_with_local_names() {
+    let text = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:7\n\
+                #EXT-X-KEY:METHOD=AES-128,URI=\"/keys/k1.bin\",IV=0x0A\n\
+                #EXTINF:4.0,\nseg-a.jpg\n#EXTINF:3.5,\nhttps://other.example/seg-b.jpg?t=1\n#EXT-X-ENDLIST\n";
+    let plan = plan_hls_download(text, "https://cdn.example/hls/index.m3u8").expect("plannable");
+    assert_eq!(
+        plan.files,
+        vec![
+            ("https://cdn.example/keys/k1.bin".to_string(), "key0.key".to_string()),
+            ("https://cdn.example/hls/seg-a.jpg".to_string(), "seg0.ts".to_string()),
+            ("https://other.example/seg-b.jpg?t=1".to_string(), "seg1.ts".to_string()),
+        ]
+    );
+    assert_eq!(plan.duration_s, 7.5);
+    assert!(plan.playlist.contains("#EXT-X-KEY:METHOD=AES-128,URI=\"key0.key\",IV=0x0A"), "{}", plan.playlist);
+    assert!(plan.playlist.contains("#EXT-X-MEDIA-SEQUENCE:7"), "tags the key needs are kept");
+    assert!(!plan.playlist.contains("http"), "ffmpeg only reads local files: {}", plan.playlist);
+
+    let fmp4 = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2,\na.m4s\n#EXT-X-ENDLIST\n";
+    let plan = plan_hls_download(fmp4, "https://cdn.example/x/i.m3u8").unwrap();
+    assert_eq!(plan.files[0].1, "init0.mp4");
+    assert_eq!(plan.files[1].1, "seg0.m4s");
+
+    // What the plan does not cover is left to ffmpeg.
+    let base = "https://cdn.example/i.m3u8";
+    assert!(plan_hls_download("#EXTM3U\n#EXTINF:2,\na.ts\n", base).is_none(), "live");
+    assert!(plan_hls_download("#EXTM3U\n#EXT-X-BYTERANGE:100@0\n#EXTINF:2,\na.ts\n#EXT-X-ENDLIST\n", base).is_none());
+    assert!(plan_hls_download("#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"k\"\n#EXTINF:2,\na.ts\n#EXT-X-ENDLIST\n", base).is_none());
+    assert!(plan_hls_download("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n#EXT-X-ENDLIST\n", base).is_none());
+    assert!(plan_hls_download("#EXTM3U\n#EXTINF:2,\nfile:///etc/passwd\n#EXT-X-ENDLIST\n", base).is_none(), "only http(s)");
+    assert!(plan_hls_download("#EXTM3U\n#EXT-X-ENDLIST\n", base).is_none(), "no segments");
+}
+
+#[test]
+fn a_local_hls_playlist_gets_the_relaxed_extension_options() {
+    let input = FfmpegInput::LocalHls {
+        playlist: PathBuf::from("/d/Show.tag.hls.anix-part/index.m3u8"),
+        hls: HlsDemuxerOptions { allowed_extensions: true, extension_picky: true },
+    };
+    let args = strings(&build_ffmpeg_args(&input, None, Path::new("/d/out.mkv")));
+    let i = position(&args, "-i");
+    assert_eq!(args[i + 1], "/d/Show.tag.hls.anix-part/index.m3u8");
+    assert!(position(&args, "-allowed_extensions") < i && position(&args, "-extension_picky") < i);
+    assert!(!args.iter().any(|a| a == "-headers" || a == "-user_agent"), "no network options for local files");
 }

@@ -5,7 +5,7 @@
 //! need ffmpeg print a note and pass when it is not installed.
 
 use anix_lib::db;
-use anix_lib::downloads::{self, DownloadOutcome, DownloadSource, PART_SUFFIX};
+use anix_lib::downloads::{self, work_file_path, work_tag, DownloadOutcome, DownloadSource, PART_SUFFIX};
 use anix_lib::models::{DownloadRecord, SubtitleItem};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -77,15 +77,36 @@ struct Response {
     announced_len: Option<usize>,
     /// Keep the connection open after the body instead of closing it.
     hang: bool,
+    /// More header lines, such as `Content-Range`.
+    extra: Vec<String>,
 }
 
 impl Response {
     fn ok(content_type: &'static str, body: impl Into<Vec<u8>>) -> Self {
-        Self { status: 200, content_type, body: body.into(), announced_len: None, hang: false }
+        Self { status: 200, content_type, body: body.into(), announced_len: None, hang: false, extra: Vec::new() }
     }
 
     fn status(status: u16) -> Self {
-        Self { status, content_type: "text/plain", body: b"denied".to_vec(), announced_len: None, hang: false }
+        Self { status, content_type: "text/plain", body: b"denied".to_vec(), announced_len: None, hang: false, extra: Vec::new() }
+    }
+}
+
+/// Answers like a host that supports byte ranges: `Range: bytes=N-` gets a 206 with the rest
+/// of `body`; without one, the whole body.
+fn ranged(req: &Request, body: &[u8]) -> Response {
+    let start = req
+        .header("range")
+        .and_then(|r| r.strip_prefix("bytes="))
+        .and_then(|r| r.strip_suffix('-'))
+        .and_then(|n| n.parse::<usize>().ok());
+    match start {
+        Some(from) if from < body.len() => Response {
+            status: 206,
+            extra: vec![format!("Content-Range: bytes {}-{}/{}", from, body.len() - 1, body.len())],
+            ..Response::ok("video/mp4", body[from..].to_vec())
+        },
+        Some(_) => Response::status(416),
+        None => Response::ok("video/mp4", body.to_vec()),
     }
 }
 
@@ -128,12 +149,14 @@ where
                 log.lock().unwrap().push(request);
 
                 let reason = if response.status == 200 { "OK" } else { "Error" };
+                let extra: String = response.extra.iter().map(|line| format!("{}\r\n", line)).collect();
                 let header = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n",
                     response.status,
                     reason,
                     response.content_type,
-                    response.announced_len.unwrap_or(response.body.len())
+                    response.announced_len.unwrap_or(response.body.len()),
+                    extra
                 );
                 let _ = socket.write_all(header.as_bytes()).await;
                 let _ = socket.write_all(&response.body).await;
@@ -168,6 +191,8 @@ fn record(id: &str) -> DownloadRecord {
         error_msg: None,
         created_at: 0,
         updated_at: 0,
+        audio_lang: None,
+        sub_lang: None,
     }
 }
 
@@ -271,6 +296,8 @@ async fn direct_file_is_saved_completely_and_marked_completed() {
     assert_eq!(stored.file_size, Some(body.len() as i64));
     assert_eq!(stored.file_path.as_deref(), Some(expected_path.to_str().unwrap()));
     assert_eq!(stored.error_msg, None);
+    assert_eq!(stored.audio_lang.as_deref(), Some("ja"), "a sub is Japanese audio");
+    assert_eq!(stored.sub_lang, None, "no subtitle track was offered");
 
     let seen = seen.lock().unwrap();
     assert_eq!(seen[0].path, "/video/ep3.mp4");
@@ -311,6 +338,7 @@ async fn truncated_body_is_a_failure_not_a_completed_download() {
         body: vec![7u8; 50_000],
         announced_len: Some(200_000),
         hang: false,
+        extra: Vec::new(),
     })
     .await;
 
@@ -388,6 +416,7 @@ async fn cancelling_stops_the_transfer_and_removes_the_partial_file() {
         body: vec![1u8; 1_500_000],
         announced_len: Some(50_000_000),
         hang: true,
+        extra: Vec::new(),
     })
     .await;
 
@@ -475,8 +504,8 @@ async fn hls_failure_marks_the_row_failed_and_never_saves_the_playlist() {
             panic!("{}: an HLS stream that cannot be fetched must fail, got {:?}", id, outcome);
         };
         if ffmpeg_available() {
-            assert!(message.starts_with("ffmpeg failed (exit code"), "{}: {}", id, message);
-            assert!(message.contains("403"), "{}: ffmpeg's own error is passed on: {}", id, message);
+            assert!(message.contains("segment of the stream could not be fetched"), "{}: {}", id, message);
+            assert!(message.contains("403"), "{}: the host's answer is passed on: {}", id, message);
         } else {
             assert!(message.contains("ffmpeg is not installed"), "{}: {}", id, message);
         }
@@ -549,6 +578,7 @@ async fn hls_stream_is_muxed_with_headers_and_survives_a_bad_subtitle() {
             subtitle("/subs/en.vtt", "English", true),
             subtitle("/subs/es.srt", "Spanish", false),
         ],
+        language: None,
     };
 
     let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;
@@ -573,6 +603,7 @@ async fn hls_stream_is_muxed_with_headers_and_survives_a_bad_subtitle() {
 
     let stored = row(&pool, "hls-ok").await;
     assert_eq!(stored.status, "COMPLETED");
+    assert_eq!((stored.audio_lang.as_deref(), stored.sub_lang.as_deref()), (Some("ja"), Some("en")));
     assert_eq!(stored.progress, 1.0);
     assert_eq!(stored.file_size, Some(size));
     assert_eq!(stored.file_path.as_deref(), Some(path.to_str().unwrap()));
@@ -653,4 +684,194 @@ async fn hls_stream_still_downloads_when_ffmpeg_rejects_the_subtitle() {
         "{:?}",
         tmp.file_names()
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Resume after the app was stopped
+// ---------------------------------------------------------------------------------------
+
+fn test_body(len: usize) -> Vec<u8> {
+    (0..len as u32).map(|i| (i % 253) as u8).collect()
+}
+
+/// What a stopped run leaves: the first `have` bytes and the total they belong to.
+fn leave_partial(dir: &Path, rec: &DownloadRecord, bytes: &[u8], total: usize) {
+    std::fs::write(work_file_path(dir, rec, "download"), bytes).unwrap();
+    std::fs::write(work_file_path(dir, rec, "resume"), total.to_string()).unwrap();
+}
+
+#[tokio::test]
+async fn an_interrupted_direct_download_resumes_with_a_range_request() {
+    let body = test_body(300_000);
+    let served = body.clone();
+    let (base, seen) = serve(move |req| ranged(req, &served)).await;
+    let tmp = TempDir::new("resume");
+    let rec = record("resume-me");
+    let pool = db_with(&rec).await;
+    leave_partial(tmp.path(), &rec, &body[..120_000], body.len());
+
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", base)), tmp.path()).await;
+
+    let path = tmp.path().join("Test Show - EP 03 [SUB 720p].mp4");
+    assert_eq!(outcome, DownloadOutcome::Completed { path: path.clone(), size: body.len() as i64 });
+    assert_eq!(std::fs::read(&path).unwrap(), body, "the saved bytes and the rest join up exactly");
+    assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mp4"]);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].header("range"), Some("bytes=120000-"), "only the missing part is asked for");
+}
+
+#[tokio::test]
+async fn a_host_that_ignores_the_range_gets_a_fresh_download() {
+    let body = test_body(200_000);
+    let served = body.clone();
+    let (base, seen) = serve(move |_| Response::ok("video/mp4", served.clone())).await;
+    let tmp = TempDir::new("resume-ignored");
+    let rec = record("ignored");
+    let pool = db_with(&rec).await;
+    leave_partial(tmp.path(), &rec, &[9u8; 50_000], body.len());
+
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", base)), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    let path = tmp.path().join("Test Show - EP 03 [SUB 720p].mp4");
+    assert_eq!(std::fs::read(&path).unwrap(), body, "the old bytes were replaced, not kept in front");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_partial_file_of_another_stream_is_not_resumed() {
+    // The saved bytes belong to a body of another size, so the 206 does not match them.
+    let body = test_body(250_000);
+    let served = body.clone();
+    let (base, seen) = serve(move |req| ranged(req, &served)).await;
+    let tmp = TempDir::new("resume-other");
+    let rec = record("other");
+    let pool = db_with(&rec).await;
+    leave_partial(tmp.path(), &rec, &[1u8; 100_000], 999_999);
+
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", base)), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    assert_eq!(std::fs::read(tmp.path().join("Test Show - EP 03 [SUB 720p].mp4")).unwrap(), body);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "asked once with a range, then for the whole file");
+    assert_eq!(seen[0].header("range"), Some("bytes=100000-"));
+    assert_eq!(seen[1].header("range"), None);
+}
+
+#[tokio::test]
+async fn a_download_stopped_with_the_app_continues_from_its_last_byte_after_a_relaunch() {
+    let body = test_body(3_000_000);
+    let served = body.clone();
+    let first = Arc::new(AtomicU32::new(0));
+    let (base, seen) = serve(move |req| {
+        if first.fetch_add(1, Ordering::SeqCst) == 0 {
+            // The first run gets half of the file, then the connection hangs.
+            return Response {
+                announced_len: Some(served.len()),
+                hang: true,
+                ..Response::ok("video/mp4", served[..1_500_000].to_vec())
+            };
+        }
+        ranged(req, &served)
+    })
+    .await;
+    let tmp = TempDir::new("relaunch");
+    let rec = record("relaunch");
+    let pool = db_with(&rec).await;
+    let partial = work_file_path(tmp.path(), &rec, "download");
+
+    let task = {
+        let (pool, rec, dir, src) = (pool.clone(), rec.clone(), tmp.path().to_path_buf(), source(format!("{}/v.mp4", base)));
+        tokio::spawn(async move { downloads::download_into(&pool, &rec, src, &dir).await })
+    };
+    let mut on_disk = 0;
+    for _ in 0..400 {
+        on_disk = std::fs::metadata(&partial).map(|m| m.len()).unwrap_or(0);
+        if on_disk >= 512 * 1024 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(on_disk >= 512 * 1024, "the first run never wrote its first half megabyte");
+    // Like killing the app: the work stops where it is and cleans nothing up.
+    task.abort();
+    let _ = task.await;
+    let on_disk = std::fs::metadata(&partial).unwrap().len();
+
+    // The relaunch: the row goes back to the queue and the startup cleanup keeps its bytes.
+    assert_eq!(db::reconcile_stale_downloads(&pool).await.unwrap(), 1);
+    downloads::remove_stale_part_files(tmp.path(), &[work_tag(&rec.id)]);
+    assert_eq!(std::fs::metadata(&partial).unwrap().len(), on_disk);
+
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", base)), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    assert_eq!(std::fs::read(tmp.path().join("Test Show - EP 03 [SUB 720p].mp4")).unwrap(), body);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].header("range").map(str::to_string), Some(format!("bytes={}-", on_disk)));
+    assert_eq!(row(&pool, "relaunch").await.status, "COMPLETED");
+}
+
+#[tokio::test]
+async fn an_hls_download_resumes_at_the_first_segment_it_does_not_have() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg is not installed");
+        return;
+    }
+    let media = TempDir::new("hls-media-resume");
+    let Some(files) = make_hls(media.path()) else {
+        eprintln!("skipped: this ffmpeg cannot generate the test stream");
+        return;
+    };
+    let playlist = String::from_utf8(files["index.m3u8"].clone()).unwrap();
+    let seg0 = files["seg0.jpg"].clone();
+    let (base, seen) = serve(move |req| match files.get(req.path.trim_start_matches("/hls/")) {
+        Some(body) => Response::ok("application/octet-stream", body.clone()),
+        None => Response::status(404),
+    })
+    .await;
+
+    let tmp = TempDir::new("hls-resume");
+    let rec = record("hls-resume");
+    let pool = db_with(&rec).await;
+    let url = format!("{}/hls/index.m3u8", base);
+
+    // What a stopped run leaves: its playlist and the first segment.
+    let plan = downloads::plan_hls_download(&playlist, &url).expect("the fixture is plannable");
+    assert!(plan.files.len() >= 2, "{:?}", plan.files);
+    let folder = work_file_path(tmp.path(), &rec, "hls");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("index.m3u8"), &plan.playlist).unwrap();
+    std::fs::write(folder.join("source.txt"), downloads::hls_source_stamp(&plan)).unwrap();
+    std::fs::write(folder.join(&plan.files[0].1), &seg0).unwrap();
+    std::fs::write(folder.join(format!("{}.tmp", plan.files[1].1)), b"cut off").unwrap();
+
+    let outcome = downloads::download_into(&pool, &rec, source(url), tmp.path()).await;
+
+    let DownloadOutcome::Completed { path, .. } = outcome else { panic!("{:?}", outcome) };
+    assert!(stream_kinds(&path).contains("Video:"));
+    assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mkv"], "the segment folder is gone");
+    let seen = seen.lock().unwrap();
+    assert!(!seen.iter().any(|r| r.path == "/hls/seg0.jpg"), "a segment already saved is not fetched again");
+    assert!(seen.iter().any(|r| r.path == "/hls/seg1.jpg"), "the cut-off segment is fetched again");
+}
+
+#[tokio::test]
+async fn a_failed_download_is_posted_to_the_notification_centre() {
+    let (base, _) = serve(|_| Response::status(403)).await;
+    let tmp = TempDir::new("notice");
+    let rec = record("notice");
+    let pool = db_with(&rec).await;
+
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", base)), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Failed(_)));
+    let notices = anix_lib::notices::list(&pool, Some(anix_lib::notices::DOWNLOAD)).await.unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Download failed: Test Show, episode 3");
+    assert!(notices[0].body.contains("403"), "{}", notices[0].body);
+    assert_eq!(notices[0].link.as_deref(), Some("/downloads"));
 }

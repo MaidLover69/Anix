@@ -1,7 +1,7 @@
 //! Shared HTTP clients. Every outgoing request in the backend goes through one of these so the
 //! DNS-over-HTTPS settings apply everywhere.
 
-use crate::clients::app_settings::{self, DohProvider};
+use crate::clients::app_settings::{self, DohMode, DohProvider};
 use crate::error::AppError;
 use moka::future::Cache;
 use moka::Expiry;
@@ -10,6 +10,7 @@ use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::{Client, ClientBuilder};
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -260,40 +261,119 @@ async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, std::io::Error> {
     Ok(addrs.map(|addr| addr.ip()).collect())
 }
 
-async fn resolve_host(host: &str) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
-    let settings = app_settings::current();
-    if settings.enable_doh && !is_local_name(host) && !doh_is_down() {
-        let no_such_host = || format!("no such host: {}", host);
-        if DOH_MISSING.contains_key(host) {
-            return Err(no_such_host().into());
-        }
-        let lookup = DOH_CACHE
-            .try_get_with(host.to_string(), doh_lookup(host, settings.doh_provider))
-            .await;
-        match lookup {
-            Ok(answer) => return Ok(answer.addrs.as_ref().clone()),
-            Err(failure) => match &*failure {
-                // The resolver answered: the name has no address. Asking the system resolver
-                // instead would only invite the made-up answers DoH is there to avoid.
-                DohFailure::NoRecords => {
-                    DOH_MISSING.insert(host.to_string(), ()).await;
-                    return Err(no_such_host().into());
-                }
-                DohFailure::Resolver(reason) => {
-                    mark_doh_down();
-                    tracing::warn!(
-                        "DNS-over-HTTPS lookup of {} failed ({}); falling back to the system resolver",
-                        host,
-                        reason
-                    );
-                }
-            },
-        }
-    }
-    Ok(system_lookup(host).await?)
+/// Hosts that looked blocked through the system resolver; in Automatic mode they use DoH for
+/// the rest of the session.
+static SWITCHED_TO_DOH: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+fn switched_to_doh(host: &str) -> bool {
+    SWITCHED_TO_DOH.lock().unwrap_or_else(|p| p.into_inner()).contains(host)
 }
 
-/// reqwest resolver that honours the `enable_doh` / `doh_provider` settings.
+fn switch_to_doh(host: &str) {
+    let mut hosts = SWITCHED_TO_DOH.lock().unwrap_or_else(|p| p.into_inner());
+    if hosts.len() < 4096 && hosts.insert(host.to_string()) {
+        tracing::info!("{} looks blocked by the system DNS; using DNS over HTTPS for it", host);
+    }
+}
+
+/// Whether a host is looked up through DoH before the system resolver.
+pub fn doh_first(mode: DohMode, switched: bool) -> bool {
+    match mode {
+        DohMode::On => true,
+        DohMode::Off => false,
+        DohMode::Auto => switched,
+    }
+}
+
+/// True for a system DNS answer that cannot be the public site: no address, or only addresses
+/// no public site has (a resolver that blocks a name often answers like this).
+pub fn looks_blocked_answer(addrs: &[IpAddr]) -> bool {
+    addrs.iter().all(|ip| match ip {
+        IpAddr::V4(v4) => v4.is_unspecified() || v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_unspecified() || v6.is_loopback(),
+    })
+}
+
+/// Whether a DoH lookup's result is final. In Automatic mode a name DoH has no address for
+/// goes back to the system resolver, which may know it (split-horizon or router names).
+pub fn use_doh_answer(mode: DohMode, found: bool) -> bool {
+    found || mode == DohMode::On
+}
+
+/// A connection to `host` failed for `reason`. In Automatic mode a site that cannot be
+/// connected to is looked up through DoH from now on, since a blocking resolver often hands
+/// out an address that resets or refuses the connection.
+pub fn note_unreachable_host(host: &str, reason: &str) {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || is_local_name(&host) || host.parse::<IpAddr>().is_ok() || reason.is_empty() {
+        return;
+    }
+    if app_settings::current().doh_mode == DohMode::Auto {
+        switch_to_doh(&host);
+    }
+}
+
+/// The DoH answer for `host`, or `None` when the resolver could not be used and the system
+/// resolver should answer instead.
+async fn doh_resolve(
+    host: &str,
+    provider: DohProvider,
+) -> Option<Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>>> {
+    let no_such_host = || format!("no such host: {}", host);
+    if DOH_MISSING.contains_key(host) {
+        return Some(Err(no_such_host().into()));
+    }
+    let lookup = DOH_CACHE
+        .try_get_with(host.to_string(), doh_lookup(host, provider))
+        .await;
+    match lookup {
+        Ok(answer) => Some(Ok(answer.addrs.as_ref().clone())),
+        Err(failure) => match &*failure {
+            // The resolver answered: the name has no address. Asking the system resolver
+            // instead would only invite the made-up answers DoH is there to avoid.
+            DohFailure::NoRecords => {
+                DOH_MISSING.insert(host.to_string(), ()).await;
+                Some(Err(no_such_host().into()))
+            }
+            DohFailure::Resolver(reason) => {
+                mark_doh_down();
+                tracing::warn!(
+                    "DNS-over-HTTPS lookup of {} failed ({}); falling back to the system resolver",
+                    host,
+                    reason
+                );
+                None
+            }
+        },
+    }
+}
+
+async fn resolve_host(host: &str) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+    let settings = app_settings::current();
+    let usable = !is_local_name(host) && !doh_is_down();
+    if usable && doh_first(settings.doh_mode, switched_to_doh(host)) {
+        match doh_resolve(host, settings.doh_provider).await {
+            Some(answer) if use_doh_answer(settings.doh_mode, answer.is_ok()) => return answer,
+            _ => return Ok(system_lookup(host).await?),
+        }
+    }
+    let system = system_lookup(host).await;
+    if usable && settings.doh_mode == DohMode::Auto {
+        let blocked = match &system {
+            Err(_) => true,
+            Ok(addrs) => looks_blocked_answer(addrs),
+        };
+        if blocked {
+            if let Some(Ok(addrs)) = doh_resolve(host, settings.doh_provider).await {
+                switch_to_doh(host);
+                return Ok(addrs);
+            }
+        }
+    }
+    Ok(system?)
+}
+
+/// reqwest resolver that honours the `doh_mode` / `doh_provider` settings.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DohResolver;
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 const STORAGE_KEY = 'anix-search-history';
 export const SEARCH_HISTORY_LIMIT = 10;
@@ -30,24 +30,33 @@ export function withSearch(list: string[], query: string): string[] {
   return [trimmed, ...list.filter((q) => q.toLowerCase() !== key)].slice(0, SEARCH_HISTORY_LIMIT);
 }
 
-/** The last searches on Discover, newest first, kept on this computer only. */
+// One list for every screen that shows it (Discover, the Ctrl+K palette), so a change in
+// one shows in the other at once.
+let current: string[] | null = null;
+const listeners = new Set<() => void>();
+
+function snapshot(): string[] {
+  if (current === null) current = read();
+  return current;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function update(change: (list: string[]) => string[]) {
+  current = change(snapshot());
+  write(current);
+  listeners.forEach((listener) => listener());
+}
+
+const record = (query: string) => update((list) => withSearch(list, query));
+const remove = (query: string) => update((list) => list.filter((q) => q !== query));
+const clear = () => update(() => []);
+
+/** The last searches, newest first, kept on this computer only. */
 export function useSearchHistory() {
-  const [history, setHistory] = useState<string[]>(read);
-
-  const update = useCallback((change: (list: string[]) => string[]) => {
-    setHistory((prev) => {
-      const next = change(prev);
-      write(next);
-      return next;
-    });
-  }, []);
-
-  const record = useCallback((query: string) => update((list) => withSearch(list, query)), [update]);
-  const remove = useCallback(
-    (query: string) => update((list) => list.filter((q) => q !== query)),
-    [update]
-  );
-  const clear = useCallback(() => update(() => []), [update]);
-
+  const history = useSyncExternalStore(subscribe, snapshot);
   return { history, record, remove, clear };
 }

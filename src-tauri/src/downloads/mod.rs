@@ -13,7 +13,6 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,6 +59,12 @@ pub struct StorageCheck {
     pub ok: bool,
     pub free_bytes: i64,
     pub needed_bytes: i64,
+    /// Size of the disk the download folder is on; 0 when it cannot be read.
+    #[serde(default)]
+    pub total_bytes: i64,
+    /// The download folder.
+    #[serde(default)]
+    pub dir: String,
 }
 
 impl StorageCheck {
@@ -68,6 +73,8 @@ impl StorageCheck {
             ok,
             free_bytes,
             needed_bytes,
+            total_bytes: 0,
+            dir: String::new(),
         }
     }
 }
@@ -126,6 +133,38 @@ pub fn get_download_dir() -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
+/// Refuses a folder downloads cannot be saved in: not absolute, not creatable, or not
+/// writable (checked by creating and removing a small file).
+pub fn check_writable_dir(dir: &Path) -> Result<(), String> {
+    let refuse = |why: String| Err(format!("Anix cannot save downloads in {}: {}. Choose another folder.", dir.display(), why));
+    if !dir.is_absolute() {
+        return refuse("it is not a full path".to_string());
+    }
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        return refuse(e.to_string());
+    }
+    let probe = dir.join(format!(".anix-write-check-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => refuse(e.to_string()),
+    }
+}
+
+/// Free and total bytes of the disk `dir` is on; `None` when it cannot be read.
+pub fn disk_space(dir: &Path) -> Option<(i64, i64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    let block = stat.f_frsize as i64;
+    Some(((stat.f_bavail as i64).saturating_mul(block), (stat.f_blocks as i64).saturating_mul(block)))
+}
+
 pub fn check_storage(quality: &str) -> Result<StorageCheck, AppError> {
     let dir = get_download_dir()?;
     let needed_bytes = match quality {
@@ -136,30 +175,14 @@ pub fn check_storage(quality: &str) -> Result<StorageCheck, AppError> {
         _ => P720_BYTES,
     };
 
-    #[cfg(target_family = "unix")]
-    let free_bytes = {
-        use std::os::unix::ffi::OsStrExt;
-        match std::ffi::CString::new(dir.as_os_str().as_bytes()) {
-            Ok(c_path) => unsafe {
-                let mut stat: libc::statvfs = std::mem::zeroed();
-                if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                    (stat.f_bavail as i64).saturating_mul(stat.f_frsize as i64)
-                } else {
-                    10_000_000_000i64
-                }
-            },
-            Err(_) => 10_000_000_000i64,
-        }
-    };
-
-    #[cfg(not(target_family = "unix"))]
-    let free_bytes = 10_000_000_000i64;
-
+    let (free_bytes, total_bytes) = disk_space(&dir).unwrap_or((10_000_000_000i64, 0));
     let ok = free_bytes >= (needed_bytes + HEADROOM_BYTES);
     Ok(StorageCheck {
         ok,
         free_bytes,
         needed_bytes,
+        total_bytes,
+        dir: dir.to_string_lossy().into_owned(),
     })
 }
 
@@ -225,35 +248,108 @@ pub fn output_base_name(series_title: &str, episode_num: f64, category: &str, qu
 }
 
 /// A short stable tag derived from the download id; it keeps the working files of two
-/// downloads of the same episode apart.
+/// downloads of the same episode apart. SHA-256, so every Anix build computes the same tag
+/// and an update does not orphan the resumable files of queued downloads.
 pub fn work_tag(download_id: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    download_id.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    use sha2::{Digest, Sha256};
+    Sha256::digest(download_id.as_bytes())[..8].iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 fn work_file_name(base: &str, tag: &str, role: &str) -> String {
     format!("{}.{}.{}{}", base, tag, role, PART_SUFFIX)
 }
 
-/// Deletes working files (`*.anix-part`, and `*.anilili-part` from before the rename) left in `dir` by a run that was interrupted.
-/// Returns how many were removed. Only call it while no download is running.
-pub fn remove_stale_part_files(dir: &Path) -> usize {
+/// Working files a download keeps across a restart of the app, so it can resume: the bytes of
+/// a direct file so far, what it was expected to total, and the folder of fetched HLS segments.
+pub const RESUME_ROLES: [&str; 3] = ["download", "resume", "hls"];
+
+/// Where a download keeps the working file `role` in `dir`.
+pub fn work_file_path(dir: &Path, record: &DownloadRecord, role: &str) -> PathBuf {
+    let base = output_base_name(&record.series_title, record.episode_num, &record.category, &record.quality);
+    dir.join(work_file_name(&base, &work_tag(&record.id), role))
+}
+
+/// Deletes working files (`*.anix-part`, and `*.anilili-part` from before the rename) left in
+/// `dir` by a run that was interrupted, except the resumable ones ([`RESUME_ROLES`]) of the
+/// downloads tagged `keep` (see [`work_tag`]). The HLS segment folder is the only directory
+/// removed. Returns how many entries were removed. Only call it while no download is running.
+pub fn remove_stale_part_files(dir: &Path, keep: &[String]) -> usize {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return 0,
     };
 
+    let kept = |name: &str| {
+        keep.iter().any(|tag| {
+            RESUME_ROLES
+                .iter()
+                .any(|role| name.ends_with(&format!(".{}.{}{}", tag, role, PART_SUFFIX)))
+        })
+    };
     let mut removed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let is_part = name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX);
-        let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-        if is_part && is_file && std::fs::remove_file(entry.path()).is_ok() {
+        if !is_part || kept(&name) {
+            continue;
+        }
+        let gone = match entry.file_type() {
+            Ok(t) if t.is_file() => std::fs::remove_file(entry.path()).is_ok(),
+            Ok(t) if t.is_dir() && name.ends_with(&format!(".hls{}", PART_SUFFIX)) => {
+                std::fs::remove_dir_all(entry.path()).is_ok()
+            }
+            _ => false,
+        };
+        if gone {
             removed += 1;
         }
     }
+    removed
+}
+
+/// The list, in the app data folder, of download folders that have held working files.
+const WORK_DIRS_FILE: &str = "download-work-dirs.txt";
+
+/// Adds `dir` to the folder list `list` unless it is there already.
+pub fn remember_work_dir(list: &Path, dir: &Path) {
+    let line = dir.to_string_lossy();
+    let known = std::fs::read_to_string(list).unwrap_or_default();
+    if known.lines().any(|l| l == line) {
+        return;
+    }
+    let written = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(list)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, format!("{}\n", line).as_bytes()));
+    if let Err(e) = written {
+        warn!("Could not note the download folder {}: {}", dir.display(), e);
+    }
+}
+
+/// Deletes the working files left in the folders of `list` other than `current` (queued
+/// downloads resume only in `current`, so nothing there is kept), then leaves `current` and
+/// any folder that is not there right now (an unmounted disk) in the list. Returns how many
+/// entries were removed. Only call it while no download is running.
+pub fn remove_part_files_in_old_dirs(list: &Path, current: &Path) -> usize {
+    let known = std::fs::read_to_string(list).unwrap_or_default();
+    let mut removed = 0;
+    let mut still: Vec<&str> = vec![];
+    for line in known.lines().filter(|l| !l.is_empty()) {
+        let dir = Path::new(line);
+        if dir == current {
+            continue;
+        }
+        if dir.is_dir() {
+            removed += remove_stale_part_files(dir, &[]);
+        } else {
+            still.push(line);
+        }
+    }
+    let current = current.to_string_lossy();
+    still.push(&current);
+    let _ = std::fs::write(list, still.join("\n") + "\n");
     removed
 }
 
@@ -271,6 +367,28 @@ pub struct DownloadSource {
     pub origin: Option<String>,
     pub headers: HashMap<String, String>,
     pub subtitles: Vec<SubtitleItem>,
+    /// ISO 639-1 code the provider gave the result: the subtitle language of a sub, the audio
+    /// language of a dub.
+    pub language: Option<String>,
+}
+
+/// The audio and subtitle language codes stored on a download row. A sub is Japanese audio
+/// with the subtitles the provider named, else the default (or first) subtitle track.
+pub fn download_languages(
+    category: &str,
+    language: Option<&str>,
+    subtitles: &[SubtitleItem],
+) -> (Option<String>, Option<String>) {
+    let language = language.map(str::trim).filter(|l| !l.is_empty()).map(str::to_ascii_lowercase);
+    if category.eq_ignore_ascii_case("dub") {
+        return (language, None);
+    }
+    let track = subtitles
+        .iter()
+        .find(|s| s.is_default == Some(true))
+        .or_else(|| subtitles.first())
+        .and_then(|s| crate::providers::languages::normalize_language(&s.language));
+    (Some("ja".to_string()), language.or(track))
 }
 
 impl DownloadSource {
@@ -282,6 +400,7 @@ impl DownloadSource {
             origin: stream.origin.clone(),
             headers: stream.headers.clone().unwrap_or_default(),
             subtitles,
+            language: None,
         }
     }
 }
@@ -517,6 +636,8 @@ pub enum FfmpegInput {
     },
     /// A file already on disk. Must be an absolute path.
     Local(PathBuf),
+    /// An HLS playlist on disk whose segments are files next to it. Must be an absolute path.
+    LocalHls { playlist: PathBuf, hls: HlsDemuxerOptions },
 }
 
 /// The complete ffmpeg argument list for copying `input` (and optionally one subtitle
@@ -565,6 +686,16 @@ pub fn build_ffmpeg_args(
         FfmpegInput::Local(path) => {
             text(&mut args, ["-i"]);
             args.push(path.as_os_str().to_os_string());
+        }
+        FfmpegInput::LocalHls { playlist, hls } => {
+            if hls.allowed_extensions {
+                text(&mut args, ["-allowed_extensions", "ALL"]);
+            }
+            if hls.extension_picky {
+                text(&mut args, ["-extension_picky", "0"]);
+            }
+            text(&mut args, ["-i"]);
+            args.push(playlist.as_os_str().to_os_string());
         }
     }
 
@@ -814,7 +945,10 @@ impl WorkFiles {
     async fn remove_all(&self) {
         let paths: Vec<PathBuf> = std::mem::take(&mut *lock(&self.0));
         for path in paths {
-            let _ = tokio::fs::remove_file(&path).await;
+            // The HLS segment folder is the one tracked directory.
+            if tokio::fs::remove_file(&path).await.is_err() {
+                let _ = tokio::fs::remove_dir_all(&path).await;
+            }
         }
     }
 }
@@ -1015,6 +1149,272 @@ async fn hls_duration(url: &str, headers: &RequestHeaders) -> Option<f64> {
     None
 }
 
+/// An HLS stream the downloader fetches file by file, so an interrupted download resumes at
+/// the first segment it does not have yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HlsPlan {
+    /// The media playlist with every URI replaced by the local name of its file. ffmpeg reads
+    /// it; it also tells whether files left by an earlier run belong to the same stream.
+    pub playlist: String,
+    /// Absolute URL and local name of every file, in playlist order: keys, init sections and
+    /// media segments.
+    pub files: Vec<(String, String)>,
+    pub duration_s: f64,
+}
+
+/// The value of `name` in an HLS attribute list (`METHOD=AES-128,URI="k.bin"`), unquoted.
+pub fn hls_attribute<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
+    let mut rest = attrs;
+    while !rest.is_empty() {
+        let (key, after) = rest.split_once('=')?;
+        let (value, next) = if let Some(quoted) = after.strip_prefix('"') {
+            let end = quoted.find('"')?;
+            (&quoted[..end], quoted[end + 1..].trim_start_matches(','))
+        } else {
+            match after.split_once(',') {
+                Some((value, next)) => (value, next),
+                None => (after, ""),
+            }
+        };
+        if key.trim() == name {
+            return Some(value.trim());
+        }
+        rest = next;
+    }
+    None
+}
+
+/// The variant of a master playlist ffmpeg would pick: the highest resolution, then the
+/// highest bandwidth. `None` when it has none, or when audio comes as a separate rendition,
+/// which only ffmpeg's own HLS reader combines.
+pub fn best_hls_variant(text: &str, base: &str) -> Option<String> {
+    let base = reqwest::Url::parse(base).ok()?;
+    let mut lines = text.lines().map(str::trim);
+    let mut best: Option<((u64, u64), String)> = None;
+    while let Some(line) = lines.next() {
+        if let Some(attrs) = line.strip_prefix("#EXT-X-MEDIA:") {
+            if hls_attribute(attrs, "TYPE") == Some("AUDIO") && hls_attribute(attrs, "URI").is_some() {
+                return None;
+            }
+        }
+        let Some(attrs) = line.strip_prefix("#EXT-X-STREAM-INF:") else { continue };
+        let uri = lines.by_ref().find(|l| !l.is_empty() && !l.starts_with('#'))?;
+        let pixels = hls_attribute(attrs, "RESOLUTION")
+            .and_then(|r| r.split_once('x'))
+            .and_then(|(w, h)| Some(w.parse::<u64>().ok()? * h.parse::<u64>().ok()?))
+            .unwrap_or(0);
+        let bandwidth = hls_attribute(attrs, "BANDWIDTH").and_then(|b| b.parse::<u64>().ok()).unwrap_or(0);
+        let url = base.join(uri).ok()?.to_string();
+        if best.as_ref().map_or(true, |(rank, _)| (pixels, bandwidth) > *rank) {
+            best = Some(((pixels, bandwidth), url));
+        }
+    }
+    best.map(|(_, url)| url)
+}
+
+/// Plans the download of a finished (VOD) media playlist. `None` for anything the plan does
+/// not cover — a live or master playlist, byte ranges, SAMPLE-AES or unknown tags with a URI —
+/// which ffmpeg then downloads on its own, without resume.
+pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
+    let text = text.trim_start_matches('\u{feff}');
+    if !text.trim_start().starts_with("#EXTM3U") || !text.lines().any(|l| l.trim() == "#EXT-X-ENDLIST") {
+        return None;
+    }
+    let base = reqwest::Url::parse(base).ok()?;
+    let absolute = |uri: &str| -> Option<String> {
+        let url = base.join(uri).ok()?;
+        matches!(url.scheme(), "http" | "https").then(|| url.to_string())
+    };
+
+    let mut playlist: Vec<String> = Vec::new();
+    let mut files: Vec<(String, String)> = Vec::new();
+    let (mut segments, mut keys, mut maps) = (0usize, 0usize, 0usize);
+    let mut duration_s = 0.0;
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if line.starts_with("#EXT-X-STREAM-INF") || line.starts_with("#EXT-X-BYTERANGE") {
+            return None;
+        }
+        let local = if let Some(attrs) = line.strip_prefix("#EXT-X-KEY:") {
+            match hls_attribute(attrs, "METHOD")? {
+                "NONE" => None,
+                "AES-128" => {
+                    keys += 1;
+                    Some((hls_attribute(attrs, "URI")?, format!("key{}.key", keys - 1)))
+                }
+                _ => return None,
+            }
+        } else if let Some(attrs) = line.strip_prefix("#EXT-X-MAP:") {
+            if hls_attribute(attrs, "BYTERANGE").is_some() {
+                return None;
+            }
+            maps += 1;
+            Some((hls_attribute(attrs, "URI")?, format!("init{}.mp4", maps - 1)))
+        } else if line.starts_with('#') {
+            if line.contains("URI=") {
+                return None;
+            }
+            if let Some(rest) = line.strip_prefix("#EXTINF:") {
+                duration_s += rest.split(',').next()?.trim().parse::<f64>().ok().filter(|d| d.is_finite() && *d >= 0.0)?;
+            }
+            playlist.push(line.to_string());
+            continue;
+        } else {
+            segments += 1;
+            let name = format!("seg{}.{}", segments - 1, if maps > 0 { "m4s" } else { "ts" });
+            files.push((absolute(line)?, name.clone()));
+            playlist.push(name);
+            continue;
+        };
+        match local {
+            Some((uri, name)) => {
+                files.push((absolute(uri)?, name.clone()));
+                playlist.push(line.replacen(&format!("URI=\"{}\"", uri), &format!("URI=\"{}\"", name), 1));
+            }
+            None => playlist.push(line.to_string()),
+        }
+    }
+    (segments > 0).then(|| HlsPlan { playlist: playlist.join("\n") + "\n", files, duration_s })
+}
+
+/// Where every file of `plan` comes from, without query strings (they often carry per-session
+/// tokens). Saved next to the segments: the local playlist alone cannot tell two variants or
+/// mirrors of a stream apart, as every URI in it is a local name.
+pub fn hls_source_stamp(plan: &HlsPlan) -> String {
+    plan.files
+        .iter()
+        .map(|(url, _)| url.split(['?', '#']).next().unwrap_or(url))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Reads the stream's playlist, following a master playlist to its best variant, and plans
+/// the download. `None` when it cannot be read or planned; ffmpeg then reads it itself.
+async fn fetch_hls_plan(url: &str, headers: &RequestHeaders) -> Option<HlsPlan> {
+    let mut current = url.to_string();
+    for _ in 0..3 {
+        let response = apply_headers(stream_client().get(&current), headers)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let final_url = response.url().to_string();
+        let text = response.text().await.ok()?;
+        if text.contains("#EXT-X-STREAM-INF") {
+            current = best_hls_variant(&text, &final_url)?;
+            continue;
+        }
+        return plan_hls_download(&text, &final_url);
+    }
+    None
+}
+
+/// Fetches one file of an HLS stream to `path`. Returns its size.
+async fn fetch_hls_file(client: &reqwest::Client, url: &str, headers: &RequestHeaders, path: &Path) -> Result<i64, String> {
+    let url = validate_stream_url(url)?;
+    let mut res = match tokio::time::timeout(STALL_TIMEOUT, apply_headers(client.get(&url), headers).send()).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
+        Err(_) => return Err("The stream host did not answer in time.".to_string()),
+    };
+    if !res.status().is_success() {
+        return Err(format!("A segment of the stream could not be fetched: HTTP {}.", res.status()));
+    }
+    let expected = res.content_length();
+    let mut file = tokio::fs::File::create(path)
+        .await
+        .map_err(|e| format!("Could not create {}: {}", path.display(), e))?;
+    let mut written: u64 = 0;
+    loop {
+        let chunk = match tokio::time::timeout(STALL_TIMEOUT, res.chunk()).await {
+            Ok(Ok(Some(chunk))) => chunk,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => return Err(format!("A segment of the stream was interrupted: {}", e)),
+            Err(_) => return Err(format!("The stream stalled: no data for {} seconds.", STALL_TIMEOUT.as_secs())),
+        };
+        if written == 0 && sniff_text_body(&chunk) == Some("html") {
+            return Err("The stream host returned a web page instead of a video.".to_string());
+        }
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Could not write to {}: {}", path.display(), e))?;
+        written += chunk.len() as u64;
+    }
+    file.flush().await.map_err(|e| format!("Could not write to {}: {}", path.display(), e))?;
+    if expected.is_some_and(|total| total != written) {
+        return Err(format!("A segment of the stream is incomplete: received {} bytes.", written));
+    }
+    Ok(written as i64)
+}
+
+/// Downloads a planned HLS stream: every file into the download's segment folder, skipping
+/// the ones an earlier run already finished, then ffmpeg muxes them into the MKV.
+async fn download_hls_files(
+    job: &Job<'_>,
+    plan: &HlsPlan,
+    headers: &RequestHeaders,
+    hls: HlsDemuxerOptions,
+    subtitles: &[SubtitleInput],
+) -> Result<Finished, String> {
+    let folder = job.work_path("hls");
+    let index = folder.join("index.m3u8");
+    let source = folder.join("source.txt");
+    let stamp = hls_source_stamp(plan);
+    // Files from an earlier run are only reused for the very same playlist from the same place.
+    let same_stream = tokio::fs::read_to_string(&index).await.is_ok_and(|old| old == plan.playlist)
+        && tokio::fs::read_to_string(&source).await.is_ok_and(|old| old == stamp);
+    if !same_stream {
+        let _ = tokio::fs::remove_dir_all(&folder).await;
+    }
+    tokio::fs::create_dir_all(&folder)
+        .await
+        .map_err(|e| format!("Could not create {}: {}", folder.display(), e))?;
+    if !same_stream {
+        tokio::fs::write(&index, &plan.playlist)
+            .await
+            .map_err(|e| format!("Could not write {}: {}", index.display(), e))?;
+        tokio::fs::write(&source, &stamp)
+            .await
+            .map_err(|e| format!("Could not write {}: {}", source.display(), e))?;
+    } else {
+        info!("Resuming download {} from its saved segments", job.record.id);
+    }
+
+    let client = stream_client();
+    let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
+    let mut bytes: i64 = 0;
+    let total = plan.files.len() as f64;
+    for (done, (url, name)) in plan.files.iter().enumerate() {
+        let path = folder.join(name);
+        if let Ok(meta) = tokio::fs::metadata(&path).await {
+            bytes += meta.len() as i64;
+            continue;
+        }
+        // Written under a temporary name, so a file that exists is always complete.
+        let partial = folder.join(format!("{}.tmp", name));
+        bytes += fetch_hls_file(&client, url, headers, &partial).await?;
+        tokio::fs::rename(&partial, &path)
+            .await
+            .map_err(|e| format!("Could not save {}: {}", path.display(), e))?;
+        reporter.report(Some(0.05 + 0.85 * (done + 1) as f64 / total), Some(bytes)).await;
+    }
+
+    let input = FfmpegInput::LocalHls { playlist: index, hls };
+    let (video, embedded) =
+        mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, Some(plan.duration_s), (0.90, 0.99))
+            .await
+            .map_err(|e| e.to_string())?;
+    finalize(job, &video, "mkv", subtitles, embedded.then_some(0)).await
+}
+
+/// `bytes <start>-<end>/<total>` of a `Content-Range` header as `(start, total)`.
+pub fn parse_content_range(value: &str) -> Option<(u64, u64)> {
+    let (range, total) = value.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let (start, _end) = range.split_once('-')?;
+    Some((start.trim().parse().ok()?, total.trim().parse().ok()?))
+}
+
 /// Muxes `input` into a working MKV with ffmpeg, embedding the first subtitle. If ffmpeg
 /// fails while a subtitle is attached it is run once more without it, so a subtitle ffmpeg
 /// cannot read does not cost the video. Returns the working file and whether the subtitle
@@ -1139,6 +1539,11 @@ async fn download_stream_with_ffmpeg(
     subtitles: &[SubtitleInput],
 ) -> Result<Finished, String> {
     let hls_options = probe_ffmpeg().await.map_err(|e| e.to_string())?;
+    if kind == StreamKind::Hls {
+        if let Some(plan) = fetch_hls_plan(url, headers).await {
+            return download_hls_files(job, &plan, headers, hls_options, subtitles).await;
+        }
+    }
     let input = FfmpegInput::Remote {
         url: url.to_string(),
         headers: headers.clone(),
@@ -1169,27 +1574,66 @@ async fn download_file(
     headers: &RequestHeaders,
     subtitles: &[SubtitleInput],
 ) -> Result<Finished, String> {
-    let request = apply_headers(client.get(url), headers);
-    let mut res = match tokio::time::timeout(STALL_TIMEOUT, request.send()).await {
-        Ok(Ok(res)) => res,
-        Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
-        Err(_) => return Err("The stream host did not answer in time.".to_string()),
+    // A run of the app that was stopped leaves the bytes so far and the total they belong to.
+    let temp = job.work_path("download");
+    let total_note = job.work_path("resume");
+    let have = tokio::fs::metadata(&temp).await.map(|m| m.len()).unwrap_or(0);
+    let promised = tokio::fs::read_to_string(&total_note).await.ok().and_then(|t| t.trim().parse::<u64>().ok());
+    let mut offset = promised.filter(|total| have > 0 && have < *total).map(|_| have);
+
+    let mut res = loop {
+        let mut request = apply_headers(client.get(url), headers);
+        if let Some(from) = offset {
+            request = request.header("Range", format!("bytes={}-", from));
+        }
+        let res = match tokio::time::timeout(STALL_TIMEOUT, request.send()).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
+            Err(_) => return Err("The stream host did not answer in time.".to_string()),
+        };
+        let Some(from) = offset else { break res };
+        let range = res
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_content_range);
+        if res.status() == reqwest::StatusCode::PARTIAL_CONTENT && range == Some((from, promised.unwrap_or(0))) {
+            info!("Resuming download {} at byte {}", job.record.id, from);
+            break res;
+        }
+        offset = None;
+        // A full body means the host ignored the range; anything else is asked for again whole.
+        if res.status() == reqwest::StatusCode::OK {
+            break res;
+        }
     };
 
     if !res.status().is_success() {
         return Err(format!("The stream host answered HTTP {}.", res.status()));
     }
 
-    let expected = res.content_length().filter(|len| *len > 0);
-    let temp = job.work_path("download");
-    let file = tokio::fs::File::create(&temp)
-        .await
-        .map_err(|e| format!("Could not create {}: {}", temp.display(), e))?;
+    let expected = match offset {
+        Some(_) => promised,
+        None => res.content_length().filter(|len| *len > 0),
+    };
+    let file = match offset {
+        Some(_) => tokio::fs::OpenOptions::new().append(true).open(&temp).await,
+        None => {
+            // The total is noted so a later run can tell the partial file belongs to this body.
+            match expected {
+                Some(total) => tokio::fs::write(&total_note, total.to_string()).await,
+                None => tokio::fs::remove_file(&total_note).await.or(Ok(())),
+            }
+            .map_err(|e| format!("Could not write {}: {}", total_note.display(), e))?;
+            tokio::fs::File::create(&temp).await
+        }
+    }
+    .map_err(|e| format!("Could not create {}: {}", temp.display(), e))?;
     let mut file = BufWriter::with_capacity(1 << 20, file);
     let write_error = |e: std::io::Error| format!("Could not write to {}: {}", temp.display(), e);
 
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let mut downloaded: u64 = 0;
+    let mut downloaded: u64 = offset.unwrap_or(0);
     loop {
         let chunk = match tokio::time::timeout(STALL_TIMEOUT, res.chunk()).await {
             Ok(Ok(Some(chunk))) => chunk,
@@ -1285,12 +1729,24 @@ where
     let source = source.await?;
     let url = validate_stream_url(&source.url)?;
 
+    let (audio, sub) = download_languages(&record.category, source.language.as_deref(), &source.subtitles);
+    if let Err(e) = db::set_download_languages(pool, &record.id, audio.as_deref(), sub.as_deref()).await {
+        warn!("Could not save the languages of download {}: {}", record.id, e);
+    }
+
     let dir = match dir {
         Some(dir) => dir,
-        None => tokio::task::spawn_blocking(get_download_dir)
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?,
+        None => tokio::task::spawn_blocking(|| {
+            let dir = get_download_dir()?;
+            // So startup can clean this folder up after the user has chosen another one.
+            if let Ok(app) = db::get_app_dir() {
+                remember_work_dir(&app.join(WORK_DIRS_FILE), &dir);
+            }
+            Ok::<_, AppError>(dir)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?,
     };
     tokio::fs::create_dir_all(&dir)
         .await
@@ -1401,6 +1857,14 @@ where
             {
                 error!("Download {} failed and its row could not be updated: {}", id, e);
             }
+            let title = format!(
+                "Download failed: {}, episode {}",
+                record.series_title,
+                record.episode_num
+            );
+            if let Err(e) = crate::notices::push(pool, crate::notices::DOWNLOAD, &title, &message, Some("/downloads")).await {
+                warn!("Could not add a notice for failed download {}: {}", id, e);
+            }
             DownloadOutcome::Failed(message)
         }
     }
@@ -1497,8 +1961,20 @@ pub async fn reconcile_on_startup(pool: &SqlitePool) -> Result<(), AppError> {
         info!("Re-queued {} download(s) interrupted by the previous exit", requeued);
     }
 
-    let removed = tokio::task::spawn_blocking(|| get_download_dir().map(|dir| remove_stale_part_files(&dir)))
-        .await
+    // Queued rows keep what they had fetched, so they resume instead of starting over.
+    let keep: Vec<String> = db::get_all_downloads(pool)
+        .await?
+        .iter()
+        .filter(|r| r.status == db::STATUS_QUEUED)
+        .map(|r| work_tag(&r.id))
+        .collect();
+    let removed = tokio::task::spawn_blocking(move || {
+        let dir = get_download_dir()?;
+        // Folders the user has moved downloads away from keep no partials either.
+        let old = db::get_app_dir().map(|app| remove_part_files_in_old_dirs(&app.join(WORK_DIRS_FILE), &dir));
+        Ok::<_, AppError>(remove_stale_part_files(&dir, &keep) + old.unwrap_or(0))
+    })
+    .await
         .map_err(|e| AppError::Other(e.to_string()))??;
     if removed > 0 {
         info!("Removed {} partial download file(s)", removed);
@@ -1592,11 +2068,12 @@ async fn lookup_search_keys(state: &AppState, anilist_id: i64) -> (Option<i64>, 
 
     let details = tokio::time::timeout(
         Duration::from_secs(15),
-        state.anilist_client.fetch_details(anilist_id),
+        state.catalogue.details(anilist_id),
     )
     .await;
     match details {
-        Ok(Ok(media)) => {
+        Ok(Ok(served)) => {
+            let media = served.value;
             let keys = (
                 media.get("idMal").and_then(|v| v.as_i64()),
                 media
@@ -1610,11 +2087,11 @@ async fn lookup_search_keys(state: &AppState, anilist_id: i64) -> (Option<i64>, 
             keys
         }
         Ok(Err(e)) => {
-            warn!("Could not look up anime {} on AniList: {}", anilist_id, e);
+            warn!("Could not look up anime {} in the catalogue: {}", anilist_id, e);
             (None, None)
         }
         Err(_) => {
-            warn!("Looking up anime {} on AniList timed out", anilist_id);
+            warn!("Looking up anime {} in the catalogue timed out", anilist_id);
             (None, None)
         }
     }
@@ -1652,5 +2129,7 @@ async fn resolve_queued_source(app: &tauri::AppHandle, record: &DownloadRecord) 
 
     let stream = pick_stream(&sources.streams, &record.quality)
         .ok_or_else(|| "No playable stream was found for this episode.".to_string())?;
-    Ok(DownloadSource::from_stream(stream, sources.subtitles.clone()))
+    let mut source = DownloadSource::from_stream(stream, sources.subtitles.clone());
+    source.language = sources.language.clone();
+    Ok(source)
 }

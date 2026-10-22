@@ -7,6 +7,9 @@ use crate::plugins::registry::PluginRegistry;
 use crate::web_session::SessionUse;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Longest a test search may take.
@@ -32,7 +35,7 @@ pub fn test_media() -> Value {
     })
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginHealth {
     pub id: String,
     /// `ok` (results came back), `empty` (answered, nothing found), `timeout`,
@@ -41,6 +44,9 @@ pub struct PluginHealth {
     pub latency_ms: u64,
     pub results: usize,
     pub error: Option<String>,
+    /// When the test ran, in Unix milliseconds; 0 when unknown.
+    #[serde(default)]
+    pub checked_at_ms: i64,
 }
 
 /// How a search answer or failure is reported.
@@ -52,6 +58,7 @@ pub fn classify(id: &str, outcome: Result<Value, AppError>, latency: Duration) -
         latency_ms,
         results: 0,
         error: None,
+        checked_at_ms: now_ms(),
     };
     match outcome {
         Ok(Value::Array(list)) => {
@@ -70,6 +77,142 @@ pub fn classify(id: &str, outcome: Result<Value, AppError>, latency: Duration) -
         Err(e) => health.error = Some(e.reason()),
     }
     health
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------- results kept between runs
+
+/// The latest test result per plugin and when the background check last went through them all.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HealthRecord {
+    #[serde(default)]
+    pub last_round_ms: i64,
+    #[serde(default)]
+    pub results: HashMap<String, PluginHealth>,
+}
+
+const HEALTH_FILE: &str = "plugin-health.json";
+static RECORD: Mutex<Option<HealthRecord>> = Mutex::new(None);
+
+fn record_path() -> Option<PathBuf> {
+    crate::db::get_config_dir().ok().map(|dir| dir.join(HEALTH_FILE))
+}
+
+pub fn read_record(path: &Path) -> HealthRecord {
+    std::fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+fn loaded(guard: &mut Option<HealthRecord>) -> &mut HealthRecord {
+    guard.get_or_insert_with(|| record_path().map(|path| read_record(&path)).unwrap_or_default())
+}
+
+/// Reads the kept results without saving them.
+fn peek_record<T>(read: impl FnOnce(&HealthRecord) -> T) -> T {
+    read(loaded(&mut RECORD.lock().unwrap_or_else(|p| p.into_inner())))
+}
+
+/// Changes the kept results and saves them.
+fn with_record<T>(change: impl FnOnce(&mut HealthRecord) -> T) -> T {
+    let mut guard = RECORD.lock().unwrap_or_else(|p| p.into_inner());
+    let record = loaded(&mut guard);
+    let out = change(record);
+    if let (Some(path), Ok(data)) = (record_path(), serde_json::to_vec(record)) {
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, data).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+            tracing::warn!("could not save the plugin test results");
+        }
+    }
+    out
+}
+
+/// Keeps a test result as the plugin's latest.
+pub fn remember(health: &PluginHealth) {
+    with_record(|record| {
+        record.results.insert(health.id.clone(), health.clone());
+    });
+}
+
+/// The latest test result of every plugin that has one.
+pub fn remembered() -> Vec<PluginHealth> {
+    let mut list: Vec<PluginHealth> = peek_record(|record| record.results.values().cloned().collect());
+    list.sort_by(|a, b| a.id.cmp(&b.id));
+    list
+}
+
+// ---------------------------------------------------------------- the background check
+
+/// The background check goes through the enabled plugins about once a day.
+pub const ROUND_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often it looks whether a round is due.
+const TICK: Duration = Duration::from_secs(10 * 60);
+/// It waits until nothing was played or listed for this long (playback counts through the
+/// stream proxy's requests), and stops between plugins when that changes.
+pub const IDLE_FOR: Duration = Duration::from_secs(10 * 60);
+pub const EVENT_HEALTH_CHANGED: &str = "plugin-health-changed";
+
+/// Whether a background round should start now: switched on, the last full round a day ago or
+/// more, and the app idle (no stream or episode lookup for `IDLE_FOR`).
+pub fn round_due(enabled: bool, last_round_ms: i64, now_ms: i64, since_lookup: Option<Duration>) -> bool {
+    let idle = since_lookup.map_or(true, |since| since >= IDLE_FOR);
+    enabled && idle && now_ms.saturating_sub(last_round_ms) >= ROUND_EVERY.as_millis() as i64
+}
+
+fn background_enabled() -> bool {
+    crate::commands::settings::saved_settings()
+        .get("plugin_health_checks")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+/// Tests the enabled plugins one after another, at most once a day and only while the app is
+/// idle; results replace the ones shown in Settings › Plugins as they come in. A round that
+/// is interrupted by playback goes on at the next idle moment.
+pub fn start_background(registry: PluginRegistry, announce: std::sync::Arc<dyn Fn() + Send + Sync>) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(TICK).await;
+            let last = peek_record(|record| record.last_round_ms);
+            let since = crate::providers::manager::since_last_lookup();
+            if !round_due(background_enabled(), last, now_ms(), since) {
+                continue;
+            }
+            let due_before = now_ms() - ROUND_EVERY.as_millis() as i64;
+            let ids: Vec<String> = registry
+                .list_plugins()
+                .into_iter()
+                .filter(|p| p.enabled)
+                .map(|p| p.id)
+                .collect();
+            let mut finished = true;
+            for id in ids {
+                // Tested in this round already (a round interrupted earlier).
+                let fresh = peek_record(|record| record.results.get(&id).map_or(false, |h| h.checked_at_ms > due_before));
+                if fresh {
+                    continue;
+                }
+                let busy = crate::providers::manager::since_last_lookup().map_or(false, |since| since < IDLE_FOR);
+                if busy || !background_enabled() {
+                    finished = false;
+                    break;
+                }
+                let health = test_plugin(&registry, &id).await;
+                remember(&health);
+                announce();
+            }
+            if finished {
+                with_record(|record| record.last_round_ms = now_ms());
+            }
+        }
+    });
 }
 
 /// Runs the test search through one installed plugin. Uses an existing in-app browser session
@@ -94,6 +237,7 @@ pub async fn test_plugin(registry: &PluginRegistry, id: &str) -> PluginHealth {
             latency_ms: 0,
             results: 0,
             error: Some(reason),
+            checked_at_ms: now_ms(),
         };
     };
     let options = json!({ "media": test_media(), "query": "One Piece", "dub": false, "year": 1999 });

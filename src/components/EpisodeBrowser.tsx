@@ -14,14 +14,15 @@ import { useSetEpisodesWatched, useWatchedEpisodes } from '../hooks/useLibrary';
 import { useUIStore } from '../stores/uiStore';
 import { errorMessage } from './ui/ErrorState';
 import { useFillerEpisodes } from '../hooks/useProviders';
-import { AUTO_PROVIDER } from '../hooks/useSettings';
+import { AUTO_PROVIDER, useSettings } from '../hooks/useSettings';
 import { usePlugins, useStreamingProviders } from '../hooks/usePlugins';
 import { useLanguagePrefs } from '../hooks/useLanguagePrefs';
 import { groupByLanguage, pluginLanguages } from '../lib/languages';
 import { NoPluginsNotice } from './NoPluginsNotice';
 import { distinctEpisodeTitle } from '../hooks/watchProgress';
 import { useStoredChoice } from '../hooks/useStoredChoice';
-import { LOCAL_PROVIDER, LOCAL_PROVIDER_LABEL } from '../hooks/useLocalMedia';
+import { LOCAL_PROVIDER, localProviderLabel } from '../hooks/useLocalMedia';
+import { t } from '../i18n';
 
 type Category = 'sub' | 'dub';
 const VIEW_MODES = ['compact', 'list', 'grid'] as const;
@@ -52,6 +53,8 @@ interface EpisodeBrowserProps {
   onChosenCategoryChange?: (category: Category) => void;
   /** Told whether a dub can be picked, so a copy of the switch elsewhere matches. */
   onDubAvailableChange?: (available: boolean) => void;
+  /** The episode Play continues with; its card is outlined. */
+  currentEpisode?: number | null;
 }
 
 const CHUNK_SIZE = 100;
@@ -74,10 +77,10 @@ function withLocalEpisodes(list: EpisodeItemType[], local: number[], onlyLocal: 
   return merged.sort((a, b) => a.number - b.number);
 }
 
-const VIEW_OPTIONS = [
-  { value: 'compact' as const, icon: <Menu aria-hidden="true" className="h-4 w-4" />, 'aria-label': 'Compact rows', title: 'Compact rows' },
-  { value: 'list' as const, icon: <List aria-hidden="true" className="h-4 w-4" />, 'aria-label': 'List', title: 'List' },
-  { value: 'grid' as const, icon: <Grid aria-hidden="true" className="h-4 w-4" />, 'aria-label': 'Grid', title: 'Grid' },
+const viewOptions = () => [
+  { value: 'compact' as const, icon: <Menu aria-hidden="true" className="h-4 w-4" />, 'aria-label': t('episodeBrowser.compactRows'), title: t('episodeBrowser.compactRows') },
+  { value: 'list' as const, icon: <List aria-hidden="true" className="h-4 w-4" />, 'aria-label': t('episodeBrowser.list'), title: t('episodeBrowser.list') },
+  { value: 'grid' as const, icon: <Grid aria-hidden="true" className="h-4 w-4" />, 'aria-label': t('episodeBrowser.grid'), title: t('episodeBrowser.grid') },
 ];
 
 const GRID_CLASS: Record<ViewMode, string> = {
@@ -142,6 +145,7 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   chosenCategory: controlledCategory,
   onChosenCategoryChange,
   onDubAvailableChange,
+  currentEpisode = null,
 }) => {
   // null = the user has not chosen yet, so the default from settings applies.
   const [ownCategory, setOwnCategory] = useState<Category | null>(null);
@@ -161,6 +165,7 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   const { label: providerLabel, none: noPlugins, installed: installedPlugins } = useStreamingProviders();
   const plugins = usePlugins().data;
   const languagePrefs = useLanguagePrefs();
+  const blurUnwatched = useSettings().data?.blur_unwatched_art === true;
 
   // Every provider in the result is selectable. One that comes back with empty lists plays
   // from the catalog list.
@@ -211,6 +216,13 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   useEffect(() => {
     onDubAvailableChange?.(dubAvailable);
   }, [dubAvailable, onDubAvailableChange]);
+
+  // The episode numbers the serving plugin lists under dub (in Auto, any plugin), for the Dub pill.
+  const dubNumbers = useMemo(() => {
+    const own = activeProvider === AUTO_PROVIDER ? undefined : episodesData[activeProvider];
+    const lists = own ? [own.dub ?? []] : Object.values(episodesData).map((p) => p?.dub ?? []);
+    return new Set(lists.flat().map((ep) => ep.number));
+  }, [episodesData, activeProvider]);
 
   const requestedCategory = chosenCategory ?? defaultCategory;
   const category: Category = requestedCategory === 'dub' && dubAvailable ? 'dub' : 'sub';
@@ -277,43 +289,50 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   const closeActions = useCallback(() => setActionsFor(null), []);
   const isWatched = (n: number) => watchedEpisodes.some((we) => Math.abs(we - n) < 0.01);
 
-  const markEpisodes = (numbers: number[], watched: boolean, what: string) => {
+  const markEpisodes = (numbers: number[], watched: boolean, done: string) => {
     if (numbers.length === 0) return;
     setWatched.mutate(
       { anilistId, title: animeTitle, cover: animeCover, episodes: numbers, watched },
       {
-        onSuccess: () =>
-          showToast({ type: 'success', title: watched ? `Marked ${what} as watched` : `Unmarked ${what}` }),
+        onSuccess: () => showToast({ type: 'success', title: done }),
         onError: (err) =>
-          showToast({ type: 'error', title: 'Could not update watch history', message: errorMessage(err) }),
+          showToast({ type: 'error', title: t('episodeBrowser.couldNotUpdateHistory'), message: errorMessage(err) }),
       }
     );
   };
 
   const episodeActions = (ep: EpisodeItemType): MenuAction[] => {
-    const through = allEpisodes.filter((e) => e.number <= ep.number + 0.001).map((e) => e.number);
+    const through = allEpisodes.filter((e) => e.number <= ep.number + 0.001).map((e) => e.number); // i18n-ignore
     const first = through.length > 0 ? Math.min(...through) : ep.number;
-    const range = through.length > 1 ? `episodes ${first}–${ep.number}` : `episode ${ep.number}`;
+    const many = through.length > 1;
+    const vars = { first, last: ep.number, episode: ep.number };
     const anyWatched = through.some(isWatched);
     const allWatched = through.length > 0 && through.every(isWatched);
     const actions: MenuAction[] = [
       {
-        label: `Mark ${range} as watched`,
+        label: t(many ? 'episodeBrowser.markRangeWatched' : 'episodeBrowser.markEpisodeWatched', vars),
         disabled: allWatched || setWatched.isPending,
-        onSelect: () => markEpisodes(through, true, range),
+        onSelect: () =>
+          markEpisodes(through, true, t(many ? 'episodeBrowser.markedRange' : 'episodeBrowser.markedEpisode', vars)),
       },
       {
-        label: `Unmark ${range}`,
+        label: t(many ? 'episodeBrowser.unmarkRange' : 'episodeBrowser.unmarkEpisode', vars),
         disabled: !anyWatched || setWatched.isPending,
-        onSelect: () => markEpisodes(through, false, range),
+        onSelect: () =>
+          markEpisodes(through, false, t(many ? 'episodeBrowser.unmarkedRange' : 'episodeBrowser.unmarkedEpisode', vars)),
       },
     ];
-    if (through.length > 1) {
-      const single = `episode ${ep.number}`;
+    if (many) {
       actions.push(
         isWatched(ep.number)
-          ? { label: `Unmark only ${single}`, onSelect: () => markEpisodes([ep.number], false, single) }
-          : { label: `Mark only ${single} as watched`, onSelect: () => markEpisodes([ep.number], true, single) }
+          ? {
+              label: t('episodeBrowser.unmarkOnly', vars),
+              onSelect: () => markEpisodes([ep.number], false, t('episodeBrowser.unmarkedEpisode', vars)),
+            }
+          : {
+              label: t('episodeBrowser.markOnlyWatched', vars),
+              onSelect: () => markEpisodes([ep.number], true, t('episodeBrowser.markedEpisode', vars)),
+            }
       );
     }
     return actions;
@@ -326,36 +345,36 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
           installed={installedPlugins}
           detail={
             localEpisodes.length > 0
-              ? 'Episodes marked Local play from your files. The others need a streaming plugin, which you add in Settings.'
-              : 'The episodes below come from the catalog. Playing them needs a streaming plugin, which you add in Settings.'
+              ? t('episodeBrowser.noPluginsLocal')
+              : t('episodeBrowser.noPluginsCatalog')
           }
         />
       )}
 
       <div className="flex flex-wrap items-center gap-2">
         <SegmentedControl
-          aria-label="Audio"
+          aria-label={t('episodeBrowser.audio')}
           value={category}
           onChange={(next) => {
             setChosenCategory(next);
             setSelectedChunkIndex(0);
           }}
           options={[
-            { value: 'sub', label: 'Sub' },
-            { value: 'dub', label: 'Dub', disabled: !dubAvailable, title: dubAvailable ? undefined : 'No dub listed' },
+            { value: 'sub', label: t('common.sub') },
+            { value: 'dub', label: t('common.dub'), disabled: !dubAvailable, title: dubAvailable ? undefined : t('episodeBrowser.noDubListed') },
           ]}
         />
 
         {!noPlugins && providerNames.length > 0 && (
           <CustomSelect
-            aria-label="Provider"
+            aria-label={t('episodeBrowser.provider')}
             value={activeProvider}
             onChange={(val) => {
               setChosenProvider(val);
               setSelectedChunkIndex(0);
             }}
             options={[
-              { value: AUTO_PROVIDER, label: 'Provider: Auto' },
+              { value: AUTO_PROVIDER, label: t('episodeBrowser.providerAuto') },
               ...providerOptions,
             ]}
             className="w-48"
@@ -366,26 +385,26 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
           <Button
             variant={localActive ? 'secondary' : 'neutral'}
             aria-pressed={localActive}
-            title={localActive ? 'Showing only episodes you have as files' : 'Show only episodes you have as files'}
+            title={localActive ? t('episodeBrowser.showingOnlyFiles') : t('episodeBrowser.showOnlyFiles')}
             onClick={() => {
               setChosenProvider(localActive ? null : LOCAL_PROVIDER);
               setSelectedChunkIndex(0);
             }}
           >
             <HardDrive aria-hidden="true" className="h-4 w-4" />
-            {LOCAL_PROVIDER_LABEL}
+            {localProviderLabel()}
           </Button>
         )}
 
         {!noPlugins && isProvidersLoading && (
           <span className="flex items-center gap-2 text-xs text-text-muted">
-            <Spinner size="sm" label="Checking providers" />
-            Checking providers…
+            <Spinner size="sm" label={t('episodeBrowser.checkingProviders')} />
+            {t('episodeBrowser.checkingProvidersEllipsis')}
           </span>
         )}
         {!noPlugins && isProvidersError && (
           <span className="text-xs text-text-muted">
-            Provider lists could not be loaded; Auto still tries every provider.
+            {t('episodeBrowser.providerListsFailed')}
           </span>
         )}
 
@@ -394,35 +413,35 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
         <div className="relative w-56">
           <Search
             aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+            className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
           />
           <input
             type="text"
-            aria-label="Search episodes"
-            placeholder="Search episodes"
+            aria-label={t('episodeBrowser.searchEpisodes')}
+            placeholder={t('episodeBrowser.searchEpisodes')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full rounded-md bg-bg-input pl-9 pr-9 text-[13px] text-text-primary placeholder:text-text-muted"
+            className="h-9 w-full rounded-md bg-bg-input ps-9 pe-9 text-[13px] text-text-primary placeholder:text-text-muted"
           />
           {searchQuery && (
             <button
               type="button"
-              aria-label="Clear episode search"
+              aria-label={t('episodeBrowser.clearEpisodeSearch')}
               onClick={() => setSearchQuery('')}
-              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:text-text-primary"
+              className="absolute end-1 top-1/2 flex h-7 w-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:text-text-primary"
             >
               <X aria-hidden="true" className="h-4 w-4" />
             </button>
           )}
         </div>
 
-        <SegmentedControl aria-label="Episode layout" value={viewMode} onChange={setViewMode} options={VIEW_OPTIONS} />
+        <SegmentedControl aria-label={t('episodeBrowser.episodeLayout')} value={viewMode} onChange={setViewMode} options={viewOptions()} />
 
         <Button
           icon
           variant="ghost"
-          aria-label="Add the listed episodes to a playlist"
-          title="Add the listed episodes to a playlist"
+          aria-label={t('episodeBrowser.addListedToPlaylist')}
+          title={t('episodeBrowser.addListedToPlaylist')}
           disabled={visibleEpisodes.length === 0}
           onClick={() => setPlaylistTargetEpisodes(visibleEpisodes)}
         >
@@ -432,7 +451,7 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
 
       {!query && chunks.length > 1 && (
         <SegmentedControl
-          aria-label="Episode range"
+          aria-label={t('episodeBrowser.episodeRange')}
           size="sm"
           // Wraps instead of scrolling sideways: every range stays in view and reachable
           // with a plain mouse wheel.
@@ -452,16 +471,16 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
       ) : visibleEpisodes.length === 0 ? (
         <EmptyState
           className="py-12"
-          title={query ? 'No episodes match' : 'No episodes yet'}
+          title={query ? t('episodeBrowser.noEpisodesMatch') : t('episodeBrowser.noEpisodesYet')}
           description={
             query
-              ? `Nothing matches "${searchQuery.trim()}" in this list.`
-              : 'No released episodes were found for this title.'
+              ? t('episodeBrowser.nothingMatches', { query: searchQuery.trim() })
+              : t('episodeBrowser.noReleasedEpisodes')
           }
           action={
             query ? (
               <Button variant="ghost" onClick={() => setSearchQuery('')}>
-                Clear search
+                {t('episodeBrowser.clearSearch')}
               </Button>
             ) : undefined
           }
@@ -476,6 +495,10 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
               progressPercent={progressByEpisode[ep.number]}
               isFiller={fillerEpisodes.includes(Math.round(ep.number))}
               isLocal={isLocalEpisode(ep.number)}
+              isCurrent={currentEpisode !== null && Math.abs(ep.number - currentEpisode) < 0.01}
+              // On the sub list it says a dub exists; on the dub list every episode is one.
+              hasDub={category === 'sub' && dubNumbers.has(ep.number)}
+              blurArt={blurUnwatched && !isWatched(ep.number)}
               viewMode={viewMode}
               onSelect={(selectedEp) =>
                 onSelectEpisode(
@@ -496,7 +519,7 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
 
       {actionsFor && (
         <EpisodeActionsMenu
-          label={`Episode ${actionsFor.episode.number} actions`}
+          label={t('episodeBrowser.episodeActions', { episode: actionsFor.episode.number })}
           at={actionsFor.at}
           actions={episodeActions(actionsFor.episode)}
           onClose={closeActions}

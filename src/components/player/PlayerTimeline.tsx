@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import { Slider } from './Slider';
 import { formatTime } from './format';
+import { t } from '../../i18n';
 
 interface PlayerTimelineProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -51,12 +52,12 @@ export const PlayerTimeline: React.FC<PlayerTimelineProps> = React.memo(({ video
       <span className="w-14 text-xs tabular-nums text-white">{formatTime(shown)}</span>
       <Slider
         className="flex-1"
-        label="Seek"
+        label={t('playerTimeline.seek')}
         value={Math.min(shown, duration)}
         max={duration}
         keyStep={5}
         buffered={buffered}
-        valueText={`${formatTime(shown)} of ${formatTime(duration)}`}
+        valueText={t('playerTimeline.position', { time: formatTime(shown), duration: formatTime(duration) })}
         disabled={duration <= 0}
         onChange={setScrub}
         onCommit={(value) => {

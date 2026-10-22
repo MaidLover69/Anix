@@ -1,11 +1,14 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { ErrorState } from './ui/ErrorState';
+import { t } from '../i18n';
 
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
   /** When this value changes (for example the route), a caught error is cleared. */
   resetKey?: string;
+  /** The "Playful touches" setting, read by the parent since a class can't call hooks. */
+  playful?: boolean;
 }
 
 interface State {
@@ -36,9 +39,10 @@ export class ErrorBoundary extends Component<Props, State> {
         this.props.fallback ?? (
           <ErrorState
             className="h-full min-h-[300px]"
-            title="This screen ran into a problem"
-            message={this.state.error?.message || 'An unexpected error occurred.'}
-            retryLabel="Try again"
+            title={this.props.playful ? t('errorBoundary.titlePlayful') : t('errorBoundary.title')}
+            message={this.state.error?.message || t('errorBoundary.unexpected')}
+            retryLabel={this.props.playful ? t('errorBoundary.retryPlayful') : t('common.tryAgain')}
+            mood="dizzy"
             onRetry={() => this.setState({ hasError: false, error: undefined })}
           />
         )

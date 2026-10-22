@@ -75,6 +75,97 @@ impl AppError {
     pub fn is_connection_failure(&self) -> bool {
         matches!(self, AppError::Unreachable(_))
     }
+
+    /// A short stable code for bug reports, such as `NET-403` or `CAT-TIMEOUT`. The frontend
+    /// derives the same code from the message (`errorCode` in `ErrorState.tsx`), because
+    /// commands hand errors over as text.
+    pub fn code(&self) -> String {
+        match self {
+            AppError::Network(m) => format!("{}-{}", domain(m), network_detail(m).as_deref().unwrap_or("ERR")),
+            AppError::Unreachable(m) => format!("{}-{}", domain(m), connection_detail(m)),
+            AppError::Database(_) => "DB-ERR".to_string(),
+            AppError::Parse(m) => format!("{}-PARSE", domain(m)),
+            AppError::Provider { message, .. } => format!("SRC-{}", network_detail(message).as_deref().unwrap_or("ERR")),
+            AppError::CaptchaRequired => "SRC-CAPTCHA".to_string(),
+            AppError::VerificationRequired { .. } => "SRC-VERIFY".to_string(),
+            AppError::NoSourcesFound => "SRC-NONE".to_string(),
+            AppError::SourcesUnavailable(_) => "SRC-UNAVAILABLE".to_string(),
+            AppError::RateLimited { .. } => "NET-429".to_string(),
+            AppError::AuthRequired => "AUTH-LOGIN".to_string(),
+            AppError::Other(m) => match network_detail(m) {
+                Some(detail) => format!("{}-{}", domain(m), detail),
+                None => "APP-ERR".to_string(),
+            },
+        }
+    }
+}
+
+/// Names of the catalogues; an error that mentions one is a catalogue error.
+const CATALOGUE_NAMES: &[&str] = &["anilist", "myanimelist", "jikan", "kitsu", "shikimori", "comick", "imdb"];
+
+fn domain(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if CATALOGUE_NAMES.iter().any(|name| lower.contains(name)) {
+        "CAT"
+    } else {
+        "NET"
+    }
+}
+
+static HTTP_STATUS: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    regex::Regex::new(r"(?i)\b(?:http|status)(?:\s+status)?(?:\s+code)?\s*:?\s*([1-5]\d\d)\b").unwrap()
+});
+
+/// `TIMEOUT` or the HTTP status a message names; `None` when it names neither.
+fn network_detail(message: &str) -> Option<String> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return Some("TIMEOUT".to_string());
+    }
+    Some(HTTP_STATUS.captures(message)?.get(1)?.as_str().to_string())
+}
+
+fn connection_detail(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("dns") || lower.contains("lookup") || lower.contains("resolve") {
+        "DNS"
+    } else if lower.contains("tls") || lower.contains("certificate") || lower.contains("handshake") || lower.contains("ssl") {
+        "TLS"
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "TIMEOUT"
+    } else {
+        "CONNECT"
+    }
+}
+
+/// The code of an error that crossed into text: the message of an [`AppError`] (its Display)
+/// or any other failure message. Mirrors [`AppError::code`].
+pub fn code_for_message(message: &str) -> String {
+    let m = message.trim();
+    let rest = |prefix: &str| m.strip_prefix(prefix).map(str::to_string);
+    if let Some(inner) = rest("Network error: ") {
+        AppError::Network(inner).code()
+    } else if let Some(inner) = rest("Connection failed: ") {
+        AppError::Unreachable(inner).code()
+    } else if m.starts_with("Database error: ") {
+        "DB-ERR".to_string()
+    } else if let Some(inner) = rest("Parse error: ") {
+        AppError::Parse(inner).code()
+    } else if let Some(inner) = rest("Provider error: ") {
+        AppError::provider("", inner).code()
+    } else if m == "Blocked by the site's anti-bot check" {
+        "SRC-CAPTCHA".to_string()
+    } else if m.ends_with(" needs verification") {
+        "SRC-VERIFY".to_string()
+    } else if m == "No sources found" {
+        "SRC-NONE".to_string()
+    } else if m.starts_with("Rate limited") {
+        "NET-429".to_string()
+    } else if m == "Auth required" {
+        "AUTH-LOGIN".to_string()
+    } else {
+        AppError::Other(m.strip_prefix("Other error: ").unwrap_or(m).to_string()).code()
+    }
 }
 
 fn root_cause(err: &(dyn std::error::Error + 'static)) -> String {

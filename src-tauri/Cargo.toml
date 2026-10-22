@@ -1,6 +1,6 @@
 [package]
 name = "anix"
-version = "1.2.0"
+version = "1.3.0"
 description = "Anix - anime catalogue, tracker, library and player for Linux"
 authors = ["Anix"]
 license = "MIT"
@@ -57,6 +57,10 @@ sha2 = "0.10"
 hmac = "0.12"
 zbus = "5"
 anitomy-ng = "1.0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already part of Tauri's tree; used to place the embedded mpv GL area under the webview.
+gtk = "0.18"
 
 [dev-dependencies]
 futures-util = "0.3"

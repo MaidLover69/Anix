@@ -33,6 +33,12 @@ pub struct DownloadRecord {
     /// Milliseconds since the epoch. Written by the backend; a value sent by a caller is ignored.
     #[serde(default)]
     pub updated_at: i64,
+    /// ISO 639-1 code of the audio ("ja" for a sub), once the source is known.
+    #[serde(default)]
+    pub audio_lang: Option<String>,
+    /// ISO 639-1 code of the subtitles of a sub, once the source is known.
+    #[serde(default)]
+    pub sub_lang: Option<String>,
 }
 
 impl DownloadRecord {
@@ -73,6 +79,8 @@ impl DownloadRecord {
             error_msg,
             created_at,
             updated_at,
+            audio_lang: None,
+            sub_lang: None,
         }
     }
 }

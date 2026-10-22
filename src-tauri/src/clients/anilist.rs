@@ -67,6 +67,9 @@ query ($id: Int) {
         favourites
         isAdult
         genres
+        startDate { year month day }
+        endDate { year month day }
+        tags { name rank isMediaSpoiler }
         nextAiringEpisode {
             id
             airingAt
@@ -135,6 +138,31 @@ query ($id: Int) {
                     format
                     status
                     averageScore
+                    seasonYear
+                }
+            }
+        }
+        recommendations(sort: [RATING_DESC], perPage: 15) {
+            nodes {
+                mediaRecommendation {
+                    id
+                    idMal
+                    title {
+                        romaji
+                        english
+                        native
+                        userPreferred
+                    }
+                    coverImage {
+                        large
+                        extraLarge
+                        color
+                    }
+                    format
+                    status
+                    averageScore
+                    seasonYear
+                    isAdult
                 }
             }
         }
@@ -281,7 +309,7 @@ pub async fn post_graphql(client: &Client, body: &Value, token: Option<&str>) ->
     post_graphql_to(client, ANILIST_GRAPHQL_URL, body, token).await
 }
 
-async fn post_graphql_to(
+pub async fn post_graphql_to(
     client: &Client,
     url: &str,
     body: &Value,
@@ -429,21 +457,12 @@ impl AniListClient {
         Ok(list)
     }
 
-    pub async fn search(
-        &self,
-        query: Option<String>,
-        genres: Vec<String>,
-        format: Option<String>,
-        status: Option<String>,
-        sort: Option<String>,
-        page: i32,
-        per_page: i32,
-    ) -> Result<Vec<Media>, AppError> {
+    pub async fn search(&self, q: &crate::catalogue::model::SearchQuery) -> Result<Vec<Media>, AppError> {
         let gql_query = format!(
             r#"
-            query ($page: Int, $perPage: Int, $search: String, $genre_in: [String], $format: MediaFormat, $status: MediaStatus, $sort: [MediaSort], $isAdult: Boolean) {{
+            query ($page: Int, $perPage: Int, $search: String, $genre_in: [String], $genre_not_in: [String], $format: MediaFormat, $status: MediaStatus, $sort: [MediaSort], $isAdult: Boolean, $averageScore_greater: Int, $seasonYear: Int, $season: MediaSeason) {{
                 Page(page: $page, perPage: $perPage) {{
-                    media(search: $search, genre_in: $genre_in, format: $format, status: $status, sort: $sort, type: ANIME, isAdult: $isAdult) {{
+                    media(search: $search, genre_in: $genre_in, genre_not_in: $genre_not_in, format: $format, status: $status, sort: $sort, type: ANIME, isAdult: $isAdult, averageScore_greater: $averageScore_greater, seasonYear: $seasonYear, season: $season) {{
                         {}
                     }}
                 }}
@@ -453,29 +472,35 @@ impl AniListClient {
         );
 
         let mut variables = serde_json::Map::new();
-        variables.insert("page".to_string(), json!(page));
-        variables.insert("perPage".to_string(), json!(per_page));
+        variables.insert("page".to_string(), json!(q.page));
+        variables.insert("perPage".to_string(), json!(q.per_page));
 
-        if let Some(q) = query {
-            if !q.trim().is_empty() {
-                variables.insert("search".to_string(), json!(q));
-            }
+        if let Some(text) = q.text() {
+            variables.insert("search".to_string(), json!(text));
         }
-        if !genres.is_empty() {
-            variables.insert("genre_in".to_string(), json!(genres));
+        if !q.genres.is_empty() {
+            variables.insert("genre_in".to_string(), json!(q.genres));
         }
-        if let Some(f) = format {
-            if !f.trim().is_empty() {
-                variables.insert("format".to_string(), json!(f));
-            }
+        if !q.exclude_genres.is_empty() {
+            variables.insert("genre_not_in".to_string(), json!(q.exclude_genres));
         }
-        if let Some(s) = status {
-            if !s.trim().is_empty() {
-                variables.insert("status".to_string(), json!(s));
-            }
+        if let Some(f) = q.format.as_deref().filter(|f| !f.trim().is_empty()) {
+            variables.insert("format".to_string(), json!(f));
         }
-        let sort_val = sort.unwrap_or_else(|| "POPULARITY_DESC".to_string());
-        variables.insert("sort".to_string(), json!([sort_val]));
+        if let Some(s) = q.status.as_deref().filter(|s| !s.trim().is_empty()) {
+            variables.insert("status".to_string(), json!(s));
+        }
+        // AniList's filter is "greater than", so one less keeps the minimum itself.
+        if let Some(min) = q.min_score {
+            variables.insert("averageScore_greater".to_string(), json!(min - 1));
+        }
+        if let Some(year) = q.year {
+            variables.insert("seasonYear".to_string(), json!(year));
+        }
+        if let Some(season) = q.season.as_deref() {
+            variables.insert("season".to_string(), json!(season));
+        }
+        variables.insert("sort".to_string(), json!([q.sort()]));
         if app_settings::current().hide_adult_content {
             variables.insert("isAdult".to_string(), json!(false));
         }

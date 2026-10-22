@@ -27,7 +27,7 @@ pub const STATUS_FAILED: &str = "FAILED";
 
 const DOWNLOAD_COLUMNS: &str = "id, anilist_id, episode_num, episode_title, series_title, \
      series_cover, provider, category, quality, status, progress, file_path, file_size, \
-     duration_s, error_msg, created_at, updated_at";
+     duration_s, error_msg, created_at, updated_at, audio_lang, sub_lang";
 
 /// Where the app's folder is, given the directory it belongs in (`base`, for example
 /// `$XDG_DATA_HOME`) and the one an install may still be using (`home_base`, for example
@@ -293,6 +293,16 @@ const SCHEMA: &str = r#"
     );
     CREATE INDEX IF NOT EXISTS idx_local_media_files_episode
         ON local_media_files(anilist_id, episode_number);
+
+    -- Each day an episode was watched (at most one row per episode and UTC day), for the watch
+    -- streak: watch_history keeps only the last time, so a rewatch would move the day.
+    CREATE TABLE IF NOT EXISTS watch_events (
+        anilist_id     INTEGER NOT NULL,
+        episode_number REAL NOT NULL,
+        day            INTEGER NOT NULL,
+        watched_at     INTEGER NOT NULL,
+        UNIQUE(anilist_id, episode_number, day)
+    );
 "#;
 
 /// One row per (anime, episode). `completed` is set once the episode has been watched to
@@ -342,8 +352,14 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query(SCHEMA).execute(&mut *tx).await?;
     migrate_watch_history(&mut tx).await?;
     migrate_notification_preferences(&mut tx).await?;
+    crate::reminders::create_tables(&mut tx).await?;
     crate::offline::create_tables(&mut tx).await?;
     crate::local_library::create_tables(&mut tx).await?;
+    crate::catalogue::ids::create_tables(&mut tx).await?;
+    crate::release_check::create_tables(&mut tx).await?;
+    crate::notices::create_tables(&mut tx).await?;
+    migrate_watchlist_status(&mut tx).await?;
+    migrate_download_languages(&mut tx).await?;
 
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(updated_at DESC)")
         .execute(&mut *tx)
@@ -668,8 +684,39 @@ pub async fn update_watch_progress(
     .bind(completed)
     .execute(pool)
     .await?;
+    if completed == 1 && !entry.from_remote {
+        record_watch_event(pool, entry.anilist_id as i64, entry.episode_number).await?;
+    }
 
     Ok(())
+}
+
+/// Notes that an episode was watched today (once per episode and day).
+async fn record_watch_event<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
+    executor: E,
+    anilist_id: i64,
+    episode_number: f64,
+) -> Result<(), AppError> {
+    let now = current_unix_millis();
+    sqlx::query("INSERT OR IGNORE INTO watch_events (anilist_id, episode_number, day, watched_at) VALUES (?1, ?2, ?3, ?4)")
+        .bind(anilist_id)
+        .bind(episode_number)
+        .bind(now / 86_400_000)
+        .bind(now)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// The times episodes were watched, in Unix milliseconds: every recorded watch, plus the last
+/// time of each watched episode (rows from before the record existed, or restored from a backup).
+pub async fn get_watch_times(pool: &SqlitePool) -> Result<Vec<i64>, AppError> {
+    let rows = sqlx::query(
+        "SELECT watched_at AS at FROM watch_events UNION ALL SELECT updated_at AS at FROM watch_history WHERE completed = 1",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.get::<i64, _>("at")).collect())
 }
 
 /// Marks `episodes` of one anime as watched, or takes the mark off, in one transaction.
@@ -689,7 +736,7 @@ pub async fn set_episodes_watched(
     let mut written = 0;
     for &episode in episodes.iter().filter(|n| n.is_finite()) {
         let result = if watched {
-            sqlx::query(
+            let marked = sqlx::query(
                 r#"
                 INSERT INTO watch_history (anilist_id, episode_number, position_ms, duration_ms, updated_at, from_remote, title, cover, completed)
                 VALUES (?1, ?2, 1, 1, ?3, 0, ?4, ?5, 1)
@@ -709,7 +756,9 @@ pub async fn set_episodes_watched(
             .bind(title)
             .bind(cover)
             .execute(&mut *tx)
-            .await?
+            .await?;
+            record_watch_event(&mut *tx, anilist_id as i64, episode).await?;
+            marked
         } else {
             sqlx::query(
                 r#"
@@ -814,7 +863,7 @@ pub async fn is_in_watchlist(pool: &SqlitePool, anilist_id: i32) -> Result<bool,
 pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<crate::models::WatchlistEntry>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT anilist_id, title, cover, format, average_score, added_at
+        SELECT anilist_id, title, cover, format, average_score, added_at, status, synced
         FROM watchlist
         ORDER BY added_at DESC
         "#
@@ -831,10 +880,111 @@ pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<crate::models::Watch
             format: r.get("format"),
             average_score: r.get("average_score"),
             added_at: r.get("added_at"),
+            status: r.get("status"),
+            synced: r.get::<i64, _>("synced") != 0,
         })
         .collect();
 
     Ok(entries)
+}
+
+/// The list statuses of the watchlist, in AniList vocabulary.
+pub const WATCHLIST_STATUSES: [&str; 5] = ["CURRENT", "PLANNING", "COMPLETED", "PAUSED", "DROPPED"];
+
+/// 1.2.0 watchlists had no status: every bookmark becomes "Plan to watch", already in sync.
+/// `synced = 0` marks a status chosen here that the connected lists have not received yet.
+async fn migrate_watchlist_status(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(watchlist)")
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .map(|r| r.get::<String, _>("name"))
+        .collect();
+    if !columns.iter().any(|c| c == "status") {
+        sqlx::query("ALTER TABLE watchlist ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNING'")
+            .execute(&mut *conn)
+            .await?;
+    }
+    if !columns.iter().any(|c| c == "synced") {
+        sqlx::query("ALTER TABLE watchlist ADD COLUMN synced INTEGER NOT NULL DEFAULT 1")
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Puts the anime on the watchlist with `status`, or changes the status of its row.
+#[allow(clippy::too_many_arguments)]
+pub async fn set_watchlist_status(
+    pool: &SqlitePool,
+    anilist_id: i32,
+    title: &str,
+    cover: Option<&str>,
+    format: Option<&str>,
+    average_score: Option<i32>,
+    status: &str,
+    synced: bool,
+) -> Result<(), AppError> {
+    if !WATCHLIST_STATUSES.contains(&status) {
+        return Err(AppError::Other(format!("Unknown list status: {}", status)));
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO watchlist (anilist_id, title, cover, format, average_score, added_at, status, synced)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(anilist_id) DO UPDATE SET status = excluded.status, synced = excluded.synced
+        "#,
+    )
+    .bind(anilist_id)
+    .bind(title)
+    .bind(cover)
+    .bind(format)
+    .bind(average_score)
+    .bind(current_unix_millis())
+    .bind(status)
+    .bind(synced as i64)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The status of an anime on the watchlist, and whether the connected lists have it.
+pub async fn get_watchlist_status(pool: &SqlitePool, anilist_id: i32) -> Result<Option<(String, bool)>, AppError> {
+    let row = sqlx::query("SELECT status, synced FROM watchlist WHERE anilist_id = ?1")
+        .bind(anilist_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| (r.get("status"), r.get::<i64, _>("synced") != 0)))
+}
+
+/// Takes a status the connected list reported, unless a local change is still waiting to be
+/// sent (that one is newer). Only anime already on the watchlist are changed.
+pub async fn take_remote_status(pool: &SqlitePool, anilist_id: i32, status: &str) -> Result<bool, AppError> {
+    let changed = sqlx::query("UPDATE watchlist SET status = ?2 WHERE anilist_id = ?1 AND synced = 1 AND status <> ?2")
+        .bind(anilist_id)
+        .bind(status)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(changed > 0)
+}
+
+/// Statuses chosen here that still have to be sent: (anime, status).
+pub async fn unsynced_watchlist(pool: &SqlitePool) -> Result<Vec<(i32, String)>, AppError> {
+    let rows = sqlx::query("SELECT anilist_id, status FROM watchlist WHERE synced = 0 ORDER BY added_at ASC")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.get::<i64, _>("anilist_id") as i32, r.get("status"))).collect())
+}
+
+/// Marks a sent status as in sync, unless it was changed again meanwhile.
+pub async fn mark_watchlist_synced(pool: &SqlitePool, anilist_id: i32, status: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE watchlist SET synced = 1 WHERE anilist_id = ?1 AND status = ?2")
+        .bind(anilist_id)
+        .bind(status)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn upsert_library_entry(
@@ -941,8 +1091,8 @@ pub async fn create_download(
 
     sqlx::query(
         r#"
-        INSERT INTO downloads (id, anilist_id, episode_num, episode_title, series_title, series_cover, provider, category, quality, status, progress, file_path, file_size, duration_s, error_msg, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        INSERT INTO downloads (id, anilist_id, episode_num, episode_title, series_title, series_cover, provider, category, quality, status, progress, file_path, file_size, duration_s, error_msg, created_at, updated_at, audio_lang, sub_lang)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         "#
     )
     .bind(&record.id)
@@ -962,10 +1112,48 @@ pub async fn create_download(
     .bind(&record.error_msg)
     .bind(now)
     .bind(now)
+    .bind(&record.audio_lang)
+    .bind(&record.sub_lang)
     .execute(pool)
     .await?;
 
     Ok(record.id.clone())
+}
+
+/// The audio and subtitle language codes of a download, once its source is known. A `None`
+/// keeps what is stored.
+pub async fn set_download_languages(
+    pool: &SqlitePool,
+    id: &str,
+    audio_lang: Option<&str>,
+    sub_lang: Option<&str>,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE downloads SET audio_lang = COALESCE(?1, audio_lang), sub_lang = COALESCE(?2, sub_lang) WHERE id = ?3")
+        .bind(audio_lang)
+        .bind(sub_lang)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Adds the language columns of 1.3.0 to a downloads table from an earlier version.
+async fn migrate_download_languages(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(downloads)")
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .map(|r| r.get::<String, _>("name"))
+        .collect();
+    for column in ["audio_lang", "sub_lang"] {
+        if !columns.iter().any(|c| c == column) {
+            // The name is one of the two constants above.
+            sqlx::query(&format!("ALTER TABLE downloads ADD COLUMN {} TEXT", column))
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn update_download_status(
@@ -1100,6 +1288,8 @@ fn map_download_row(r: SqliteRow) -> DownloadRecord {
         error_msg: r.get("error_msg"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
+        audio_lang: r.get("audio_lang"),
+        sub_lang: r.get("sub_lang"),
     }
 }
 

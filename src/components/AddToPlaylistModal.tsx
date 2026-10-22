@@ -6,6 +6,7 @@ import { useUIStore } from '../stores/uiStore';
 import type { EpisodeItem, CustomPlaylist, CustomPlaylistItem } from '../types';
 import { INPUT_CLASS } from './library/format';
 import { PlaylistCollage } from './library/PlaylistCollage';
+import { t } from '../i18n';
 
 interface AddToPlaylistModalProps {
   isOpen: boolean;
@@ -50,8 +51,8 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
 
   const episodeSummary =
     episodes.length === 1
-      ? `${seriesTitle} · Episode ${episodes[0].number}`
-      : `${episodes.length} episodes of ${seriesTitle}`;
+      ? `${seriesTitle} · ${t('common.episodeNumber', { number: episodes[0].number })}`
+      : t('addToPlaylistModal.episodesOf', { count: episodes.length, title: seriesTitle });
 
   const handleClose = () => {
     if (!busy) onClose();
@@ -79,12 +80,12 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
       await addItems.mutateAsync({ playlistId, items });
       showToast({
         type: 'success',
-        title: `Added ${episodes.length} ${episodes.length === 1 ? 'episode' : 'episodes'} to "${playlistName}"`,
+        title: t('addToPlaylistModal.added', { count: episodes.length, name: playlistName }),
       });
       onClose();
       return true;
     } catch (err) {
-      setError(`Could not add to "${playlistName}": ${errorMessage(err)}`);
+      setError(t('addToPlaylistModal.addError', { name: playlistName, error: errorMessage(err) }));
       return false;
     } finally {
       setAddingTo(null);
@@ -116,7 +117,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
           description: newDescription.trim() || undefined,
         });
       } catch (err) {
-        setError(`Could not create the playlist: ${errorMessage(err)}`);
+        setError(t('addToPlaylistModal.createError', { error: errorMessage(err) }));
         return;
       }
 
@@ -136,7 +137,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="Add to playlist"
+      title={t('addToPlaylistModal.title')}
       size="md"
       header={<p className="mt-1 text-xs text-text-muted truncate">{episodeSummary}</p>}
     >
@@ -149,18 +150,18 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
 
         {playlistsQuery.isLoading ? (
           <div className="flex justify-center py-8">
-            <Spinner size="lg" label="Loading playlists" className="text-text-muted" />
+            <Spinner size="lg" label={t('addToPlaylistModal.loading')} className="text-text-muted" />
           </div>
         ) : playlistsQuery.isError ? (
           <ErrorState
             compact
-            title="Could not load your playlists"
+            title={t('addToPlaylistModal.loadError')}
             error={playlistsQuery.error}
             onRetry={() => playlistsQuery.refetch()}
           />
         ) : playlists.length === 0 ? (
           <p className="text-[13px] text-text-muted">
-            You have no playlists yet. Create one to add {episodes.length === 1 ? 'this episode' : 'these episodes'}.
+            {episodes.length === 1 ? t('addToPlaylistModal.noPlaylistsOne') : t('addToPlaylistModal.noPlaylistsMany')}
           </p>
         ) : (
           <ul className="flex flex-col gap-1 max-h-64 overflow-y-auto -mx-2">
@@ -170,8 +171,8 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
                   type="button"
                   onClick={() => handlePick(playlist.id, playlist.name)}
                   disabled={busy}
-                  aria-label={`Add to ${playlist.name}`}
-                  className="flex items-center gap-3 w-full p-2 rounded-md text-left cursor-pointer hover:bg-ink/5 transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:-outline-offset-2"
+                  aria-label={t('addToPlaylistModal.addTo', { name: playlist.name })}
+                  className="flex items-center gap-3 w-full p-2 rounded-md text-start cursor-pointer hover:bg-ink/5 transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:-outline-offset-2"
                 >
                   <PlaylistCollage
                     covers={playlist.covers.slice(0, 1)}
@@ -182,11 +183,11 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
                       {playlist.name}
                     </span>
                     <span className="text-xs text-text-muted truncate">
-                      {playlist.item_count} {playlist.item_count === 1 ? 'episode' : 'episodes'}
+                      {t('common.episodeCount', { count: playlist.item_count })}
                     </span>
                   </span>
                   {addingTo === playlist.id ? (
-                    <Spinner size="sm" label="Adding" className="text-text-muted" />
+                    <Spinner size="sm" label={t('addToPlaylistModal.adding')} className="text-text-muted" />
                   ) : (
                     <Plus className="w-4 h-4 flex-shrink-0 text-text-muted" aria-hidden="true" />
                   )}
@@ -199,14 +200,14 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
         {showForm ? (
           <form onSubmit={handleCreateAndAdd} className="flex flex-col gap-2">
             <label htmlFor="add-to-playlist-name" className="text-[13px] font-medium text-text-primary">
-              New playlist
+              {t('addToPlaylistModal.newPlaylist')}
             </label>
             <input
               id="add-to-playlist-name"
               type="text"
               value={newName}
               onChange={(event) => setNewName(event.target.value)}
-              placeholder="Name"
+              placeholder={t('addToPlaylistModal.name')}
               maxLength={120}
               autoFocus
               data-autofocus
@@ -217,8 +218,8 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
               type="text"
               value={newDescription}
               onChange={(event) => setNewDescription(event.target.value)}
-              placeholder="Description (optional)"
-              aria-label="Description (optional)"
+              placeholder={t('addToPlaylistModal.description')}
+              aria-label={t('addToPlaylistModal.description')}
               maxLength={500}
               disabled={busy}
               className={INPUT_CLASS}
@@ -226,15 +227,17 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
             <div className="flex items-center justify-end gap-2 mt-2">
               {playlists.length > 0 && (
                 <Button variant="ghost" onClick={() => setFormOpen(false)} disabled={busy}>
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
               )}
               <Button type="submit" variant="primary" disabled={!trimmedName || busy}>
                 {createPlaylist.isPending
-                  ? 'Creating…'
+                  ? t('addToPlaylistModal.creating')
                   : addItems.isPending
-                  ? 'Adding…'
-                  : `Create and add ${episodes.length === 1 ? 'episode' : 'episodes'}`}
+                  ? t('addToPlaylistModal.addingEllipsis')
+                  : episodes.length === 1
+                  ? t('addToPlaylistModal.createAndAddOne')
+                  : t('addToPlaylistModal.createAndAddMany')}
               </Button>
             </div>
           </form>
@@ -244,7 +247,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
             <div>
               <Button variant="ghost" size="sm" onClick={() => setFormOpen(true)} disabled={busy}>
                 <Plus className="w-4 h-4" aria-hidden="true" />
-                <span>New playlist</span>
+                <span>{t('addToPlaylistModal.newPlaylist')}</span>
               </Button>
             </div>
           )

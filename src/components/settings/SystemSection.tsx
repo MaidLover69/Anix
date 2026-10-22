@@ -1,15 +1,24 @@
 import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Cpu } from 'lucide-react';
+import { Cpu, FileText, FolderOpen } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Switch } from '../ui/Switch';
 import { Spinner } from '../ui/Spinner';
 import { errorMessage } from '../ui/ErrorState';
 import { Row, Section } from './SettingsLayout';
 import { useSaveSettings, useSettings } from '../../hooks/useSettings';
-import { DESKTOP_STATUS_KEY, useDesktopStatus, useHardwareReport } from '../../hooks/useSystem';
+import {
+  DESKTOP_STATUS_KEY,
+  useDesktopStatus,
+  useHardwareReport,
+  useOpenLogFolder,
+  useSaveDiagnosticsReport,
+} from '../../hooks/useSystem';
 import { useUIStore } from '../../stores/uiStore';
 import type { HardwareReport } from '../../types';
+import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
+import { selfTestSummary } from './PlayerEngineSettings';
+import { t } from '../../i18n';
 
 const VENDOR_LABELS: Record<string, string> = { intel: 'Intel', amd: 'AMD', nvidia: 'NVIDIA' };
 
@@ -21,7 +30,7 @@ const Fact: React.FC<{ label: string; value: React.ReactNode; tone?: 'ok' | 'bad
   <div className="flex items-baseline justify-between gap-4 py-1.5">
     <dt className="text-xs text-text-muted">{label}</dt>
     <dd
-      className={`min-w-0 break-words text-right text-xs select-text ${
+      className={`min-w-0 break-words text-end text-xs select-text ${
         tone === 'ok' ? 'text-state-success' : tone === 'bad' ? 'text-state-error' : 'text-text-secondary'
       }`}
     >
@@ -31,54 +40,63 @@ const Fact: React.FC<{ label: string; value: React.ReactNode; tone?: 'ok' | 'bad
 );
 
 const ReportView: React.FC<{ report: HardwareReport }> = ({ report }) => {
+  const mpvStatus = useEmbeddedMpvStatus().data;
   const va = report.vaapi;
   const gst = report.gstreamer;
   const vaapiValue = !va.vainfo_installed
-    ? 'Not checked (vainfo is not installed)'
+    ? t('systemSection.vaapiNotChecked')
     : va.info
       ? va.info.decode.length > 0
-        ? `Working — decodes ${va.info.decode.join(', ')}`
-        : 'Loaded, but no video decoding'
-      : 'Not working';
+        ? t('systemSection.vaapiWorking', { formats: va.info.decode.join(', ') })
+        : t('systemSection.vaapiNoDecoding')
+      : t('systemSection.vaapiNotWorking');
   const gstValue = gst.va
-    ? `VA plugin found${gst.bundled ? ' (bundled with the AppImage)' : ''}`
+    ? t(gst.bundled ? 'systemSection.gstVaFoundBundled' : 'systemSection.gstVaFound')
     : gst.vaapi
-      ? 'Only the older vaapi plugin found'
-      : 'No VA plugin found';
+      ? t('systemSection.gstOldVaapi')
+      : t('systemSection.gstNoVa');
+  const unknown = t('systemSection.unknown');
 
   return (
     <div className="flex w-full flex-col gap-3">
       <dl className="divide-y divide-border rounded-md ui-inset bg-bg-surface px-3">
-        <Fact label="VA-API" value={vaapiValue} tone={va.ok ? 'ok' : va.vainfo_installed ? 'bad' : 'plain'} />
-        {va.info?.driver && <Fact label="VA-API driver" value={va.info.driver} />}
-        {va.error && <Fact label="vainfo said" value={<span className="whitespace-pre-wrap">{va.error}</span>} />}
-        <Fact label="GStreamer (built-in player)" value={gstValue} tone={gst.va || gst.vaapi ? 'ok' : 'bad'} />
-        <Fact label="Software decoders (libav)" value={gst.libav ? 'Found' : 'Not found'} tone={gst.libav ? 'plain' : 'bad'} />
-        <Fact label="WebKitGTK" value={report.webkitgtk_version ?? 'Unknown'} />
+        <Fact label="VA-API" /* i18n-ignore */ value={vaapiValue} tone={va.ok ? 'ok' : va.vainfo_installed ? 'bad' : 'plain'} />
+        {va.info?.driver && <Fact label={t('systemSection.vaapiDriver')} value={va.info.driver} />}
+        {va.error && <Fact label={t('systemSection.vainfoSaid')} value={<span className="whitespace-pre-wrap">{va.error}</span>} />}
+        <Fact label={t('systemSection.gstreamer')} value={gstValue} tone={gst.va || gst.vaapi ? 'ok' : 'bad'} />
         <Fact
-          label="Display server"
+          label={t('systemSection.softwareDecoders')}
+          value={gst.libav ? t('systemSection.found') : t('systemSection.notFound')} tone={gst.libav ? 'plain' : 'bad'} />
+        <Fact label="WebKitGTK" /* i18n-ignore */ value={report.webkitgtk_version ?? unknown} />
+        <Fact
+          label={t('systemSection.displayServer')}
           value={
-            report.session === 'wayland' ? 'Wayland' : report.session === 'x11' ? 'X11' : 'Unknown'
+            report.session === 'wayland' ? 'Wayland' : report.session === 'x11' ? 'X11' : unknown
           }
         />
         <Fact
-          label="Graphics"
+          label={t('systemSection.graphics')}
           value={
             report.render_node
-              ? `${VENDOR_LABELS[report.gpu_vendor ?? ''] ?? report.gpu_vendor ?? 'Unknown'} (${report.render_node})`
-              : 'No render device'
+              ? `${VENDOR_LABELS[report.gpu_vendor ?? ''] ?? report.gpu_vendor ?? unknown} (${report.render_node})`
+              : t('systemSection.noRenderDevice')
           }
           tone={report.render_node ? 'plain' : 'bad'}
         />
         <Fact
-          label="DMA-BUF renderer"
+          label={t('systemSection.dmabuf')}
           value={
             report.dmabuf_disabled
-              ? `Off (WEBKIT_DISABLE_DMABUF_RENDERER=${report.dmabuf_value ?? '1'}${
-                  report.dmabuf_set_by_app ? ', set by Anix' : ''
-                })`
-              : 'On'
+              ? t(report.dmabuf_set_by_app ? 'systemSection.dmabufOffByApp' : 'systemSection.dmabufOff', {
+                  value: report.dmabuf_value ?? '1',
+                })
+              : t('common.on')
           }
+        />
+        <Fact
+          label={t('systemSection.mpvSelfTest')}
+          value={selfTestSummary(mpvStatus?.selftest)}
+          tone={mpvStatus?.selftest ? (mpvStatus.selftest.ok ? 'ok' : 'bad') : 'plain'}
         />
       </dl>
       <ul className="flex flex-col gap-1.5">
@@ -90,7 +108,7 @@ const ReportView: React.FC<{ report: HardwareReport }> = ({ report }) => {
       </ul>
       {va.info && va.info.profiles.length > 0 && (
         <details className="text-xs text-text-muted">
-          <summary className="cursor-pointer">All VA-API profiles ({va.info.profiles.length})</summary>
+          <summary className="cursor-pointer">{t('systemSection.allProfiles', { count: va.info.profiles.length })}</summary>
           <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-bg-surface p-2 text-[11px] select-text">
             {va.info.profiles.join('\n')}
           </pre>
@@ -109,31 +127,33 @@ export const SystemSection: React.FC = () => {
   const desktop = useDesktopStatus();
   const [checkRequested, setCheckRequested] = useState(false);
   const report = useHardwareReport(checkRequested);
+  const saveReport = useSaveDiagnosticsReport();
+  const openLogs = useOpenLogFolder();
 
   const update = (changes: { minimize_to_tray?: boolean; start_with_desktop?: boolean }) => {
     save.mutate(changes, {
       onSettled: () => queryClient.invalidateQueries({ queryKey: DESKTOP_STATUS_KEY }),
-      onError: (err) => showToast({ type: 'error', title: 'Could not save the setting', message: errorMessage(err) }),
+      onError: (err) => showToast({ type: 'error', title: t('systemSection.couldNotSaveSetting'), message: errorMessage(err) }),
     });
   };
 
   const status = desktop.data;
   const trayOn = settings?.minimize_to_tray ?? false;
   const trayHint = !status
-    ? 'Closing the window hides Anix in the tray; release notifications keep coming.'
+    ? t('systemSection.trayHint')
     : !status.tray_supported
-      ? 'Not available: the AppIndicator library (libayatana-appindicator3) is not installed.'
+      ? t('systemSection.trayUnavailable')
       : !status.tray_host && trayOn
-        ? 'Your desktop shows no tray right now (on GNOME, install the AppIndicator extension), so closing the window still quits.'
-        : 'Closing the window hides Anix in the tray; release notifications keep coming.';
+        ? t('systemSection.trayNoHost')
+        : t('systemSection.trayHint');
   const autostartHint =
     status?.autostart_installed && status.autostart_path
-      ? `Starts hidden in the tray at login (${status.autostart_path}).`
-      : 'Starts Anix hidden in the tray when you log in. Needs the tray setting.';
+      ? t('systemSection.autostartHintPath', { path: status.autostart_path })
+      : t('systemSection.autostartHint');
 
   return (
-    <Section title="System">
-      <Row label="Keep running in the tray when the window is closed" hint={trayHint}>
+    <Section title={t('systemSection.title')} id="system">
+      <Row label={t('systemSection.keepInTray')} hint={trayHint}>
         {({ labelId, hintId }) => (
           <Switch
             aria-labelledby={labelId}
@@ -144,7 +164,7 @@ export const SystemSection: React.FC = () => {
           />
         )}
       </Row>
-      <Row label="Start with the desktop session (minimised to tray)" hint={autostartHint}>
+      <Row label={t('systemSection.startWithDesktop')} hint={autostartHint}>
         {({ labelId, hintId }) => (
           <Switch
             aria-labelledby={labelId}
@@ -156,41 +176,92 @@ export const SystemSection: React.FC = () => {
         )}
       </Row>
       <Row
-        label="Hardware video decoding"
-        hint="Checks VA-API, the GStreamer plugins the built-in player uses and the display setup. Nothing is changed."
+        label={t('systemSection.hardwareDecoding')}
+        hint={t('systemSection.hardwareDecodingHint')}
         stacked={checkRequested}
       >
-        {() =>
-          !checkRequested ? (
-            <Button variant="secondary" size="sm" onClick={() => setCheckRequested(true)}>
-              <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
-              Check
-            </Button>
-          ) : report.isPending || report.isFetching ? (
-            <div aria-busy="true" className="flex items-center gap-2 text-xs text-text-muted">
-              <Spinner size="sm" label="Checking" />
-              Checking…
-            </div>
-          ) : report.isError ? (
-            <div className="flex w-full items-center justify-between gap-4">
-              <p role="alert" className="text-xs text-state-error select-text">
-                The check failed: {errorMessage(report.error)}
-              </p>
-              <Button variant="ghost" size="sm" onClick={() => report.refetch()}>
-                Retry
-              </Button>
-            </div>
-          ) : report.data ? (
-            <div className="flex w-full flex-col gap-2">
-              <ReportView report={report.data} />
+        {() => {
+          // One button stays mounted through every state, so it keeps keyboard focus.
+          const busy = checkRequested && (report.isPending || report.isFetching);
+          return (
+            <div aria-busy={busy || undefined} className={checkRequested ? 'flex w-full flex-col gap-2' : 'flex'}>
+              {checkRequested && !busy && report.isError && (
+                <p role="alert" className="text-xs text-state-error select-text">
+                  {t('systemSection.checkFailed', { error: errorMessage(report.error) })}
+                </p>
+              )}
+              {checkRequested && !busy && report.data && <ReportView report={report.data} />}
               <div>
-                <Button variant="ghost" size="sm" onClick={() => report.refetch()}>
-                  Check again
+                <Button
+                  variant={checkRequested ? 'ghost' : 'secondary'}
+                  size="sm"
+                  aria-disabled={busy || undefined}
+                  onClick={() => {
+                    if (busy) return;
+                    if (checkRequested) report.refetch();
+                    else setCheckRequested(true);
+                  }}
+                >
+                  {busy ? (
+                    <Spinner size="sm" label={t('systemSection.checking')} />
+                  ) : (
+                    !checkRequested && <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
+                  )}
+                  {busy
+                    ? t('systemSection.checkingEllipsis')
+                    : !checkRequested
+                      ? t('systemSection.check')
+                      : report.isError
+                        ? t('common.retry')
+                        : t('systemSection.checkAgain')}
                 </Button>
               </div>
             </div>
-          ) : null
-        }
+          );
+        }}
+      </Row>
+      <Row
+        label={t('systemSection.diagnostics')}
+        hint={t('systemSection.diagnosticsHint')}
+        keywords={t('systemSection.diagnosticsKeywords')}
+      >
+        {() => (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={saveReport.isPending}
+            onClick={() =>
+              saveReport.mutate(undefined, {
+                onSuccess: (path) => path && showToast({ type: 'success', title: t('systemSection.reportSaved'), message: path }),
+                onError: (err) => showToast({ type: 'error', title: t('systemSection.couldNotSaveReport'), message: errorMessage(err) }),
+              })
+            }
+          >
+            {saveReport.isPending ? <Spinner size="sm" label={t('systemSection.savingReport')} /> : <FileText aria-hidden="true" className="h-3.5 w-3.5" />}
+            {t('systemSection.saveReport')}
+          </Button>
+        )}
+      </Row>
+      <Row
+        label={t('systemSection.logFolder')}
+        hint={t('systemSection.logFolderHint')}
+        keywords={t('systemSection.logFolderKeywords')}
+      >
+        {() => (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={openLogs.isPending}
+            onClick={() =>
+              openLogs.mutate(undefined, {
+                onError: (err) => showToast({ type: 'error', title: t('systemSection.couldNotOpenLogFolder'), message: errorMessage(err) }),
+              })
+            }
+          >
+            <FolderOpen aria-hidden="true" className="h-3.5 w-3.5" />
+            {t('systemSection.openLogFolder')}
+          </Button>
+        )}
       </Row>
     </Section>
   );

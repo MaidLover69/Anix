@@ -9,6 +9,7 @@ import { PlayerStatus } from '../components/player/PlayerStatus';
 import type { PlayerStatusAction } from '../components/player/PlayerStatus';
 import { PlayerTopBar } from '../components/player/PlayerTopBar';
 import { VideoPlayer } from '../components/player/VideoPlayer';
+import { useEmbeddedMpvStatus } from '../hooks/useEmbeddedMpv';
 import { noPluginsDetail, noPluginsTitle } from '../components/NoPluginsNotice';
 import { sameEpisode } from '../components/player/format';
 import { errorMessage } from '../components/ui/ErrorState';
@@ -21,15 +22,18 @@ import { PLUGIN_SETTINGS_PATH, useStreamingProviders } from '../hooks/usePlugins
 import { AUTO_PROVIDER, DEFAULT_SETTINGS, useSettings } from '../hooks/useSettings';
 import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
-import { versionLabel } from '../lib/languages';
+import { describeStream, sourceLabel } from '../lib/languages';
+import { splitPlayFailure } from '../lib/playFailure';
+import { useRememberedSource } from '../hooks/useRememberedSource';
 import { invoke } from '@tauri-apps/api/core';
 import {
   LOCAL_PROVIDER,
-  LOCAL_PROVIDER_LABEL,
+  localProviderLabel,
   useLocalEpisodeSource,
   useLocalMedia,
 } from '../hooks/useLocalMedia';
 import { usePlayerStore } from '../stores/playerStore';
+import { t } from '../i18n';
 import type { CustomPlaylistItem, EpisodeItem } from '../types';
 
 type Category = 'sub' | 'dub';
@@ -45,11 +49,14 @@ interface EpisodeTarget {
 }
 
 const NO_EPISODES: number[] = [];
+/** The "embedded mpv did not start" notice is shown once per run of the app. */
+let mpvStartNoticeShown = false;
 
 function parseAnimeId(value: string | undefined): number | null {
-  if (!value || !/^\d+$/.test(value)) return null;
+  if (!value || !/^-?\d+$/.test(value)) return null;
   const id = Number(value);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
+  // Negative ids are anime AniList does not list (see the backend's `catalogue::ids`).
+  return Number.isSafeInteger(id) && id !== 0 ? id : null;
 }
 
 function parseEpisodeNumber(value: string | undefined): number | null {
@@ -77,7 +84,7 @@ function queueTarget(item: CustomPlaylistItem): EpisodeTarget {
     anilistId: item.anilist_id,
     episode: item.episode_num,
     category: item.category === 'dub' ? 'dub' : item.category === 'sub' ? 'sub' : null,
-    label: `${item.series_title} · Episode ${item.episode_num}`,
+    label: t('watch.seriesEpisode', { title: item.series_title, number: item.episode_num }),
   };
 }
 
@@ -92,9 +99,9 @@ export const Watch: React.FC = () => {
       <div className="dark-scope relative h-full w-full overflow-hidden bg-black">
         <PlayerStatus
           kind="error"
-          title="Episode not found"
-          detail="This link does not point to an anime episode."
-          actions={[{ label: 'Go to Home', onClick: () => navigate('/', { replace: true }), primary: true }]}
+          title={t('watch.episodeNotFound')}
+          detail={t('watch.episodeNotFoundDetail')}
+          actions={[{ label: t('watch.goHome'), onClick: () => navigate('/', { replace: true }), primary: true }]}
         />
       </div>
     );
@@ -131,6 +138,25 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const settingsQuery = useSettings();
   const settings = settingsQuery.data ?? DEFAULT_SETTINGS;
   const settingsReady = !settingsQuery.isPending;
+  // Embedded mpv when this run started it; a stream it cannot play falls back to the web player.
+  // A change of the engine setting applies after a restart, so the running engine decides.
+  const mpvStatus = useEmbeddedMpvStatus();
+  const [mpvFailed, setMpvFailed] = useState(false);
+  const useMpv = mpvStatus.data?.available === true && !mpvFailed;
+  const handleMpvFail = useCallback(
+    (message: string) => {
+      setMpvFailed(true);
+      notify({ text: t('watch.switchedToWebPlayer', { message }), tone: 'error' });
+    },
+    [notify]
+  );
+  // Embedded mpv was wanted but did not start (libmpv missing, GL failed): say why, once a run.
+  const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available ? mpvStatus.data.error : null;
+  useEffect(() => {
+    if (!mpvStartError || mpvStartNoticeShown) return;
+    mpvStartNoticeShown = true;
+    notify({ text: t('watch.usingWebPlayer', { message: mpvStartError }), tone: 'error' });
+  }, [mpvStartError, notify]);
 
   // Provider keys are plugin ids; which ones exist, and their names, come from the plugin list.
   const providers = useStreamingProviders();
@@ -154,8 +180,17 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // Category and provider come from the URL on every render; settings fill in what the URL
   // leaves open. `prov=auto`, a missing `prov` and an unknown key all mean "no choice".
   const urlCategory = searchParams.get('cat');
+  // The server last picked for this anime goes first, with its audio, until the URL says otherwise.
+  const { remembered } = useRememberedSource(anilistId);
+  const rememberedUsable = !!remembered && providers.accepts(remembered.provider);
   const category: Category =
-    urlCategory === 'sub' || urlCategory === 'dub' ? urlCategory : settings.prefer_dub ? 'dub' : 'sub';
+    urlCategory === 'sub' || urlCategory === 'dub'
+      ? urlCategory
+      : rememberedUsable
+      ? remembered.category
+      : settings.prefer_dub
+      ? 'dub'
+      : 'sub';
 
   // Provider keys picked in the server dialog during this visit, which may be newer than
   // the plugin list this render has.
@@ -165,7 +200,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       ? key
       : null;
   const explicitProvider = knownProvider(searchParams.get('prov'));
-  const preferredProvider = knownProvider(settings.preferred_provider);
+  const preferredProvider =
+    (remembered?.category === category ? knownProvider(remembered.provider) : null) ??
+    knownProvider(settings.preferred_provider);
   const requestedProvider = explicitProvider ?? preferredProvider;
   // "Your files": the episode plays from a file linked to the title, through the proxy.
   const localRequested = searchParams.get('prov') === LOCAL_PROVIDER;
@@ -189,6 +226,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   });
   const sources = localRequested ? localQuery.data?.sources : sourcesQuery.data;
   const servingProvider = sources?.provider || null;
+  // What each server's stream was like when it played in this visit, for the server list.
+  const seenStreams = useRef<Record<string, string>>({});
+  const servingDescription = servingProvider && !localRequested ? describeStream(sources, category) : null;
+  if (servingProvider && servingDescription) seenStreams.current[`${servingProvider}:${category}`] = servingDescription;
 
   const proxyQuery = useStreamProxyBase();
 
@@ -291,9 +332,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const previousTarget = useMemo<EpisodeTarget | null>(() => {
     if (inPlaylist) return queuePosition > 0 ? queueTarget(customQueue[queuePosition - 1]) : null;
-    const before = episodes.filter((ep) => ep.number < episodeNumber - 0.001);
+    const before = episodes.filter((ep) => ep.number < episodeNumber - 0.001); // i18n-ignore
     const ep = before[before.length - 1];
-    return ep ? { anilistId, episode: ep.number, category: null, label: `Episode ${ep.number}` } : null;
+    return ep ? { anilistId, episode: ep.number, category: null, label: t('common.episodeNumber', { number: ep.number }) } : null;
   }, [inPlaylist, queuePosition, customQueue, episodes, episodeNumber, anilistId]);
 
   const nextTarget = useMemo<EpisodeTarget | null>(() => {
@@ -302,10 +343,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     }
     if (pendingQueue.length > 0) {
       const episode = pendingQueue[0];
-      return { anilistId, episode, category: null, label: `Queued: Episode ${episode}`, queued: true };
+      return { anilistId, episode, category: null, label: t('watch.queuedEpisode', { number: episode }), queued: true };
     }
     const ep = episodes.find((candidate) => candidate.number > episodeNumber + 0.001);
-    return ep ? { anilistId, episode: ep.number, category: null, label: `Episode ${ep.number}` } : null;
+    return ep ? { anilistId, episode: ep.number, category: null, label: t('common.episodeNumber', { number: ep.number }) } : null;
   }, [inPlaylist, queuePosition, customQueue, pendingQueue, episodes, episodeNumber, anilistId]);
 
   // Set when an episode ended and the next one was started for the user: that one plays
@@ -393,15 +434,15 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       filePath: localFile,
       player: settings.external_player === 'vlc' ? 'vlc' : 'mpv',
     })
-      .then(() => notify({ text: `Opened in ${externalPlayerName}` }))
+      .then(() => notify({ text: t('watch.openedIn', { player: externalPlayerName }) }))
       .catch((err) =>
-        notify({ text: `Could not open the external player: ${errorMessage(err)}`, tone: 'error' })
+        notify({ text: t('watch.couldNotOpenExternal', { message: errorMessage(err) }), tone: 'error' })
       );
   }, [localFile, settings.external_player, externalPlayerName, notify]);
   const localErrorActions: PlayerStatusAction[] = localRequested
     ? [
-        ...(localFile ? [{ label: `Open in ${externalPlayerName}`, onClick: openLocalExternally }] : []),
-        ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead }] : []),
+        ...(localFile ? [{ label: t('watch.openIn', { player: externalPlayerName }), onClick: openLocalExternally }] : []),
+        ...(streamInstead ? [{ label: t('watch.streamInstead'), onClick: streamInstead }] : []),
       ]
     : [];
   const openServers = useCallback(() => setServersOpen(true), []);
@@ -415,27 +456,31 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   };
 
   const previousStep: EpisodeStep | null = previousTarget && {
-    label: `Previous: ${previousTarget.label} (Shift+P)`,
+    label: t('watch.previousStep', { label: previousTarget.label }),
     onClick: () => goTo(previousTarget),
   };
   const nextStep: EpisodeStep | null = nextTarget && {
-    label: `Next: ${nextTarget.label} (Shift+N)`,
+    label: t('watch.nextStep', { label: nextTarget.label }),
     onClick: () => goTo(nextTarget),
   };
 
   const shownProvider = servingProvider ?? (sourcesQuery.isFetching ? explicitProvider : null);
   const metaLine = [
-    `Episode ${episodeNumber}`,
+    t('common.episodeNumber', { number: episodeNumber }),
     localRequested
       ? null
       : sources?.language
-      ? `${category === 'dub' ? 'Dub' : 'Sub'}: ${versionLabel(sources.language, category)}`
+      ? sourceLabel(sources.language, category)
       : category === 'dub'
-      ? 'Dub'
-      : 'Sub',
-    localRequested ? LOCAL_PROVIDER_LABEL : shownProvider ? providerLabel(shownProvider) : null,
+      ? t('common.dub')
+      : t('common.sub'),
+    localRequested ? localProviderLabel() : shownProvider ? providerLabel(shownProvider) : null,
     inPlaylist
-      ? `${activePlaylistName ?? 'Playlist'} ${queuePosition + 1}/${customQueue.length}`
+      ? t('watch.playlistPosition', {
+          name: activePlaylistName ?? t('watch.playlist'),
+          position: queuePosition + 1,
+          total: customQueue.length,
+        })
       : null,
   ]
     .filter(Boolean)
@@ -443,13 +488,13 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const sourceErrorActions: PlayerStatusAction[] = [
     ...verification.sites.map((site) => ({
-      label: `Verify ${site.label}`,
+      label: t('watch.verifySite', { site: site.label }),
       onClick: () => verification.verify(site.site),
       primary: true,
     })),
-    { label: 'Retry', onClick: handleReload, primary: verification.sites.length === 0 },
-    { label: 'Change server', onClick: openServers },
-    ...(handleTryOtherServers ? [{ label: 'Try other servers', onClick: handleTryOtherServers }] : []),
+    { label: t('common.retry'), onClick: handleReload, primary: verification.sites.length === 0 },
+    { label: t('watch.changeServer'), onClick: openServers },
+    ...(handleTryOtherServers ? [{ label: t('watch.tryOtherServers'), onClick: handleTryOtherServers }] : []),
   ];
 
   let status: React.ReactNode = null;
@@ -458,25 +503,25 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title="This anime could not be loaded"
+        title={t('watch.animeLoadFailed')}
         detail={errorMessage(detailsQuery.error)}
-        actions={[{ label: 'Retry', onClick: () => detailsQuery.refetch(), primary: true }]}
+        actions={[{ label: t('common.retry'), onClick: () => detailsQuery.refetch(), primary: true }]}
       />
     );
   } else if (!details || !settingsReady || !providers.settled) {
-    status = <PlayerStatus kind="loading" title="Loading…" />;
+    status = <PlayerStatus kind="loading" title={t('common.loading')} />;
   } else if (localRequested && localQuery.isPending) {
-    status = <PlayerStatus kind="loading" title={`Opening your file of Episode ${episodeNumber}…`} />;
+    status = <PlayerStatus kind="loading" title={t('watch.openingLocalFile', { number: episodeNumber })} />;
   } else if (localRequested && localQuery.isError) {
     status = (
       <PlayerStatus
         kind="error"
-        title={`Your file of Episode ${episodeNumber} could not be opened`}
+        title={t('watch.localFileFailed', { number: episodeNumber })}
         detail={errorMessage(localQuery.error)}
         actions={[
-          { label: 'Retry', onClick: handleReload, primary: true },
-          ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead }] : []),
-          { label: 'Back', onClick: handleBack },
+          { label: t('common.retry'), onClick: handleReload, primary: true },
+          ...(streamInstead ? [{ label: t('watch.streamInstead'), onClick: streamInstead }] : []),
+          { label: t('common.back'), onClick: handleBack },
         ]}
       />
     );
@@ -484,11 +529,11 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={`Episode ${episodeNumber} is not in your files`}
-        detail="No linked file or finished download has this episode number. Link more files on the title's page, or stream it."
+        title={t('watch.notInFiles', { number: episodeNumber })}
+        detail={t('watch.notInFilesDetail')}
         actions={[
-          ...(streamInstead ? [{ label: 'Stream instead', onClick: streamInstead, primary: true }] : []),
-          { label: 'Back', onClick: handleBack, primary: !streamInstead },
+          ...(streamInstead ? [{ label: t('watch.streamInstead'), onClick: streamInstead, primary: true }] : []),
+          { label: t('common.back'), onClick: handleBack, primary: !streamInstead },
         ]}
       />
     );
@@ -498,10 +543,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       <PlayerStatus
         kind="setup"
         title={noPluginsTitle(providers.installed)}
-        detail={`${noPluginsDetail(providers.installed)} Episode ${episodeNumber} cannot be played until then.`}
+        detail={t('watch.noPluginsEpisode', { detail: noPluginsDetail(providers.installed), number: episodeNumber })}
         actions={[
-          { label: 'Open plugin settings', onClick: () => navigate(PLUGIN_SETTINGS_PATH), primary: true },
-          { label: 'Back', onClick: handleBack },
+          { label: t('watch.openPluginSettings'), onClick: () => navigate(PLUGIN_SETTINGS_PATH), primary: true },
+          { label: t('common.back'), onClick: handleBack },
         ]}
       />
     );
@@ -509,22 +554,25 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="loading"
-        title={`Finding a stream for Episode ${episodeNumber}…`}
+        title={t('watch.findingStream', { number: episodeNumber })}
         detail={
           sourcesQuery.fetchStatus === 'paused'
-            ? 'Waiting for a network connection.'
+            ? t('watch.waitingForNetwork')
             : requestedProvider
-            ? `Asking ${providerLabel(requestedProvider)}. This can take up to half a minute.`
-            : 'Asking the providers. This can take up to half a minute.'
+            ? t('watch.askingProvider', { provider: providerLabel(requestedProvider) })
+            : t('watch.askingProviders')
         }
       />
     );
   } else if (!localRequested && sourcesQuery.isError) {
+    // The reason in plain words; the list per server only under Details.
+    const failure = splitPlayFailure(errorMessage(sourcesQuery.error, t('watch.noStreamFallback')));
     status = (
       <PlayerStatus
         kind="error"
-        title={`No stream found for Episode ${episodeNumber}`}
-        detail={errorMessage(sourcesQuery.error, 'The providers did not return a stream.')}
+        title={t('watch.noStreamFound', { number: episodeNumber })}
+        detail={failure.reason}
+        moreDetail={failure.details}
         actions={sourceErrorActions}
       />
     );
@@ -532,20 +580,20 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={`No stream found for Episode ${episodeNumber}`}
-        detail="The provider answered, but without any stream for this episode."
+        title={t('watch.noStreamFound', { number: episodeNumber })}
+        detail={t('watch.noStreamInAnswer')}
         actions={sourceErrorActions}
       />
     );
   } else if (proxyQuery.isPending) {
-    status = <PlayerStatus kind="loading" title="Preparing playback…" />;
+    status = <PlayerStatus kind="loading" title={t('watch.preparingPlayback')} />;
   } else if (!proxyQuery.data) {
     status = (
       <PlayerStatus
         kind="error"
-        title="The stream proxy is not available"
-        detail={errorMessage(proxyQuery.error, 'The backend did not report a proxy address.')}
-        actions={[{ label: 'Retry', onClick: () => proxyQuery.refetch(), primary: true }]}
+        title={t('watch.proxyUnavailable')}
+        detail={errorMessage(proxyQuery.error, t('watch.proxyNoAddress'))}
+        actions={[{ label: t('common.retry'), onClick: () => proxyQuery.refetch(), primary: true }]}
       />
     );
   } else {
@@ -555,16 +603,16 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   return (
     <div
       ref={setContainer}
-      className={`dark-scope overflow-hidden bg-black ${miniPlayer ? 'fixed inset-0 z-[1000]' : 'relative h-full w-full'}`}
+      className={`dark-scope overflow-hidden ${useMpv && playable ? '' : 'bg-black'} ${miniPlayer ? 'fixed inset-0 z-[1000]' : 'relative h-full w-full'}`}
     >
       {playable && sources && proxyQuery.data ? (
         <VideoPlayer
           key={`${anilistId}:${episodeNumber}:${category}:${
             localRequested ? LOCAL_PROVIDER : requestedProvider ?? AUTO_PROVIDER
-          }:${localRequested ? localQuery.dataUpdatedAt : sourcesQuery.dataUpdatedAt}`}
+          }:${localRequested ? localQuery.dataUpdatedAt : sourcesQuery.dataUpdatedAt}:${useMpv ? 'mpv' : 'web'}`}
           anilistId={anilistId}
           malId={malId}
-          animeTitle={animeTitle || `Anime ${anilistId}`}
+          animeTitle={animeTitle || `Anime ${anilistId}` /* i18n-ignore: stored as the series title in history */}
           animeCover={animeCover}
           episodeNumber={episodeNumber}
           episodeTitle={episodeTitle}
@@ -573,13 +621,16 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           sources={sources}
           provider={localRequested ? LOCAL_PROVIDER : servingProvider ?? requestedProvider ?? AUTO_PROVIDER}
           providerName={
-            localRequested ? LOCAL_PROVIDER_LABEL : servingProvider ? providerLabel(servingProvider) : null
+            localRequested ? localProviderLabel() : servingProvider ? providerLabel(servingProvider) : null
           }
           proxyBase={proxyQuery.data}
           loadKey={localRequested ? localQuery.dataUpdatedAt : sourcesQuery.dataUpdatedAt}
           autoplay={settings.autoplay || continuingRef.current}
-          autoSkip={settings.auto_skip_intro_outro}
+          autoSkip={{ intro: settings.skip_intro, outro: settings.skip_outro }}
           externalPlayer={settings.external_player === 'vlc' ? 'vlc' : 'mpv'}
+          engineKind={useMpv ? 'mpv' : 'web'}
+          onEngineFail={handleMpvFail}
+          openExternally={settings.player_engine === 'external'}
           previous={previousStep}
           next={nextStep}
           queuedCount={pendingQueue.length}
@@ -600,7 +651,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       ) : (
         <>
           <PlayerTopBar
-            title={animeTitle || (detailsQuery.isError ? 'Anime' : 'Loading…')}
+            title={animeTitle || (detailsQuery.isError ? t('watch.anime') : t('common.loading'))}
             meta={metaLine}
             onBack={handleBack}
           />
@@ -616,7 +667,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         episodes={episodes}
         currentEpisodeNumber={episodeNumber}
         onSelectEpisode={(episode) =>
-          goTo({ anilistId, episode, category: null, label: `Episode ${episode}` })
+          goTo({ anilistId, episode, category: null, label: t('common.episodeNumber', { number: episode }) })
         }
         queuedEpisodes={queuedEpisodes}
         onToggleQueueEpisode={(episode) =>
@@ -636,7 +687,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
               anilistId,
               episode: pendingQueue[0],
               category: null,
-              label: `Episode ${pendingQueue[0]}`,
+              label: t('common.episodeNumber', { number: pendingQueue[0] }),
               queued: true,
             });
           }
@@ -664,6 +715,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         errorMessage={episodesQuery.isError && !episodesData ? errorMessage(episodesQuery.error) : null}
         initialCategory={category}
         activeProvider={servingProvider}
+        streamFacts={seenStreams.current}
         onSelectServer={handleSelectServer}
         container={container}
       />

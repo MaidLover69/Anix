@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './Button';
+import { t } from '../../i18n';
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 
@@ -16,6 +17,8 @@ export interface ModalProps {
   size?: ModalSize;
   /** Extra content under the title (a caption, a toggle). */
   header?: React.ReactNode;
+  /** Id of the element that describes the dialog (`aria-describedby`). */
+  describedBy?: string;
   /** Action row; its children are right-aligned. */
   footer?: React.ReactNode;
   /** Drops the title row and close button; the title is still read out. */
@@ -57,6 +60,7 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   size = 'lg',
   header,
+  describedBy,
   footer,
   hideHeader = false,
   padded = true,
@@ -159,6 +163,7 @@ export const Modal: React.FC<ModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={describedBy}
         tabIndex={-1}
         className={clsx(
           'ui-modal relative flex w-full flex-col rounded-2xl border border-border bg-bg-elevated shadow-pop outline-none animate-scale-up',
@@ -184,9 +189,9 @@ export const Modal: React.FC<ModalProps> = ({
               icon
               variant="ghost"
               size="sm"
-              aria-label="Close"
+              aria-label={t('common.close')}
               onClick={onClose}
-              className="-mr-2 -mt-1"
+              className="-me-2 -mt-1"
             >
               <X aria-hidden="true" className="h-4 w-4" />
             </Button>

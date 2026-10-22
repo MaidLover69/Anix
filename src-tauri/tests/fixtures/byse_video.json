@@ -1,0 +1,14 @@
+{
+ "code": "abc123",
+ "title": "fixture",
+ "playback": {
+  "algorithm": "AES-256-GCM",
+  "version": 0,
+  "iv": "YW5peGZpeHR1cmUx",
+  "payload": "AWqT1V0-tTinhpaWv3vqacWDLMbLDQyF6Lw6l6qtWjb_HWSu1FBJi6sN4jQBMukO3DaoAQ-zyxjWW4M1z8MCDnlx8km2C6HZGdHCjDssFNfF9fpkGTDyhhjW1XPPWtTYHR1-1zcacpITCX0-09jgV2KQHrQF",
+  "key_parts": [
+   "MDEyMzQ1Njc4OWFiY2RlZg",
+   "MDEyMzQ1Njc4OWFiY2RlZg"
+  ]
+ }
+}

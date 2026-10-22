@@ -84,6 +84,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The embedded mpv player draws under the page: everything above its region is see-through
+   (the title bar keeps a background of its own). */
+html.mpv-video,
+html.mpv-video body,
+html.mpv-video .ui-app,
+html.mpv-video ::backdrop {
+  background: transparent !important;
+}
+html.mpv-video .ui-app > :first-child {
+  background-color: rgb(var(--bg-page));
+}
+
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
@@ -122,11 +134,13 @@ body {
   outline-offset: -1px;
 }
 
-/* Surfaces that only hold focus for the keyboard trap (dialogs, drawers, menus) are not
-   controls, so they get no ring of their own. */
+/* Surfaces that only hold focus for the keyboard trap (dialogs, drawers, menus), or the
+   heading a new screen starts at, are not controls, so they get no ring of their own. */
 [role="dialog"]:focus-visible,
 [role="listbox"]:focus-visible,
-[role="menu"]:focus-visible {
+[role="menu"]:focus-visible,
+main:focus-visible,
+h1[tabindex="-1"]:focus-visible {
   outline: none;
 }
 
@@ -180,6 +194,11 @@ option:checked, option:hover {
 .select-text {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Letter spacing breaks the joins of Arabic script. */
+:root[dir="rtl"] :is(.tracking-wide, .tracking-wider, .tracking-widest) {
+  letter-spacing: 0;
 }
 
 /* Respect the OS "reduce motion" setting */

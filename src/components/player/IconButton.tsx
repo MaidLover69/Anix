@@ -15,8 +15,8 @@ export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
       type={type}
       aria-label={label}
       title={title ?? label}
-      className={`inline-flex h-9 min-w-9 flex-shrink-0 items-center justify-center rounded-md px-2 text-[13px] font-medium tabular-nums cursor-pointer transition-colors active:bg-white/20 disabled:opacity-40 disabled:pointer-events-none ${
-        active ? 'bg-white/10 text-accent-300' : 'text-white hover:bg-white/10'
+      className={`inline-flex h-9 min-w-9 flex-shrink-0 items-center justify-center rounded-md px-2 text-[13px] font-medium tabular-nums cursor-pointer transition-colors enabled:active:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed ${
+        active ? 'bg-white/10 text-accent-300' : 'text-white enabled:hover:bg-white/10'
       } ${className}`}
       {...rest}
     >

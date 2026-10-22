@@ -679,6 +679,8 @@ fn handle_request(request: Request, token: &str, proxy_base: &str) {
     if request_token != token {
         return respond_text(request, 403, "Forbidden");
     }
+    // Playback keeps the background plugin check waiting.
+    crate::providers::manager::note_lookup();
 
     let Some(request) = route_local(request, endpoint) else {
         return;

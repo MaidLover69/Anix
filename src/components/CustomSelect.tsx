@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect, useId } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import clsx from 'clsx';
+import { t } from '../i18n';
 
 interface Option {
   value: string;
   label: string;
   /** Options with a group get a heading above the first of a run of the same group. */
   group?: string;
+  /** The label's language, when it differs from the interface's (a language's own name). */
+  lang?: string;
 }
 
 interface CustomSelectProps {
@@ -21,13 +24,14 @@ interface CustomSelectProps {
   disabled?: boolean;
   'aria-label'?: string;
   'aria-labelledby'?: string;
+  'aria-describedby'?: string;
 }
 
 export const CustomSelect: React.FC<CustomSelectProps> = ({
   value,
   onChange,
   options,
-  placeholder = 'Select…',
+  placeholder = t('customSelect.placeholder'),
   className = '',
   placement = 'down',
   size = 'md',
@@ -133,13 +137,17 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         aria-controls={isOpen ? listId : undefined}
         aria-label={aria['aria-label']}
         aria-labelledby={aria['aria-labelledby']}
+        aria-describedby={aria['aria-describedby']}
+        aria-activedescendant={isOpen && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
         onClick={() => (isOpen ? setIsOpen(false) : openMenu())}
         className={clsx(
           'ui-select flex w-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-bg-input px-3 text-[13px] font-medium text-text-primary cursor-pointer select-none transition-colors hover:bg-ink/10 disabled:opacity-40 disabled:pointer-events-none',
           size === 'sm' ? 'h-8' : 'h-9'
         )}
       >
-        <span className="truncate">{selectedOption ? selectedOption.label : placeholder}</span>
+        <span className="truncate" lang={selectedOption?.lang} title={selectedOption?.label}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
         <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
       </button>
 
@@ -149,7 +157,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           id={listId}
           role="listbox"
           className={clsx(
-            'ui-menu absolute right-0 z-50 max-h-60 w-full min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-pop animate-fade-in',
+            'ui-menu absolute end-0 z-50 max-h-60 w-full min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-pop animate-fade-in',
             placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
           )}
         >
@@ -168,6 +176,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
                   </div>
                 )}
                 <div
+                  id={`${listId}-${index}`}
                   role="option"
                   aria-selected={isSelected}
                   data-index={index}
@@ -183,7 +192,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
                     index === activeIndex && 'bg-ink/10'
                   )}
                 >
-                  <span className="truncate">{opt.label}</span>
+                  <span className="truncate" lang={opt.lang}>
+                    {opt.label}
+                  </span>
                   {isSelected && <Check aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}
                 </div>
               </React.Fragment>

@@ -34,13 +34,14 @@ use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinSet;
 
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(5);
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(9);
-const EPISODES_TIMEOUT: Duration = Duration::from_secs(9);
-const SERVER_TIMEOUT: Duration = Duration::from_secs(14);
+/// Some sites take 10–15 s before their first byte; these leave them room.
+pub const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
+pub const EPISODES_TIMEOUT: Duration = Duration::from_secs(20);
+pub const SERVER_TIMEOUT: Duration = Duration::from_secs(20);
 /// Servers of one plugin asked at the same time.
 const SERVER_CONCURRENCY: usize = 3;
 /// Titles a search is repeated with before the anime counts as not found.
-const MAX_SEARCH_TITLES: usize = 3;
+const MAX_SEARCH_TITLES: usize = 4;
 /// The server name used when a plugin lists none.
 pub const DEFAULT_SERVER: &str = "default";
 

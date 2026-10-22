@@ -1,9 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { Bookmark, Play } from 'lucide-react';
+import React, { useEffect, useId, useState } from 'react';
+import { Play } from 'lucide-react';
 import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
 import { Button } from './ui/Button';
 import { SegmentedControl } from './ui/SegmentedControl';
+import { errorMessage } from './ui/ErrorState';
+import { CustomSelect } from './CustomSelect';
+import type { PosterMenuTarget } from './PosterContextMenu';
+import { LIST_STATUS_OPTIONS, useListStatus, useSetListStatus, useWatchlist } from '../hooks/useLibrary';
+import { useUIStore } from '../stores/uiStore';
+import type { ListStatusValue } from '../types';
+import { t } from '../i18n';
 
 type Category = 'sub' | 'dub';
 
@@ -12,9 +19,8 @@ interface DetailStickyBarProps {
   anchorRef: React.RefObject<HTMLElement>;
   title: string;
   cover: string | null;
-  inWatchlist: boolean;
-  watchlistPending?: boolean;
-  onToggleWatchlist: () => void;
+  /** The anime the status dropdown files. */
+  listTarget: PosterMenuTarget;
   playLabel: string;
   playDisabled?: boolean;
   onPlay: () => void;
@@ -45,16 +51,14 @@ function useScrolledPast(anchorRef: React.RefObject<HTMLElement>): boolean {
 
 /**
  * A slim frosted bar pinned to the top of the detail page while the hero is out of view: the
- * title, the watchlist toggle, the main play button and the audio switch. It is a sticky,
+ * title, the list status, the main play button and the audio switch. It is a sticky,
  * zero-height row of the page, so it takes no space and never covers the hero.
  */
 export const DetailStickyBar: React.FC<DetailStickyBarProps> = ({
   anchorRef,
   title,
   cover,
-  inWatchlist,
-  watchlistPending,
-  onToggleWatchlist,
+  listTarget,
   playLabel,
   playDisabled,
   onPlay,
@@ -70,7 +74,7 @@ export const DetailStickyBar: React.FC<DetailStickyBarProps> = ({
       {visible && (
         <div
           role="region"
-          aria-label={`${title} actions`}
+          aria-label={t('detailStickyBar.titleActions', { title })}
           className={clsx(
             'ui-frost ui-bar-in absolute inset-x-0 top-2 flex h-14 items-center gap-3 rounded-xl border border-border px-3 shadow-pop'
           )}
@@ -80,27 +84,16 @@ export const DetailStickyBar: React.FC<DetailStickyBarProps> = ({
             {title}
           </span>
           <SegmentedControl
-            aria-label="Audio"
+            aria-label={t('detailStickyBar.audio')}
             size="sm"
             value={category}
             onChange={onCategoryChange}
             options={[
-              { value: 'sub', label: 'Sub' },
-              { value: 'dub', label: 'Dub', disabled: !dubAvailable, title: dubAvailable ? undefined : 'No dub listed' },
+              { value: 'sub', label: t('common.sub') },
+              { value: 'dub', label: t('common.dub'), disabled: !dubAvailable, title: dubAvailable ? undefined : t('detailStickyBar.noDubListed') },
             ]}
           />
-          <Button
-            icon
-            size="sm"
-            variant={inWatchlist ? 'secondary' : 'neutral'}
-            aria-label={inWatchlist ? 'Remove from watchlist' : 'Add to watchlist'}
-            title={inWatchlist ? 'In watchlist' : 'Add to watchlist'}
-            aria-pressed={inWatchlist}
-            disabled={watchlistPending}
-            onClick={onToggleWatchlist}
-          >
-            <Bookmark aria-hidden="true" className={clsx('h-4 w-4', inWatchlist && 'fill-current')} />
-          </Button>
+          <ListStatusSelect target={listTarget} size="sm" />
           <Button variant="primary" size="sm" onClick={onPlay} disabled={playDisabled}>
             <Play aria-hidden="true" className="h-4 w-4 fill-current" />
             {playLabel}
@@ -108,5 +101,74 @@ export const DetailStickyBar: React.FC<DetailStickyBarProps> = ({
         </div>
       )}
     </div>
+  );
+};
+
+const REMOVE = 'REMOVE';
+
+/**
+ * The list status of one anime as a dropdown: the connected tracker's status when it has the
+ * anime, else the watchlist's. Choosing one files the anime (and sends it to the tracker);
+ * "Remove from list" takes it off the watchlist (offered only when the tracker does not have it).
+ */
+export const ListStatusSelect: React.FC<{ target: PosterMenuTarget; size?: 'sm' | 'md'; className?: string }> = ({
+  target,
+  size = 'md',
+  className,
+}) => {
+  const hintId = useId();
+  const showToast = useUIStore((s) => s.showToast);
+  const { data: watchlist = [] } = useWatchlist();
+  const { data: tracked } = useListStatus(target.id);
+  const setStatus = useSetListStatus();
+  const local = watchlist.find((entry) => entry.anilist_id === target.id);
+  // The tracker wins, except over a change made here that is still waiting to be sent.
+  const fromTracker = tracked !== undefined && tracked.source !== 'local' && local?.synced !== false;
+  const status: ListStatusValue | null = fromTracker ? tracked.status : (local?.status ?? tracked?.status ?? null);
+  const waiting = local ? !local.synced : tracked?.synced === false;
+
+  // Removing only clears the watchlist row, so it is not offered while the tracker has the anime.
+  const options = [
+    ...LIST_STATUS_OPTIONS,
+    ...(status !== null && !fromTracker ? [{ value: REMOVE, label: t('detailStickyBar.removeFromList') }] : []),
+  ];
+
+  const handleChange = (value: string) => {
+    const next = value === REMOVE ? null : (value as ListStatusValue);
+    if (next === status) return;
+    setStatus.mutate(
+      {
+        anilistId: target.id,
+        title: target.title,
+        cover: target.cover,
+        format: target.format,
+        averageScore: target.averageScore,
+        status: next,
+      },
+      {
+        onError: (err) => showToast({ type: 'error', title: t('detailStickyBar.couldNotUpdateList'), message: errorMessage(err) }),
+      }
+    );
+  };
+
+  return (
+    <>
+      <CustomSelect
+        aria-label={t('detailStickyBar.listStatus')}
+        aria-describedby={waiting ? hintId : undefined}
+        className={clsx(size === 'sm' ? 'w-36' : 'w-44', className)}
+        size={size}
+        value={status ?? ''}
+        placeholder={t('detailStickyBar.addToList')}
+        onChange={handleChange}
+        options={options}
+        disabled={setStatus.isPending}
+      />
+      {waiting && (
+        <span id={hintId} className="sr-only">
+          {t('detailStickyBar.notSentYet')}
+        </span>
+      )}
+    </>
   );
 };

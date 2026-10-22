@@ -118,7 +118,7 @@ Notes:
    | `ANIX_LIBMPV_DIR` | Where step 1 put libmpv |
    | `ANIX_COMICK_CLIENT_ID` | Optional, compile time. Without it, the build has no Comick sign-in. Export it in your own shell. Never commit it. |
 
-- Use the script for AppImages. A plain `tauri build` AppImage misses the bundled LGPL libmpv and may pick the wrong GStreamer plugins. `release.yml` builds AppImage/DEB/RPM with plain `tauri build`, so treat its AppImage as unofficial.
+- Use the script for AppImages. A plain `tauri build` AppImage misses the bundled LGPL libmpv and may pick the wrong GStreamer plugins. Releases are built locally and published by the owner; CI only builds and tests, it never makes release files.
 - The script stops if the home path or user name appears anywhere in the package. Do not weaken that check.
 - RPM and DEB builds bundle no libmpv and default to the web player.
 

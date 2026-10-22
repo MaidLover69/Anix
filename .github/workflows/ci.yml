@@ -37,10 +37,10 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install npm dependencies
@@ -48,6 +48,11 @@ jobs:
 
       - name: Type-check and build frontend
         run: npm run build
+
+      - name: Check translations
+        run: |
+          npm run i18n:check
+          npm run i18n:test
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable

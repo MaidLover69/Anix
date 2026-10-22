@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Duration;
 
-fn extension(id: &str) -> String {
+fn extension(id: &str) -> Option<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/src").join(id).join("provider.js");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {}", path.display(), e))
+    std::fs::read_to_string(&path).ok()
 }
 
 fn fixture(name: &str) -> Value {
@@ -21,13 +21,17 @@ fn fixture(name: &str) -> Value {
 
 #[tokio::test]
 async fn latanime_reads_filemoon_through_its_byse_api() {
+    let Some(ext_code) = extension("latanime") else {
+        eprintln!("skipped: plugins repository is not next to the app");
+        return;
+    };
     let answer = fixture("byse_video.json");
     let site = Site::start(move |request: &Req| match request.path.as_str() {
         "/api/videos/abc123" => Resp::json(answer.clone()),
         _ => Resp::status(404),
     })
     .await;
-    let plugin = runtime("latanime", &extension("latanime"));
+    let plugin = runtime("latanime", &ext_code);
     let call = |method: &'static str, args: Vec<Value>| {
         let plugin = plugin.clone();
         async move { plugin.call(method, &args, Duration::from_secs(10), SessionUse::Existing).await }

@@ -39,8 +39,8 @@
 | ![Home](screenshots/home.png) | ![Anime page](screenshots/detail.png) |
 | **Player** | **Discover** |
 | ![Player](screenshots/player.png) | ![Discover](screenshots/discover.png) |
-| **Schedule** | **Library** |
-| ![Schedule](screenshots/schedule.png) | ![Extensions](screenshots/plugins-installed.png) |
+| **Schedule** | **Settings** |
+| ![Schedule](screenshots/schedule.png) | ![Settings](screenshots/settings.png) |
 
 ---
 

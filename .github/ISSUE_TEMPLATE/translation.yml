@@ -1,0 +1,47 @@
+name: Translation fix
+description: A wrong, odd or missing translation in the interface.
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anix's translations were made by AI, so corrections from native speakers are very welcome.
+        You can also fix it directly in `src/i18n/locales/<language>.json` with a pull request.
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      options:
+        - French
+        - Japanese
+        - Korean
+        - Simplified Chinese
+        - Brazilian Portuguese
+        - Russian
+        - Hindi
+        - Spanish
+        - German
+        - Italian
+        - Arabic
+        - Other (a new language)
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where in the app?
+      placeholder: "Settings › Playback, the button under the player"
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What it says now
+    validations:
+      required: true
+  - type: textarea
+    id: better
+    attributes:
+      label: What it should say
+    validations:
+      required: true

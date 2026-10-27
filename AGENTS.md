@@ -72,6 +72,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/resources/` | Anime4K shaders, hardware-decoding self-test clip |
 | `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs` |
 | `THIRD-PARTY-NOTICES.md` | Bundled components and licences |
+| `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Contributor docs and forms. Keep them in step with the rules here |
 | `docs/` | Gitignored and out of date (describes an older stack). Do not trust or copy it. |
 
 ## Setup, run, build, test

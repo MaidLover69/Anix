@@ -185,6 +185,12 @@ Anywhere in the app: <kbd>Ctrl</kbd> + <kbd>K</kbd> opens search, <kbd>?</kbd> s
 
 ---
 
+## Contributing
+
+Bug reports, translation fixes and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](SECURITY.md).
+
+---
+
 ## License
 
 Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.

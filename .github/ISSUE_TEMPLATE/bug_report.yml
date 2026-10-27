@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in Anix does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please check the [open issues](https://github.com/MaidLover69/Anix/issues) first.
+        **Security problem?** Don't post it here. Follow [SECURITY.md](https://github.com/MaidLover69/Anix/blob/main/SECURITY.md).
+        **One extension fails while others work?** That's usually the extension. See the extensions repository.
+  - type: input
+    id: version
+    attributes:
+      label: Anix version
+      description: Settings › About, or the file name of the AppImage.
+      placeholder: "1.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - AppImage
+        - RPM
+        - DEB
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and desktop
+      description: "Name and version of your distribution, your desktop, and Wayland or X11."
+      placeholder: "Debian 13, KDE Plasma 6.3, Wayland"
+    validations:
+      required: true
+  - type: dropdown
+    id: player
+    attributes:
+      label: Player engine (if it is about playback)
+      description: Settings › Playback › Player engine.
+      options:
+        - Not about playback
+        - Embedded mpv
+        - Web player
+        - External mpv or VLC
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics report or terminal output
+      description: |
+        Settings › System › Diagnostics report gives a text file with logins, tokens, emails and your home folder removed. Paste it here or drag the file in.
+        If the app does not start, run the AppImage from a terminal and paste what it prints.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Optional, but very helpful for display problems.

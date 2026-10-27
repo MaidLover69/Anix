@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement or a new feature.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anix prefers improving what it already does over adding new features, so not every idea gets in. Explaining the problem you want solved helps the most.
+        Requests for streaming sites go to the extensions repository, not here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would it solve?
+      placeholder: "When I … I can't …"
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Anix to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Optional. Any workaround or other app that does this.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Help
+      options:
+        - label: I'd like to work on this myself (wait for a reply before starting).

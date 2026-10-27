@@ -44,3 +44,4 @@ Anix uses open-source components. Components under licences that ask for a notic
 - libunwind (`libunwind.so.8`): MIT License. Source: https://github.com/libunwind/libunwind
 - Little CMS (`liblcms2.so.2`, colour management): MIT License (the library; only the library is bundled). Source: https://github.com/mm2/Little-CMS
 - libjpeg-turbo (`libjpeg.so.62`): IJG License, modified BSD 3-Clause License and zlib License. This software is based in part on the work of the Independent JPEG Group. Source: https://github.com/libjpeg-turbo/libjpeg-turbo
+- libdisplay-info (`libdisplay-info.so`, display information for mpv's DRM and VA-API support; bundled only when the build system lacks it): MIT License. Source: https://gitlab.freedesktop.org/emersion/libdisplay-info

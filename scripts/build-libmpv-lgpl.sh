@@ -12,7 +12,7 @@
 # find each other through RPATH=$ORIGIN. scripts/build-appimage.sh copies out/lib/anix into the AppImage.
 #
 # Needs: gcc, make, meson (>= 1.3), ninja, pkg-config (pkgconf), patchelf, git, curl, python3
-# (with jinja2) and the -devel packages of libva, libdrm, wayland, libxkbcommon, libglvnd (EGL),
+# (with jinja2) and the -devel packages of libva, libdrm, hwdata, wayland, libxkbcommon, libglvnd (EGL),
 # pipewire, pulseaudio-libs, alsa-lib, dav1d, freetype, fribidi, harfbuzz, fontconfig and lcms2.
 # nasm and wayland-protocols are built here when missing (they are only build tools).
 #
@@ -37,6 +37,7 @@ ln -sfn "$root/prefix" "$prefix"
 
 NASM_VERSION=2.16.03
 WAYLAND_PROTOCOLS_TAG=1.47
+LIBDISPLAY_INFO_TAG=0.2.0
 LIBASS_VERSION=0.17.4
 LIBPLACEBO_TAG=v7.351.0
 FFMPEG_VERSION=8.0.1
@@ -84,6 +85,15 @@ meson_lib() { # dir, options...
   ninja -C "$dir/build" -j"$jobs"
   meson install -C "$dir/build"
 }
+
+# --- libdisplay-info (MIT), only where the system lacks it ----------------------------------
+# mpv's DRM support (and with it VA-API hardware decoding) needs it; Ubuntu 22.04 has none.
+# Built here, it is bundled next to libmpv.
+if ! pkg-config --exists 'libdisplay-info >= 0.1.1'; then
+  step "libdisplay-info $LIBDISPLAY_INFO_TAG"
+  clone https://gitlab.freedesktop.org/emersion/libdisplay-info.git "$LIBDISPLAY_INFO_TAG" libdisplay-info
+  meson_lib "$src/libdisplay-info"
+fi
 
 # --- libass (ISC) -------------------------------------------------------------------------
 step "libass $LIBASS_VERSION"
@@ -161,7 +171,7 @@ fi
 step "collect into $out/lib/anix"
 rm -rf "$out"; mkdir -p "$out/lib/anix" "$out/share/licenses"
 for lib in libmpv.so.* libavcodec.so.* libavformat.so.* libavutil.so.* libavfilter.so.* libavdevice.so.* \
-  libswresample.so.* libswscale.so.* libplacebo.so.* libass.so.*; do
+  libswresample.so.* libswscale.so.* libplacebo.so.* libass.so.* libdisplay-info.so.*; do
   for f in "$prefix"/lib/$lib; do [ -e "$f" ] && cp -P "$f" "$out/lib/anix/"; done
 done
 if [ -n "$gst_version" ]; then

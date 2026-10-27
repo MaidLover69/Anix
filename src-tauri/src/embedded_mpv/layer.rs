@@ -199,11 +199,11 @@ fn watch_for_black(gl: &Gl, w: c_int, h: c_int) {
 pub fn attach(window: &tauri::WebviewWindow, lib: &'static Lib, handle: Handle) -> Result<(), String> {
     let vbox = window.default_vbox().map_err(|e| e.to_string())?;
     let children = vbox.children();
-    let index = children
+    let webview = children
         .iter()
-        .position(|child| child.type_().name() == "WebKitWebView")
+        .find(|child| child.type_().name() == "WebKitWebView")
+        .cloned()
         .ok_or("The webview was not found in the window")?;
-    let webview = children[index].clone();
 
     let area = gtk::GLArea::new();
     area.set_auto_render(false);
@@ -223,12 +223,19 @@ pub fn attach(window: &tauri::WebviewWindow, lib: &'static Lib, handle: Handle) 
     });
     area.connect_render(move |area, _| render(area, lib));
 
+    // The overlay replaces the box as the window's child: Tauri's click handler for windows
+    // without a title bar expects the webview's grandparent to be the GtkWindow, and aborts
+    // the app on a left click when it is not (webview → overlay → box → window).
+    let gtk_window = window.gtk_window().map_err(|e| e.to_string())?;
+    if children.len() != 1 || vbox.parent().as_ref() != Some(gtk_window.upcast_ref::<gtk::Widget>()) {
+        return Err(format!("Unexpected window layout ({} widgets next to the webview)", children.len() - 1));
+    }
     let overlay = gtk::Overlay::new();
     vbox.remove(&webview);
+    gtk_window.remove(&vbox);
     overlay.add(&area);
     overlay.add_overlay(&webview);
-    vbox.pack_start(&overlay, true, true, 0);
-    vbox.reorder_child(&overlay, index as i32);
+    gtk_window.add(&overlay);
     overlay.show_all();
     webview.grab_focus();
     AREA.with(|cell| *cell.borrow_mut() = Some(area));

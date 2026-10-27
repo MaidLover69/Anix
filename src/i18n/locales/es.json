@@ -918,7 +918,7 @@
   "localMediaDialog.folderPlaceholder": "O escribe la ruta de la carpeta, p. ej. /home/tu-usuario/Vídeos/Anime/Serie",
   "localMediaDialog.fullPath": "Usa la ruta completa de la carpeta, empezando por “/”.",
   "localMediaDialog.intro": "Episodios de {title} desde tu propia carpeta. Se reproducen en el reproductor integrado y actualizan tu progreso y los servicios de seguimiento conectados igual que los streams.",
-  "localMediaDialog.invalidEpisode": "Escribe un número de episodio como 3 o 12,5, o déjalo vacío.",
+  "localMediaDialog.invalidEpisode": "Escribe un número de episodio como 3 o 12.5, o déjalo vacío.",
   "localMediaDialog.link": "Vincular",
   "localMediaDialog.loading": "Cargando tus archivos",
   "localMediaDialog.manual": "Numerado por ti",

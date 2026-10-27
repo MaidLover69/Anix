@@ -162,7 +162,7 @@ Notes:
 - **Every user-visible string goes through `t('key', vars)`** (or `tn` for text that has elements inside) from `src/i18n`. That includes `aria-label`, `title` and `placeholder`. Add the key to `locales/en.json`, which is the source and fallback. Other catalogs may lag behind.
 - Plurals are objects keyed by `Intl` plural category. Use `{name}` placeholders. Never build sentences out of pieces.
 - Never call `t()` at module load. Changing the language re-mounts the app.
-- Backend-shown text (notifications, tray, reminders) goes in `src-tauri/src/i18n.rs` for all 11 languages. Log lines stay in English.
+- Backend-shown text (notifications, tray, reminders) goes in `src-tauri/src/i18n.rs` for all 12 languages. Log lines stay in English.
 - Run `npm run i18n:check` and `npm run i18n:test` before you finish.
 
 ## Extensions

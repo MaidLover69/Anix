@@ -60,6 +60,7 @@ fn reminder_plurals() {
     assert_eq!(reminder.body_in("en", 540), "Episode 5 airs in 1 minute");
     assert_eq!(reminder.body_in("en", 0), "Episode 5 airs in 10 minutes");
     assert_eq!(reminder.body_in("de", 0), "Folge 5 läuft in 10 Minuten");
+    assert_eq!(reminder.body_in("it", 540), "L’episodio 5 va in onda tra 1 minuto");
 }
 
 #[test]
@@ -70,6 +71,8 @@ fn language_setting_resolves() {
     assert_eq!(i18n::resolve(None, &system("ja_JP.UTF-8")), "ja");
     assert_eq!(i18n::resolve(None, &system("nl_NL.UTF-8")), "en");
     assert_eq!(i18n::language_name("de", "ja"), "Japanisch");
+    assert_eq!(i18n::resolve(None, &system("it_IT.UTF-8")), "it");
+    assert_eq!(i18n::language_name("it", "en"), "inglese");
     assert_eq!(i18n::language_name("fr", "xx"), "xx", "unknown codes stay as written");
 }
 

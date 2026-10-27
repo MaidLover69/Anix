@@ -21,6 +21,7 @@ export const APP_LANGUAGES = [
   { code: 'es', name: 'Español' },
   { code: 'de', name: 'Deutsch' },
   { code: 'ar', name: 'العربية' },
+  { code: 'it', name: 'Italiano' },
 ] as const;
 
 export type AppLanguage = (typeof APP_LANGUAGES)[number]['code'];

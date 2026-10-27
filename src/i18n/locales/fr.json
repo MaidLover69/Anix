@@ -918,7 +918,7 @@
   "localMediaDialog.folderPlaceholder": "Ou saisissez le chemin du dossier, par ex. /home/vous/Vidéos/Anime/Série",
   "localMediaDialog.fullPath": "Utilisez le chemin complet du dossier, commençant par « / ».",
   "localMediaDialog.intro": "Les épisodes de {title} depuis votre propre dossier. Ils se lisent dans le lecteur intégré et mettent à jour votre progression et vos services de suivi connectés, comme les flux.",
-  "localMediaDialog.invalidEpisode": "Saisissez un numéro d’épisode comme 3 ou 12,5, ou laissez vide.",
+  "localMediaDialog.invalidEpisode": "Saisissez un numéro d’épisode comme 3 ou 12.5, ou laissez vide.",
   "localMediaDialog.link": "Lier",
   "localMediaDialog.loading": "Chargement de vos fichiers",
   "localMediaDialog.manual": "Numéroté par vous",

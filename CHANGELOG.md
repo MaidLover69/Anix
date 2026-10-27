@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.3.1
+
+### Languages
+- Italian interface: the app, its notifications, tray menu and reminders are now available in Italian (Settings › Appearance › Language, or the first-start setup). Like the other languages, it was translated by AI.
+
+### Application Updates
+- Automatic update notification: when a newer release is detected, the update window opens automatically once after start-up (safely scheduled so it never interrupts the video player or appears over other active dialogs).
+
+### Downloads & Offline Media
+- Direct disk deletion on download removal: deleting a completed download now offers an option (enabled by default) to remove the video file and its companion subtitle files (`.vtt`, `.ass`, `.srt`) directly from disk.
+- Safe path validation: strict checks ensure only downloaded video files and their associated subtitle side files within the download directory can be deleted.
+
+### Video Player & System Integration
+- Crash on click fixed: with the embedded mpv player on, a left click in the window could close Anix at once (the window's resize handling expected a different widget layout). The mpv layer now sits where it expects.
+- Focused window verification: the "Is the video player showing correctly?" countdown only elapses while the application window is visible, unminimized, and actively focused, preventing unexpected fallbacks to the web player when multitasking across other windows or workspaces.
+- In-app notification on fallback: if the player confirmation prompt expires without user interaction, a notice is added to the Notification Centre explaining the switch and indicating where to re-enable the embedded mpv engine (Settings › Playback › Player engine).
+- Host environment sanitization: external links, system browser OAuth sign-ins (such as Comick), and host media players now launch with sanitized environment variables, preventing AppImage bundle library paths (`GTK_PATH`, `GIO_EXTRA_MODULES`, etc.) from interfering with system applications.
+
+### Catalogue & Performance
+- Resilient episode metadata fetching: reduced MyAnimeList/Jikan request timeout from 10s to 5s, with an automatic temporary cooldown when the service is unreachable or timing out, preventing catalogue pages from stalling.
+- Diagnostics logging: OAuth sign-in windows log sanitized page URLs (host and path only, strictly omitting query parameters and sensitive credentials) to assist with troubleshooting.
+
+### Documentation & Packaging
+- Packaging documentation: updated README with distribution-specific FUSE 2 package requirements across Arch, Debian/Ubuntu, openSUSE, and Fedora, along with `--appimage-extract-and-run` guidance.
+- AppImage build script: anchored the `/dist` exclusion rule in `scripts/build-appimage.sh` to prevent accidentally excluding npm package distribution directories.
+- Wider distribution support: the release AppImage is now built on Ubuntu 22.04 by `.github/workflows/release.yml`, so it runs on Ubuntu 22.04 and 24.04, Linux Mint 21+, Debian 12+ and every newer distribution (1.3.0, built on Fedora 44, needed the very newest system libraries). The web player's GStreamer decoding uses a matching LGPL FFmpeg build on older bases.
+
 ## 1.3.0
 
 ### Languages and First-Start Setup

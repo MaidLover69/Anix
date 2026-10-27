@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Compass, Download, FolderOpen, Play, RotateCw, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
-import { Button, EmptyState, ErrorState, Modal, Spinner, errorMessage } from '../components/ui';
+import { Button, EmptyState, ErrorState, Modal, Spinner, Switch, errorMessage } from '../components/ui';
 import {
   useAllDownloads,
   useCheckStorage,
@@ -224,6 +224,9 @@ export const Downloads: React.FC = () => {
   const retryDownload = useRetryDownload();
   const [pendingDelete, setPendingDelete] = useState<DownloadRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteFile, setDeleteFile] = useState(true);
+  const deleteFileLabel = useId();
+  const canDeleteFile = !!pendingDelete?.file_path && pendingDelete.status.toUpperCase() === 'COMPLETED';
   const player = externalPlayerFor(settings);
 
   const downloads = query.data ?? [];
@@ -253,7 +256,7 @@ export const Downloads: React.FC = () => {
     });
 
   const forget = (record: DownloadRecord) =>
-    deleteDownload.mutate(record.id, {
+    deleteDownload.mutate({ id: record.id }, {
       onError: (err) => showToast({ type: 'error', title: t('downloads.couldNotRemove'), message: errorMessage(err) }),
     });
 
@@ -266,7 +269,7 @@ export const Downloads: React.FC = () => {
   const confirmDelete = () => {
     if (!pendingDelete || deleteDownload.isPending) return;
     setDeleteError(null);
-    deleteDownload.mutate(pendingDelete.id, {
+    deleteDownload.mutate({ id: pendingDelete.id, deleteFile: canDeleteFile && deleteFile }, {
       onSuccess: () => setPendingDelete(null),
       onError: (err) => setDeleteError(errorMessage(err)),
     });
@@ -280,6 +283,7 @@ export const Downloads: React.FC = () => {
       aria-label={t('downloads.removeFor', { name: rowName(record) })}
       onClick={() => {
         setDeleteError(null);
+        setDeleteFile(true);
         setPendingDelete(record);
       }}
     >
@@ -416,7 +420,11 @@ export const Downloads: React.FC = () => {
               {t('common.cancel')}
             </Button>
             <Button variant="danger" onClick={confirmDelete} disabled={deleteDownload.isPending}>
-              {deleteDownload.isPending ? t('downloads.removing') : t('common.remove')}
+              {deleteDownload.isPending
+                ? t('downloads.removing')
+                : canDeleteFile && deleteFile
+                  ? t('common.delete')
+                  : t('common.remove')}
             </Button>
           </>
         }
@@ -431,9 +439,15 @@ export const Downloads: React.FC = () => {
                 { name: <span className="text-text-primary">{rowName(pendingDelete)}</span> }
               )}
             </p>
+            {canDeleteFile && (
+              <label className="flex items-center justify-between gap-3 text-text-primary">
+                <span id={deleteFileLabel}>{t('downloads.deleteFileToo')}</span>
+                <Switch aria-labelledby={deleteFileLabel} checked={deleteFile} onChange={setDeleteFile} />
+              </label>
+            )}
             {pendingDelete.file_path && (
               <p className="text-xs text-text-muted">
-                {t('downloads.fileStaysOnDisk')}
+                {canDeleteFile && deleteFile ? t('downloads.fileWillBeDeleted') : t('downloads.fileStaysOnDisk')}
                 <span className="mt-1 block break-all select-text">{pendingDelete.file_path}</span>
               </p>
             )}

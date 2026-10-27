@@ -1531,6 +1531,53 @@ async fn finalize(
     Ok(Finished { path: final_path, size })
 }
 
+/// Containers a finished download can have (see `container_extension`).
+const VIDEO_EXTENSIONS: [&str; 8] = ["mkv", "mp4", "webm", "mov", "m4v", "avi", "flv", "ts"];
+
+/// Deletes a finished download's video and the subtitle side files `finalize` saved next to
+/// it (`<stem>.<language>.<vtt|ass|srt>`). Anything that is not a plain file with a video
+/// extension downloads produce is refused, so a bad row cannot remove other files. A video
+/// that is already gone is fine. Returns how many files were removed.
+pub fn delete_finished_files(video: &Path) -> Result<usize, String> {
+    let ext = video
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let (Some(dir), Some(stem)) = (video.parent(), video.file_stem().and_then(|s| s.to_str())) else {
+        return Err(format!("{} is not a downloaded video.", video.display()));
+    };
+    if !video.is_absolute() || !VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("{} is not a downloaded video.", video.display()));
+    }
+    let mut removed = 0;
+    match std::fs::symlink_metadata(video) {
+        Ok(meta) if meta.file_type().is_file() => {
+            std::fs::remove_file(video)
+                .map_err(|e| format!("Could not delete {}: {}", video.display(), e))?;
+            removed += 1;
+        }
+        Ok(_) => return Err(format!("{} is not a regular file; it was left alone.", video.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("Could not read {}: {}", video.display(), e)),
+    }
+    let prefix = format!("{}.", stem);
+    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(removed) };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix(&prefix)) else { continue };
+        let is_side = matches!(rest.split_once('.'), Some((label, ext))
+            if !label.is_empty() && !ext.contains('.') && ["vtt", "ass", "srt"].contains(&ext));
+        if is_side && entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(e) => warn!("Could not delete subtitle {}: {}", entry.path().display(), e),
+            }
+        }
+    }
+    Ok(removed)
+}
+
 async fn download_stream_with_ffmpeg(
     job: &Job<'_>,
     url: &str,

@@ -498,6 +498,8 @@
   },
   "downloads.failedFallback": "다운로드에 실패했어요.",
   "downloads.fileStaysOnDisk": "다 받은 파일은 디스크에 남아요:",
+  "downloads.deleteFileToo": "파일과 자막도 디스크에서 삭제",
+  "downloads.fileWillBeDeleted": "이 파일이 삭제됩니다:",
   "downloads.forget": "목록에서 지우기",
   "downloads.forgetFor": "목록에서 지우기: {name}",
   "downloads.freeOf": "{total} 중 {free} 남음",

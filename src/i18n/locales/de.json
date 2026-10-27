@@ -514,6 +514,8 @@
   },
   "downloads.failedFallback": "Der Download ist fehlgeschlagen.",
   "downloads.fileStaysOnDisk": "Eine fertige Datei bleibt auf der Festplatte:",
+  "downloads.deleteFileToo": "Datei und Untertitel auch vom Datenträger löschen",
+  "downloads.fileWillBeDeleted": "Diese Datei wird gelöscht:",
   "downloads.forget": "Vergessen",
   "downloads.forgetFor": "Vergessen: {name}",
   "downloads.freeOf": "{free} von {total} frei",

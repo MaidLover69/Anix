@@ -119,8 +119,9 @@ export function useQueueDownloads() {
 export function useDeleteDownload() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      await invoke('delete_download', { id });
+    /** `deleteFile` also removes a finished video and its subtitle files from disk. */
+    mutationFn: async ({ id, deleteFile = false }: { id: string; deleteFile?: boolean }) => {
+      await invoke('delete_download', { id, deleteFile });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['allDownloads'] });

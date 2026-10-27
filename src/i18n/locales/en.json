@@ -514,6 +514,8 @@
   },
   "downloads.failedFallback": "The download failed.",
   "downloads.fileStaysOnDisk": "A finished file stays on disk:",
+  "downloads.deleteFileToo": "Also delete the file and its subtitles from disk",
+  "downloads.fileWillBeDeleted": "This file will be deleted:",
   "downloads.forget": "Forget",
   "downloads.forgetFor": "Forget: {name}",
   "downloads.freeOf": "{free} free of {total}",

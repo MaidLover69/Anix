@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   catalogProblems, htmlLang, interpolate, intlLocale, isRtl, resolveLanguage, translate,
 } from '../src/i18n/core.ts';
-import { isNewerVersion, needsSetup } from '../src/lib/version.ts';
+import { isNewerVersion, needsSetup, shouldPromptUpdate } from '../src/lib/version.ts';
 import { withChoice } from '../src/lib/languageChoice.ts';
 
 const en = {
@@ -63,6 +63,14 @@ assert.equal(needsSetup(undefined, '1.3.0'), true, 'first start');
 assert.equal(needsSetup('', '1.3.0'), true);
 assert.equal(needsSetup('1.2.0', '1.3.0'), true, 'after an upgrade');
 assert.equal(needsSetup('1.3.0', '1.3.0'), false, 'already seen in this version');
+
+// Update window: once per newer release, never over the player
+assert.equal(shouldPromptUpdate('1.3.1', undefined, '/'), true, 'never shown before');
+assert.equal(shouldPromptUpdate('1.3.1', '1.3.1', '/'), false, 'already shown for this release');
+assert.equal(shouldPromptUpdate('1.3.2', '1.3.1', '/discover'), true, 'a newer release is shown again');
+assert.equal(shouldPromptUpdate('1.3.1', '1.3.1 ', '/'), false, 'stray spaces in the saved version');
+assert.equal(shouldPromptUpdate('1.3.1', undefined, '/watch/21/1'), false, 'not over the player');
+assert.equal(shouldPromptUpdate(null, undefined, '/'), false, 'no update');
 assert.equal(needsSetup('1.3.0', '1.3.1'), true);
 assert.equal(needsSetup('1.4.0', '1.3.0'), false, 'a downgrade does not ask');
 assert.equal(isNewerVersion('1.10.0', '1.9.9'), true);

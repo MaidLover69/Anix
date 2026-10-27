@@ -15,6 +15,8 @@ use tauri::AppHandle;
 pub const AIRING: &str = "airing";
 pub const DOWNLOAD: &str = "download";
 pub const TEST: &str = "test";
+/// The player went back to the web engine by itself.
+pub const PLAYER: &str = "player";
 
 /// Sent to the main window after a notice was added or marked read.
 pub const CHANGED_EVENT: &str = "notices-changed";

@@ -230,6 +230,7 @@ pub fn run() {
             commands::fetch_anime_themes,
             commands::scan_local_anime_directory,
             commands::open_file_in_player,
+            commands::player::open_external,
             // Your files (local episodes linked to a title)
             commands::get_local_media,
             commands::pick_local_media,

@@ -1,16 +1,19 @@
 import { useCallback } from 'react';
-import { open } from '@tauri-apps/plugin-shell';
+import { invoke } from '@tauri-apps/api/core';
 import { useUIStore } from '../stores/uiStore';
 import { t } from '../i18n';
 
-/** Opens a URL in the system browser and reports a failure instead of swallowing it. */
+/**
+ * Opens a URL in the system browser and reports a failure instead of swallowing it. The
+ * backend starts the browser without the AppImage's library paths (`open_external`).
+ */
 export function useOpenExternal() {
   const showToast = useUIStore((s) => s.showToast);
 
   return useCallback(
     async (url: string) => {
       try {
-        await open(url);
+        await invoke('open_external', { url });
       } catch (err) {
         console.error('[openExternal] failed to open', url, err);
         showToast({

@@ -471,6 +471,8 @@ export interface AppSettings {
   only_preferred_languages: boolean;
   /** Where the title bar puts the window buttons: as the desktop does, or always left/right. */
   window_buttons: WindowButtonsSetting;
+  /** The release the update window last opened for by itself (`shouldPromptUpdate`). */
+  update_prompted_version?: string;
   /** The desktop's accent colour replaces the theme's (not in Manga, which has no colour). */
   use_system_accent: boolean;
   /** Mascot, kaomoji, friendlier wording and the completed stamp. */

@@ -3,6 +3,7 @@ use crate::downloads::{self, DownloadSource, StorageCheck};
 use crate::models::DownloadRecord;
 use crate::state::AppState;
 use std::collections::HashMap;
+use std::path::Path;
 use tauri::State;
 
 /// Adds a `QUEUED` row. The queue worker resolves its sources and downloads it.
@@ -74,13 +75,28 @@ pub async fn get_all_downloads(
 }
 
 /// Stops the download if it is running (ffmpeg included), removes its partial files and
-/// deletes the row. A finished file is left on disk.
+/// deletes the row. A finished file is left on disk unless `delete_file` is set; then the
+/// video and its subtitle side files go first, and the row stays if that fails.
 #[tauri::command]
 pub async fn delete_download(
     state: State<'_, AppState>,
     id: String,
+    delete_file: Option<bool>,
 ) -> Result<(), String> {
     downloads::cancel_download(&id).await;
+    if delete_file.unwrap_or(false) {
+        let record = db::get_download_by_id(&state.pool, &id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(path) = record
+            .filter(|r| r.status.eq_ignore_ascii_case("COMPLETED"))
+            .and_then(|r| r.file_path)
+        {
+            tokio::task::spawn_blocking(move || downloads::delete_finished_files(Path::new(&path)))
+                .await
+                .map_err(|e| e.to_string())??;
+        }
+    }
     db::delete_download(&state.pool, &id)
         .await
         .map_err(|e| e.to_string())?;

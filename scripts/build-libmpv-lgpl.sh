@@ -11,10 +11,15 @@
 # mpv record their prefix, and the real folder would carry the user name) and the libraries
 # find each other through RPATH=$ORIGIN. scripts/build-appimage.sh copies out/lib/anix into the AppImage.
 #
-# Needs: gcc, make, meson, ninja, pkg-config (pkgconf), patchelf, git, curl, python3 and the
-# -devel packages of libva, libdrm, wayland, libxkbcommon, libglvnd (EGL), pipewire,
-# pulseaudio-libs, alsa-lib, dav1d, freetype, fribidi, harfbuzz, fontconfig and lcms2.
+# Needs: gcc, make, meson (>= 1.3), ninja, pkg-config (pkgconf), patchelf, git, curl, python3
+# (with jinja2) and the -devel packages of libva, libdrm, wayland, libxkbcommon, libglvnd (EGL),
+# pipewire, pulseaudio-libs, alsa-lib, dav1d, freetype, fribidi, harfbuzz, fontconfig and lcms2.
 # nasm and wayland-protocols are built here when missing (they are only build tools).
+#
+# Works on Fedora and on Ubuntu 22.04 (the base of the CI release build, so the AppImage runs on
+# older systems too). There mpv's Wayland and PipeWire parts are left out (the system's are too
+# old; the AppImage draws through X11 and plays sound through PulseAudio), and a second LGPL
+# FFmpeg is built for GStreamer's libav plugin: see "FFmpeg for GStreamer" below.
 set -euo pipefail
 
 configure_only=false
@@ -35,6 +40,8 @@ WAYLAND_PROTOCOLS_TAG=1.47
 LIBASS_VERSION=0.17.4
 LIBPLACEBO_TAG=v7.351.0
 FFMPEG_VERSION=8.0.1
+# FFmpeg releases matching each libavcodec soname a system's gst-libav may be linked against.
+gst_ffmpeg_for() { case "$1" in 58) echo 4.4.6 ;; 59) echo 5.1.6 ;; 60) echo 6.1.2 ;; 61) echo 7.1.1 ;; esac; }
 MPV_TAG=v0.41.0
 
 export PATH="$tools/bin:$PATH"
@@ -44,7 +51,7 @@ export CFLAGS="-O2 -ffile-prefix-map=$root=/build ${CFLAGS:-}"
 export CXXFLAGS="$CFLAGS"
 
 fetch() { # url file
-  [ -f "$src/$2" ] || { curl -fL --retry 3 -o "$src/$2.part" "$1" && mv "$src/$2.part" "$src/$2"; }
+  [ -f "$src/$2" ] || { curl -fL --retry 5 --retry-all-errors -o "$src/$2.part" "$1" && mv "$src/$2.part" "$src/$2"; }
 }
 unpack() { # file dir
   [ -d "$src/$2" ] || { mkdir -p "$src/$2" && tar -xf "$src/$1" -C "$src/$2" --strip-components=1; }
@@ -104,6 +111,34 @@ grep -q '^#define CONFIG_NONFREE 0' "$src/ffmpeg/config.h" || { echo "FFmpeg is 
 grep -q 'FFMPEG_LICENSE "LGPL version 2.1 or later"' "$src/ffmpeg/config.h" || { echo "FFmpeg is not LGPL 2.1+; refusing." >&2; exit 1; }
 if ! $configure_only; then make -C "$src/ffmpeg" -j"$jobs" && make -C "$src/ffmpeg" install; fi
 
+# --- FFmpeg for GStreamer (LGPL-2.1+) ------------------------------------------------------
+# The web player decodes through the system's gst-libav plugin, linked against the system FFmpeg
+# (often a GPL build, which the AppImage must not carry). The AppImage swaps in an LGPL FFmpeg with
+# the same sonames; when the plugin wants another libavcodec than the one above, that release is
+# built here too, with the same LGPL options.
+gst_prefix="/tmp/anix-libmpv-gstprefix-$(id -u)"
+gst_version=""
+for dir in /usr/lib64/gstreamer-1.0 "/usr/lib/$(uname -m)-linux-gnu/gstreamer-1.0"; do
+  if [ -f "$dir/libgstlibav.so" ]; then
+    gst_major="$(readelf -d "$dir/libgstlibav.so" | sed -n 's/.*\[libavcodec\.so\.\([0-9]*\)\].*/\1/p')"
+    gst_version="$(gst_ffmpeg_for "$gst_major")"
+    break
+  fi
+done
+if [ -n "$gst_version" ]; then
+  step "FFmpeg $gst_version for GStreamer's libav plugin"
+  mkdir -p "$root/prefix-gst"; ln -sfn "$root/prefix-gst" "$gst_prefix"
+  fetch "https://ffmpeg.org/releases/ffmpeg-$gst_version.tar.xz" "ffmpeg-$gst_version.tar.xz"
+  unpack "ffmpeg-$gst_version.tar.xz" "ffmpeg-$gst_version"
+  (cd "$src/ffmpeg-$gst_version" && ./configure --prefix="$gst_prefix" --libdir="$gst_prefix/lib" \
+    --enable-shared --disable-static --enable-pic --disable-programs --disable-doc --disable-debug \
+    --disable-autodetect --enable-zlib)
+  config="$src/ffmpeg-$gst_version/config.h"
+  grep -q '^#define CONFIG_GPL 0' "$config" || { echo "FFmpeg $gst_version is configured as GPL; refusing." >&2; exit 1; }
+  grep -q '^#define CONFIG_NONFREE 0' "$config" || { echo "FFmpeg $gst_version is configured as non-free; refusing." >&2; exit 1; }
+  if ! $configure_only; then make -C "$src/ffmpeg-$gst_version" -j"$jobs" && make -C "$src/ffmpeg-$gst_version" install; fi
+fi
+
 # --- mpv (LGPL-2.1+ with -Dgpl=false) -----------------------------------------------------
 step "mpv $MPV_TAG"
 clone https://github.com/mpv-player/mpv.git "$MPV_TAG" mpv
@@ -113,8 +148,8 @@ else
   meson_lib "$src/mpv" -Dgpl=false -Dlibmpv=true -Dcplayer=false \
     -Dlua=disabled -Djavascript=disabled -Dlibarchive=disabled -Dlibbluray=disabled -Ddvdnav=disabled \
     -Dcdda=disabled -Duchardet=disabled -Drubberband=disabled -Dvapoursynth=disabled -Dzimg=disabled \
-    -Dx11=disabled -Dwayland=enabled -Degl=enabled -Dgl=enabled -Dvaapi=enabled -Dvulkan=disabled \
-    -Dpipewire=enabled -Dpulse=enabled -Dalsa=enabled -Dlcms2=enabled \
+    -Dx11=disabled -Dwayland=auto -Degl=enabled -Dgl=enabled -Dvaapi=enabled -Dvulkan=disabled \
+    -Dpipewire=auto -Dpulse=enabled -Dalsa=enabled -Dlcms2=enabled \
     -Dmanpage-build=disabled -Dhtml-build=disabled -Dpdf-build=disabled
 fi
 
@@ -129,6 +164,12 @@ for lib in libmpv.so.* libavcodec.so.* libavformat.so.* libavutil.so.* libavfilt
   libswresample.so.* libswscale.so.* libplacebo.so.* libass.so.*; do
   for f in "$prefix"/lib/$lib; do [ -e "$f" ] && cp -P "$f" "$out/lib/anix/"; done
 done
+if [ -n "$gst_version" ]; then
+  for lib in libavcodec.so.* libavformat.so.* libavutil.so.* libavfilter.so.* libswresample.so.* libswscale.so.*; do
+    for f in "$gst_prefix"/lib/$lib; do [ -e "$f" ] && cp -P "$f" "$out/lib/anix/"; done
+  done
+  cp "$src/ffmpeg-$gst_version/COPYING.LGPLv2.1" "$out/share/licenses/FFmpeg-$gst_version-LGPL-2.1.txt"
+fi
 for f in "$out"/lib/anix/*.so*; do
   [ -L "$f" ] && continue
   patchelf --set-rpath '$ORIGIN' "$f"
@@ -140,11 +181,14 @@ cp "$src/libplacebo/LICENSE" "$out/share/licenses/libplacebo-LGPL-2.1.txt"
 cp "$src/libass/COPYING" "$out/share/licenses/libass-ISC.txt"
 
 python3 -I - "$out/lib/anix" <<'PY'
-import ctypes, glob, sys
+import ctypes, glob, os, sys
 d = sys.argv[1]
-av = ctypes.CDLL(min(glob.glob(f"{d}/libavcodec.so.*"), key=len))
-av.avcodec_license.restype = ctypes.c_char_p
-license = av.avcodec_license().decode()
+licenses = []
+for path in sorted(p for p in glob.glob(f"{d}/libavcodec.so.*") if os.path.basename(p).count(".") == 2):
+    av = ctypes.CDLL(path)
+    av.avcodec_license.restype = ctypes.c_char_p
+    licenses.append(av.avcodec_license().decode())
+license = " / ".join(licenses)
 mpv = ctypes.CDLL(f"{d}/libmpv.so.2")
 mpv.mpv_create.restype = ctypes.c_void_p
 mpv.mpv_get_property_string.restype = ctypes.c_void_p
@@ -159,7 +203,7 @@ config = ctypes.string_at(mpv.mpv_get_property_string(h, b"mpv-configuration")).
 mpv.mpv_terminate_destroy(h)
 print("FFmpeg licence:", license)
 print("mpv configuration:", config)
-if "LGPL" not in license or "gpl=false" not in config.replace(" ", ""):
+if not licenses or any("LGPL" not in l for l in licenses) or "gpl=false" not in config.replace(" ", ""):
     sys.exit("Not an LGPL build; refusing.")
 open(f"{d}/BUILD-LICENSE.txt", "w").write(f"FFmpeg: {license}\nmpv: {config}\n")
 PY

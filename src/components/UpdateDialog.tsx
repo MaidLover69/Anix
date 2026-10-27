@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Download, RotateCw } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Dialog } from './Dialog';
@@ -8,10 +9,14 @@ import { Button } from './ui/Button';
 import { Spinner } from './ui/Spinner';
 import { errorMessage } from './ui/ErrorState';
 import { useUIStore } from '../stores/uiStore';
-import { useCheckUpdate } from '../hooks/useSettings';
+import { useCheckUpdate, useSaveSettings, useSettings } from '../hooks/useSettings';
+import { shouldPromptUpdate } from '../lib/version';
 import { useOpenExternal } from '../hooks/useOpenExternal';
 import type { UpdateInstallSupport } from '../types';
 import { locale, t } from '../i18n';
+
+/** How often a pending update window looks for a moment with no other dialog open. */
+const PROMPT_RETRY_MS = 3000;
 
 type InstallState =
   | { step: 'idle' }
@@ -33,6 +38,25 @@ export const UpdateDialog: React.FC = () => {
     staleTime: Infinity,
     retry: false,
   }).data;
+
+  const settings = useSettings().data;
+  const saveSettings = useSaveSettings().mutate;
+  const path = useLocation().pathname;
+  const latest = updateInfo?.version;
+  const prompted = settings?.update_prompted_version;
+
+  // A newer release opens this window once by itself, when no other dialog (setup, player
+  // check) is showing and not over the player. Settings › About can still open it any time.
+  useEffect(() => {
+    if (!settings || updateDialogOpen || !shouldPromptUpdate(latest, prompted, path)) return;
+    const timer = window.setInterval(() => {
+      if (document.querySelector('[role="dialog"]')) return;
+      window.clearInterval(timer);
+      saveSettings({ update_prompted_version: latest });
+      setUpdateDialogOpen(true);
+    }, PROMPT_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, [settings, latest, prompted, path, updateDialogOpen, saveSettings, setUpdateDialogOpen]);
 
   const installing = install.step === 'installing';
   useEffect(() => {

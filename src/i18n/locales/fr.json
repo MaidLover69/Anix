@@ -530,6 +530,8 @@
   },
   "downloads.failedFallback": "Le téléchargement a échoué.",
   "downloads.fileStaysOnDisk": "Un fichier terminé reste sur le disque :",
+  "downloads.deleteFileToo": "Supprimer aussi le fichier et ses sous-titres du disque",
+  "downloads.fileWillBeDeleted": "Ce fichier sera supprimé :",
   "downloads.forget": "Oublier",
   "downloads.forgetFor": "Oublier : {name}",
   "downloads.freeOf": "{free} libres sur {total}",

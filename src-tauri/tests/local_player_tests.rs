@@ -345,3 +345,16 @@ fn external_player_gets_the_subtitle_files() {
     assert_eq!(subtitle_file_name(7, 0, Some("pt-BR / Brasil"), "srt"), "anix_sub_7_1_pt_BR___Brasil.srt");
     assert_eq!(subtitle_file_name(7, 2, None, "vtt"), "anix_sub_7_3_subtitle.vtt");
 }
+
+#[test]
+fn only_web_addresses_are_handed_to_the_browser() {
+    use anix_lib::commands::player::external_url;
+    assert_eq!(
+        external_url(" https://comick.dev/oauth/authorize?a=1&b=two ").as_deref(),
+        Ok("https://comick.dev/oauth/authorize?a=1&b=two")
+    );
+    assert!(external_url("http://127.0.0.1:47823/x").is_ok());
+    for bad in ["file:///etc/passwd", "javascript:alert(1)", "--help", "/usr/bin/true", "mailto:a@b.c", "https://", ""] {
+        assert!(external_url(bad).is_err(), "{bad} must be refused");
+    }
+}

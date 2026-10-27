@@ -578,6 +578,8 @@
   },
   "downloads.failedFallback": "فشل التنزيل.",
   "downloads.fileStaysOnDisk": "يبقى الملف المكتمل على القرص:",
+  "downloads.deleteFileToo": "احذف أيضًا الملف وترجماته من القرص",
+  "downloads.fileWillBeDeleted": "سيُحذف هذا الملف:",
   "downloads.forget": "انسَ",
   "downloads.forgetFor": "انسَ: {name}",
   "downloads.freeOf": "{free} حرة من {total}",

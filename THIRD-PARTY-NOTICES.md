@@ -18,7 +18,8 @@ Anix uses open-source components. Components under licences that ask for a notic
 
 - Used for: decoding video and audio inside libmpv.
 - Licence: GNU Lesser General Public License 2.1 or later. Configured without `--enable-gpl` and `--enable-nonfree`; the AppImage build refuses any other build.
-- Used unmodified and dynamically linked (`lib/anix/libav*.so`, `libsw*.so`). Source code: https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz. The LGPL texts of FFmpeg, mpv and libplacebo are in `usr/share/licenses/anix/` in the AppImage.
+- Used unmodified and dynamically linked (`lib/anix/libav*.so`, `libsw*.so`). Source code: https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz.
+- The web player's GStreamer libav plugin gets an LGPL FFmpeg too. When the build system's plugin is linked against an older FFmpeg series, that release is built with the same options and bundled next to it (on the Ubuntu 22.04 release build: FFmpeg 4.4.6, https://ffmpeg.org/releases/ffmpeg-4.4.6.tar.xz). The LGPL texts of FFmpeg, mpv and libplacebo are in `usr/share/licenses/anix/` in the AppImage.
 
 ## libplacebo
 

@@ -546,6 +546,8 @@
   },
   "downloads.failedFallback": "Загрузка не удалась.",
   "downloads.fileStaysOnDisk": "Готовый файл остаётся на диске:",
+  "downloads.deleteFileToo": "Также удалить файл и его субтитры с диска",
+  "downloads.fileWillBeDeleted": "Этот файл будет удалён:",
   "downloads.forget": "Забыть",
   "downloads.forgetFor": "Забыть: {name}",
   "downloads.freeOf": "Свободно {free} из {total}",

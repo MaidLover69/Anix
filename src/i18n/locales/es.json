@@ -530,6 +530,8 @@
   },
   "downloads.failedFallback": "La descarga falló.",
   "downloads.fileStaysOnDisk": "Un archivo terminado se queda en el disco:",
+  "downloads.deleteFileToo": "Eliminar también el archivo y sus subtítulos del disco",
+  "downloads.fileWillBeDeleted": "Este archivo se eliminará:",
   "downloads.forget": "Olvidar",
   "downloads.forgetFor": "Olvidar: {name}",
   "downloads.freeOf": "{free} libres de {total}",

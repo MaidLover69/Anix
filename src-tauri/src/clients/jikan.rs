@@ -4,12 +4,15 @@ use once_cell::sync::Lazy;
 use reqwest::header::RETRY_AFTER;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 const JIKAN_BASE: &str = "https://api.jikan.moe/v4";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Jikan usually answers within a second; an anime page's episode list waits for it.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// After Jikan did not answer, it is skipped this long so every page does not wait again.
+const SKIP_AFTER_NO_ANSWER: Duration = Duration::from_secs(180);
 /// Attempts per request when Jikan answers 429.
 const MAX_ATTEMPTS: u32 = 4;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(4);
@@ -53,6 +56,24 @@ static EPISODES_CACHE: Lazy<L1Cache<i32, CachedEpisodes>> =
 static DETAILS_CACHE: Lazy<L1Cache<i32, MalAnimeDetails>> =
     Lazy::new(|| L1Cache::new(300, CACHE_TTL_SECS));
 
+/// Remembers that a service stopped answering, so callers can skip it for a while.
+#[derive(Default)]
+pub struct Pause {
+    until: Mutex<Option<Instant>>,
+}
+
+impl Pause {
+    pub fn note_no_answer(&self, now: Instant, length: Duration) {
+        *self.until.lock().unwrap_or_else(|p| p.into_inner()) = Some(now + length);
+    }
+
+    pub fn active(&self, now: Instant) -> bool {
+        self.until.lock().unwrap_or_else(|p| p.into_inner()).is_some_and(|until| now < until)
+    }
+}
+
+static NO_ANSWER: Lazy<Pause> = Lazy::new(Pause::default);
+
 /// How long to wait before retrying a rate-limited request: the server's `Retry-After` when it
 /// sends one, otherwise a growing pause, never longer than `MAX_RETRY_WAIT`.
 pub fn retry_delay(attempt: u32, retry_after_s: Option<u64>) -> Duration {
@@ -65,6 +86,9 @@ pub fn retry_delay(attempt: u32, retry_after_s: Option<u64>) -> Duration {
 
 /// GETs a Jikan URL, waiting and retrying while rate-limited. `Ok(None)` is a 404.
 async fn jikan_get(client: &Client, url: &str) -> Result<Option<serde_json::Value>, AppError> {
+    if NO_ANSWER.active(Instant::now()) {
+        return Err(AppError::Network("api.jikan.moe did not answer recently; skipped for a few minutes".to_string()));
+    }
     let mut retry_after_s = None;
     for attempt in 0..MAX_ATTEMPTS {
         let response = client
@@ -72,7 +96,12 @@ async fn jikan_get(client: &Client, url: &str) -> Result<Option<serde_json::Valu
             .header("User-Agent", crate::clients::http::APP_USER_AGENT)
             .timeout(REQUEST_TIMEOUT)
             .send()
-            .await?;
+            .await
+            .inspect_err(|e| {
+                if e.is_timeout() || e.is_connect() {
+                    NO_ANSWER.note_no_answer(Instant::now(), SKIP_AFTER_NO_ANSWER);
+                }
+            })?;
         let status = response.status();
         if status.is_success() {
             return Ok(Some(response.json().await?));

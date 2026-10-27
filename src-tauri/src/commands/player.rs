@@ -16,8 +16,10 @@ const APPIMAGE_PATH_LISTS: [&str; 10] = [
     "GTK_PATH",
 ];
 
-const APPIMAGE_SINGLE_VALUES: [&str; 11] = [
+const APPIMAGE_SINGLE_VALUES: [&str; 13] = [
     "PYTHONHOME",
+    "GI_TYPELIB_PATH",
+    "GST_PTP_HELPER_1_0",
     "GIO_EXTRA_MODULES",
     "GTK_EXE_PREFIX",
     "GTK_DATA_PREFIX",
@@ -72,6 +74,42 @@ pub fn sanitized_command(program: &str) -> Command {
     }
 
     cmd
+}
+
+/// The web address to hand to the browser: only absolute `http`/`https` addresses, in the
+/// form the `url` crate writes them, so nothing else ever reaches `xdg-open`.
+pub fn external_url(url: &str) -> Result<String, String> {
+    match url::Url::parse(url.trim()) {
+        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some() => {
+            Ok(parsed.to_string())
+        }
+        _ => Err("Only web addresses (http or https) can be opened in the browser.".to_string()),
+    }
+}
+
+/// Opens a web address in the system browser with `xdg-open`. Started through
+/// [`sanitized_command`]: a browser launched from the AppImage would otherwise get the bundle's
+/// GTK, GIO and GStreamer paths and may fail to start or never hand a sign-in back.
+pub fn open_in_browser(url: &str) -> Result<(), String> {
+    let url = external_url(url)?;
+    let mut child = sanitized_command("xdg-open")
+        .arg(&url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Could not open the browser: {}", e))?;
+    // Reap it; xdg-open hands the address to the browser and exits.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// The UI's "open in browser" links (see `useOpenExternal.ts`).
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    open_in_browser(&url)
 }
 
 /// Maps the player setting to a fixed binary name. The caller's string never becomes the

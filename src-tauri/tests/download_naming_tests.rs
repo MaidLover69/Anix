@@ -6,7 +6,7 @@ use anix_lib::downloads::{
     build_ffmpeg_args, configured_download_dir, detect_subtitle_format, output_base_name,
     parse_hls_demuxer_help, pick_stream, preferred_provider, remove_stale_part_files,
     request_headers, sanitize_filename, remember_work_dir, remove_part_files_in_old_dirs, hls_source_stamp, truncate_to_bytes, validate_stream_url, work_tag,
-    best_hls_variant, check_writable_dir, download_languages, hls_attribute, parse_content_range,
+    best_hls_variant, check_writable_dir, delete_finished_files, download_languages, hls_attribute, parse_content_range,
     plan_hls_download, DownloadSource, FfmpegInput, HlsDemuxerOptions, RequestHeaders, SubtitleFormat, SubtitleInput,
     BROWSER_USER_AGENT, MAX_FILE_NAME_BYTES, PART_SUFFIX,
 };
@@ -718,4 +718,51 @@ fn a_local_hls_playlist_gets_the_relaxed_extension_options() {
     assert_eq!(args[i + 1], "/d/Show.tag.hls.anix-part/index.m3u8");
     assert!(position(&args, "-allowed_extensions") < i && position(&args, "-extension_picky") < i);
     assert!(!args.iter().any(|a| a == "-headers" || a == "-user_agent"), "no network options for local files");
+}
+
+#[test]
+fn deleting_a_finished_download_removes_its_video_and_side_subtitles_only() {
+    let dir = std::env::temp_dir().join(format!("anix-delete-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let video = dir.join("Show - EP 01 [SUB 720p].mkv");
+    let mine = ["Show - EP 01 [SUB 720p].english.vtt", "Show - EP 01 [SUB 720p].english-2.ass"];
+    let kept = [
+        "Show - EP 01 [SUB 720p] (2).mkv",
+        "Show - EP 01 [SUB 720p] (2).english.vtt",
+        "Show - EP 02 [SUB 720p].english.vtt",
+        "Show - EP 01 [SUB 720p].notes.txt",
+    ];
+    std::fs::write(&video, b"x").unwrap();
+    for name in mine.iter().chain(kept.iter()) {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+
+    assert_eq!(delete_finished_files(&video), Ok(3));
+    assert!(!video.exists());
+    for name in mine {
+        assert!(!dir.join(name).exists(), "{name} should be gone");
+    }
+    for name in kept {
+        assert!(dir.join(name).exists(), "{name} belongs to something else");
+    }
+    assert_eq!(delete_finished_files(&video), Ok(0), "an already deleted video is fine");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deleting_refuses_anything_that_is_not_a_downloaded_video_file() {
+    let dir = std::env::temp_dir().join(format!("anix-delete-refuse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("folder.mkv")).unwrap();
+    let notes = dir.join("notes.txt");
+    std::fs::write(&notes, b"x").unwrap();
+    std::os::unix::fs::symlink(&notes, dir.join("link.mp4")).unwrap();
+
+    assert!(delete_finished_files(&notes).is_err(), "not a video extension");
+    assert!(delete_finished_files(Path::new("relative/Show.mkv")).is_err(), "relative path");
+    assert!(delete_finished_files(&dir.join("folder.mkv")).is_err(), "a directory");
+    assert!(delete_finished_files(&dir.join("link.mp4")).is_err(), "a symbolic link");
+    assert!(notes.exists() && dir.join("folder.mkv").is_dir() && dir.join("link.mp4").exists());
+    let _ = std::fs::remove_dir_all(&dir);
 }

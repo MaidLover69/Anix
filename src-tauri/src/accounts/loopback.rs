@@ -25,11 +25,8 @@ fn pending() -> MutexGuard<'static, Option<Pending>> {
     PENDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[allow(deprecated)]
-fn open_browser(app: &AppHandle, url: &str) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-    app.shell()
-        .open(url, None)
+fn open_browser(url: &str) -> Result<(), String> {
+    crate::commands::player::open_in_browser(url)
         .map_err(|e| format!("Could not open the browser for the Comick sign-in: {}", e))
 }
 
@@ -39,7 +36,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     let client_id = oauth::comick_client_id().ok_or("Comick is not available in this build.")?;
     let mut slot = pending();
     if let Some(waiting) = slot.as_ref() {
-        return open_browser(app, &waiting.authorize_url);
+        return open_browser(&waiting.authorize_url);
     }
 
     let state = oauth::new_state()?;
@@ -54,7 +51,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
                 e
             )
         })?;
-    open_browser(app, &authorize_url)?;
+    open_browser(&authorize_url)?;
 
     let cancelled = Arc::new(AtomicBool::new(false));
     *slot = Some(Pending {

@@ -534,16 +534,20 @@ fn give_up(error: String) {
     }
 }
 
-fn main_window_shown() -> bool {
+/// The user is looking at the window: shown, not minimised, and focused. "Shown" alone is also
+/// true on another workspace or behind other windows, where the question went unseen.
+fn main_window_in_use() -> bool {
     APP.get()
         .and_then(|app| app.get_webview_window("main"))
-        .is_some_and(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
+        .is_some_and(|w| {
+            w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) && w.is_focused().unwrap_or(false)
+        })
 }
 
 /// Asks the page for "Keep" when this libmpv/WebKit pair is not confirmed yet, and goes back to
 /// the web player by itself if no answer comes (the window may be blank). A window started to
-/// the tray cannot be answered, so the question waits for it and the deadline only counts
-/// while it is shown.
+/// the tray or left unfocused cannot be answered, so the question waits for it and the
+/// deadline only counts while the window is in use.
 fn begin_confirmation() {
     let Some(fingerprint) = FINGERPRINT.get() else { return };
     if !policy::needs_confirmation(&load_state(), fingerprint) {
@@ -558,7 +562,7 @@ fn begin_confirmation() {
             if !running || (asked && !ASK.load(Ordering::SeqCst)) {
                 return; // mpv failed, or the question was answered
             }
-            if !main_window_shown() {
+            if !main_window_in_use() {
                 continue;
             }
             if !asked {
@@ -599,7 +603,33 @@ fn finish_confirmation(answer: Answer, route: Option<String>) -> Result<(), Stri
         s.reopen = route;
         s
     });
+    if answer == Answer::NoAnswer {
+        post_switched_back_notice();
+    }
     restart();
+}
+
+/// Tells the user, in the notification centre, why the web player came back and where to turn
+/// embedded mpv on again; otherwise the silent restart looks like mpv never worked. Runs on its
+/// own thread because callers may be on the async runtime, and waits so the restart cannot cut it.
+fn post_switched_back_notice() {
+    let Some(pool) = APP.get().map(|app| app.state::<crate::state::AppState>().pool.clone()) else { return };
+    let _ = std::thread::spawn(move || {
+        let lang = crate::i18n::current();
+        let title = crate::i18n::text(lang, "mpv_back_title").to_string();
+        let body = crate::i18n::text(lang, "mpv_back_body").to_string();
+        let saved = tauri::async_runtime::block_on(crate::notices::push(
+            &pool,
+            crate::notices::PLAYER,
+            &title,
+            &body,
+            Some("/settings?section=playback"),
+        ));
+        if let Err(e) = saved {
+            tracing::warn!("Could not save the player notice: {}", e);
+        }
+    })
+    .join();
 }
 
 fn restart() -> ! {

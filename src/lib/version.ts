@@ -26,3 +26,13 @@ export function needsSetup(seenVersion: unknown, current: string): boolean {
   if (typeof seenVersion !== 'string' || seenVersion.trim() === '') return true;
   return isNewerVersion(current, seenVersion);
 }
+
+/**
+ * The update window opens by itself once for each newer release: `prompted` is the version it
+ * last opened for (`update_prompted_version`). Never over the player; the next screen will do.
+ */
+export function shouldPromptUpdate(latest: string | null | undefined, prompted: unknown, path: string): boolean {
+  if (!latest || path.startsWith('/watch')) return false;
+  if (typeof prompted !== 'string' || prompted.trim() === '') return true;
+  return isNewerVersion(latest, prompted);
+}

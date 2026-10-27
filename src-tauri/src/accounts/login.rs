@@ -65,6 +65,13 @@ impl Attempt {
     /// Page-load hook: catches a redirect the navigation hook let through.
     fn on_page_load(self: &Arc<Self>, app: &AppHandle, url: &Url, event: PageLoadEvent) {
         match oauth::parse_redirect(self.service, url) {
+            // Host and path only: the query of a sign-in page can carry the state or a code.
+            Redirect::Elsewhere if matches!(event, PageLoadEvent::Finished) => tracing::info!(
+                "{} sign-in: page loaded: {}{}",
+                self.service.label(),
+                url.host_str().unwrap_or("?"),
+                url.path()
+            ),
             Redirect::Elsewhere => {}
             Redirect::Empty => {
                 if matches!(event, PageLoadEvent::Finished) {
@@ -114,6 +121,7 @@ impl Attempt {
 
     fn window_closed(&self, app: &AppHandle) {
         if !self.finished.swap(true, Ordering::SeqCst) {
+            tracing::info!("{} sign-in: window closed before a result came back", self.service.label());
             super::emit(
                 app,
                 LOGIN_EVENT,
@@ -225,6 +233,7 @@ pub fn open(app: &AppHandle, service: Service) -> Result<(), String> {
         }
     };
 
+    tracing::info!("{} sign-in: window opened", service.label());
     let closed = (attempt, app.clone());
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {

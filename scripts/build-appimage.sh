@@ -8,6 +8,10 @@
 # them), and the 64-bit GStreamer plugins are handed to the bundler explicitly: on Fedora it
 # otherwise picks the 32-bit ones in /usr/lib and the packaged player cannot play anything.
 # The finished file is copied to ../release/ next to the project.
+#
+# Works on Fedora and on Ubuntu 22.04. Releases are built on Ubuntu 22.04 by
+# .github/workflows/release.yml: an AppImage runs only on systems at least as new as the one it
+# was built on (glibc), so building on an old base makes it run on almost every distribution.
 set -euo pipefail
 
 project="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,7 +48,7 @@ videotestsrc volume vorbis vpx wavenc wavpack wavparse xingmux y4m
 mse hls dash mpegtsdemux mpegpsdemux videoparsersbad fdkaac openh264 dav1d aom de265 va
 pipewire id3tag codecalpha closedcaption ttmlsubs opusparse autoconvert debugutilsbad audiofxbad
 videofiltersbad ivfparse subenc proxy soundtouch webp codectimestamper audiobuffersplit dvdspu
-dvbsuboverlay"
+dvbsuboverlay videoconvert videoscale"
 
 rm -rf "$work/gstplugins" "$work/gsthelpers"
 mkdir -p "$work/gstplugins" "$work/gsthelpers" "$work/app"
@@ -57,7 +61,8 @@ done
 cp "$helpers_src/gst-plugin-scanner" "$work/gsthelpers/"
 [ -f "$helpers_src/gst-ptp-helper" ] && cp "$helpers_src/gst-ptp-helper" "$work/gsthelpers/"
 
-rsync -a --delete --exclude 'src-tauri/target' --exclude '.git' --exclude 'dist' "$project/" "$work/app/"
+# Anchored at the top: a bare 'dist' would also drop every npm package's own dist/ folder.
+rsync -a --delete --exclude '/src-tauri/target' --exclude '/.git' --exclude '/dist' "$project/" "$work/app/"
 
 cd "$work/app"
 echo "Building Anix for $site"
@@ -100,18 +105,20 @@ libmpv_out="${ANIX_LIBMPV_DIR:-$HOME/.cache/anix-build/libmpv}/out"
   exit 1
 }
 python3 -I - "$libmpv_out/lib/anix" <<'PY'
-import ctypes, glob, sys
+import ctypes, glob, os, sys
 d = sys.argv[1]
 for lib, fn in [("libavutil", "avutil_license"), ("libavcodec", "avcodec_license"), ("libavformat", "avformat_license"),
                 ("libavfilter", "avfilter_license"), ("libswscale", "swscale_license"), ("libswresample", "swresample_license")]:
-    found = sorted(glob.glob(f"{d}/{lib}.so.*"), key=len)
+    # Every soname present: the player's FFmpeg and, on older build systems, the one for GStreamer.
+    found = [p for p in glob.glob(f"{d}/{lib}.so.*") if os.path.basename(p).count(".") == 2]
     if not found:
         sys.exit(f"{lib} is missing from {d}")
-    f = getattr(ctypes.CDLL(found[0]), fn)
-    f.restype = ctypes.c_char_p
-    text = f().decode()
-    if "LGPL" not in text or "nonfree" in text.lower():
-        sys.exit(f"{lib} reports '{text}', not an LGPL build; refusing.")
+    for path in found:
+        f = getattr(ctypes.CDLL(path), fn)
+        f.restype = ctypes.c_char_p
+        text = f().decode()
+        if "LGPL" not in text or "nonfree" in text.lower():
+            sys.exit(f"{os.path.basename(path)} reports '{text}', not an LGPL build; refusing.")
 mpv = ctypes.CDLL(f"{d}/libmpv.so.2")
 mpv.mpv_create.restype = ctypes.c_void_p
 mpv.mpv_initialize.argtypes = [ctypes.c_void_p]
@@ -131,9 +138,11 @@ print("libmpv and FFmpeg are LGPL builds.")
 PY
 mkdir -p "$appdir/usr/lib/anix" "$appdir/usr/share/licenses/anix"
 cp -P "$libmpv_out"/lib/anix/*.so* "$appdir/usr/lib/anix/"
-# Libraries the mpv build links against that older or minimal systems lack (all permissively
-# licensed, listed in THIRD-PARTY-NOTICES.md). Audio, X11/Wayland, fonts and VA-API stay the system's.
-for soname in libdav1d.so.7 libunwind.so.8 liblcms2.so.2 libjpeg.so.62; do
+# Libraries the mpv build links against whose soname differs between distributions (all
+# permissively licensed, listed in THIRD-PARTY-NOTICES.md): bundled at the version the build used.
+# Audio, X11/Wayland, fonts and VA-API stay the system's.
+needed="$(readelf -d "$appdir"/usr/lib/anix/*.so* 2>/dev/null | sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' | sort -u)"
+for soname in $(printf '%s\n' "$needed" | grep -E '^lib(dav1d|unwind|lcms2|jpeg)\.so\.[0-9]+$' || true); do
   path="$(ldconfig -p | awk -v n="$soname" '$1 == n && /x86-64/ && !found {print $NF; found = 1}')"
   [ -n "$path" ] || { echo "$soname is not installed on this build machine." >&2; exit 1; }
   cp -L "$path" "$appdir/usr/lib/anix/$soname"
@@ -179,7 +188,10 @@ if problems:
 print("No GPL components in the package.")
 PY
 
-if grep -rla -e "$HOME" -e "$(id -un)" "$appdir"; then
+# The user name is skipped when it is a generic build account (CI runs as root or runner), whose
+# name appears in many unrelated binaries; the home folder is always checked.
+check_user="${ANIX_CHECK_USER-$(id -un)}"
+if grep -rla -e "$HOME" ${check_user:+-e "$check_user"} "$appdir"; then
   echo "The package still contains this machine's home folder or user name (files above)." >&2
   exit 1
 fi

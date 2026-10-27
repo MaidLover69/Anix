@@ -498,6 +498,8 @@
   },
   "downloads.failedFallback": "ダウンロードに失敗しました。",
   "downloads.fileStaysOnDisk": "完了したファイルはディスクに残ります:",
+  "downloads.deleteFileToo": "ファイルと字幕もディスクから削除する",
+  "downloads.fileWillBeDeleted": "このファイルは削除されます:",
   "downloads.forget": "一覧から消す",
   "downloads.forgetFor": "一覧から消す: {name}",
   "downloads.freeOf": "{total} 中 {free} 空き",

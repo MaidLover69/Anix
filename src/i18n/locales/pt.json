@@ -530,6 +530,8 @@
   },
   "downloads.failedFallback": "O download falhou.",
   "downloads.fileStaysOnDisk": "Um arquivo concluído continua no disco:",
+  "downloads.deleteFileToo": "Apagar também o arquivo e suas legendas do disco",
+  "downloads.fileWillBeDeleted": "Este arquivo será apagado:",
   "downloads.forget": "Esquecer",
   "downloads.forgetFor": "Esquecer: {name}",
   "downloads.freeOf": "{free} livres de {total}",

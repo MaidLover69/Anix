@@ -18,7 +18,7 @@ Streaming sources are not built in. They come from **extensions**: JavaScript fi
 from extension repositories (see [Extensions](#extensions)). The extensions live in a separate
 repository (`../plugins`, which has its own `AGENTS.md`).
 
-- Version 1.3.0, identifier `io.anix.app`, licence MIT.
+- Version 1.3.1, identifier `io.anix.app`, licence MIT.
 - Public site: https://anix-linux.vercel.app (download page, extension list, `version.json` for update checks).
 - The app was first called **Anilili**. Old names still work and must keep working: `ANILILI_*`
   env vars, the `$anilili` plugin global, `anilili://` links, and old data folders (migrated by
@@ -118,8 +118,9 @@ Notes:
    | `ANIX_LIBMPV_DIR` | Where step 1 put libmpv |
    | `ANIX_COMICK_CLIENT_ID` | Optional, compile time. Without it, the build has no Comick sign-in. Export it in your own shell. Never commit it. |
 
-- Use the script for AppImages. A plain `tauri build` AppImage misses the bundled LGPL libmpv and may pick the wrong GStreamer plugins. Releases are built locally and published by the owner; CI only builds and tests, it never makes release files.
-- The script stops if the home path or user name appears anywhere in the package. Do not weaken that check.
+- Use the script for AppImages. A plain `tauri build` AppImage misses the bundled LGPL libmpv and may pick the wrong GStreamer plugins.
+- Release AppImages are built by `.github/workflows/release.yml` in an Ubuntu 22.04 container: an AppImage only runs on systems whose glibc is at least as new as the build system's, and this base (glibc 2.35) covers Ubuntu 22.04, Mint 21, Debian 12 and everything newer. The workflow fails if the result needs a newer glibc. It runs when the version or the build scripts change, keeps the file as a 30-day artifact, and publishes nothing; the owner uploads it. A local build on a new distribution only runs on systems as new as that one. The Comick client id comes from the repository secret `ANIX_COMICK_CLIENT_ID`.
+- The script stops if the home path or user name appears anywhere in the package. Do not weaken that check. Only CI sets `ANIX_CHECK_USER=''`, because its account name (`root`) appears in unrelated binaries; the home path is still checked there.
 - RPM and DEB builds bundle no libmpv and default to the web player.
 
 ## Hard rules

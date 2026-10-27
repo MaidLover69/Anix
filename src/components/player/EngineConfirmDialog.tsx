@@ -49,9 +49,10 @@ export const EngineConfirmDialog: React.FC = () => {
 
   useEffect(() => {
     if (!open) return;
-    // Only counts while the window can be seen (not hidden to the tray).
+    // Only counts while the user is looking: shown and focused (not on another workspace,
+    // behind other windows or hidden to the tray), like the backend's own deadline.
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') setLeft((s) => Math.max(0, s - 1));
+      if (document.visibilityState === 'visible' && document.hasFocus()) setLeft((s) => Math.max(0, s - 1));
     }, 1000);
     return () => window.clearInterval(timer);
   }, [open]);

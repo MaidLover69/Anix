@@ -498,6 +498,8 @@
   },
   "downloads.failedFallback": "下载失败。",
   "downloads.fileStaysOnDisk": "已完成的文件会保留在磁盘上：",
+  "downloads.deleteFileToo": "同时从磁盘删除文件及其字幕",
+  "downloads.fileWillBeDeleted": "将删除此文件：",
   "downloads.forget": "移除记录",
   "downloads.forgetFor": "移除记录：{name}",
   "downloads.freeOf": "可用 {free}，共 {total}",

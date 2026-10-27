@@ -511,3 +511,16 @@ Kept: https://anilist.co/anime/21 and a 16-char tag 0123456789abcdef";
         serde_json::json!({ "theme": "dark", "download_dir": "/home/someone/Anime" })
     );
 }
+
+#[test]
+fn a_service_that_did_not_answer_is_skipped_only_for_a_while() {
+    use anix_lib::clients::jikan::Pause;
+    use std::time::{Duration, Instant};
+    let pause = Pause::default();
+    let now = Instant::now();
+    assert!(!pause.active(now), "nothing noted yet");
+    pause.note_no_answer(now, Duration::from_secs(180));
+    assert!(pause.active(now + Duration::from_secs(1)));
+    assert!(pause.active(now + Duration::from_secs(179)));
+    assert!(!pause.active(now + Duration::from_secs(181)), "tried again after the pause");
+}

@@ -514,6 +514,8 @@
   },
   "downloads.failedFallback": "डाउनलोड विफल रहा।",
   "downloads.fileStaysOnDisk": "पूरी हो चुकी फ़ाइल डिस्क पर बनी रहती है:",
+  "downloads.deleteFileToo": "फ़ाइल और उसके सबटाइटल भी डिस्क से हटाएँ",
+  "downloads.fileWillBeDeleted": "यह फ़ाइल हटा दी जाएगी:",
   "downloads.forget": "भूल जाएँ",
   "downloads.forgetFor": "भूल जाएँ: {name}",
   "downloads.freeOf": "{total} में से {free} खाली",

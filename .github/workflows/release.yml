@@ -79,7 +79,7 @@ jobs:
 
       - name: Build LGPL libmpv and FFmpeg
         if: steps.libmpv.outputs.cache-hit != 'true'
-        run: scripts/build-libmpv-lgpl.sh 2>&1 | tee libmpv-build.log
+        run: bash scripts/build-libmpv-lgpl.sh 2>&1 | tee libmpv-build.log
 
       - name: Install npm dependencies
         run: npm ci
@@ -88,7 +88,7 @@ jobs:
         env:
           # Without it the build has no Comick sign-in. Set it under Settings › Secrets › Actions.
           ANIX_COMICK_CLIENT_ID: ${{ secrets.ANIX_COMICK_CLIENT_ID }}
-        run: scripts/build-appimage.sh 2>&1 | tee appimage-build.log
+        run: bash scripts/build-appimage.sh 2>&1 | tee appimage-build.log
 
       - name: Check the oldest system it runs on
         run: |

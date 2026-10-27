@@ -133,7 +133,7 @@ Without FUSE, start it with `./Anix_1.3.1_amd64.AppImage --appimage-extract-and-
 
 **Missing thumbnails:** from 1.3.0 on, the AppImage fixes this itself (it sets `G_TLS_GNUTLS_PRIORITY=NORMAL` when your system has no GnuTLS crypto policy), so no command is needed any more. A value you set yourself is kept. Only 1.2.0 still needs the old workaround: `G_TLS_GNUTLS_PRIORITY=NORMAL ./Anix_1.2.0_amd64.AppImage`.
 
-*(Wayland note: On certain Wayland compositors, if an EGL display error occurs, launch with: `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.3.1_amd64.AppImage`)*
+*(Wayland note: the EGL display error some Wayland desktops showed is fixed from 1.3.1 on, because the AppImage now uses the system's Wayland libraries. For 1.3.0 and older, launch with `LD_PRELOAD=/usr/lib64/libwayland-client.so ./Anix_1.3.0_amd64.AppImage`; on Debian and Ubuntu the file is `/usr/lib/x86_64-linux-gnu/libwayland-client.so.0`.)*
 
 ### Troubleshooting the video player
 

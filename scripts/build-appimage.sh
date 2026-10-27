@@ -160,6 +160,17 @@ done
 for f in "$appdir"/usr/lib/anix/libav*.so* "$appdir"/usr/lib/anix/libsw*.so*; do
   ln -sf "anix/$(basename "$f")" "$appdir/usr/lib/$(basename "$f")"
 done
+# The AppImage launcher puts usr/lib first on the library path, ahead of libmpv's own RUNPATH, so
+# a system copy there of a library the mpv build also ships (libass, dav1d, ...) would shadow it:
+# libmpv then fails to load on missing symbols. Point those at the mpv build's copy too.
+for f in "$appdir"/usr/lib/anix/*.so*; do
+  b="$(basename "$f")"
+  if [ -e "$appdir/usr/lib/$b" ] && [ ! -L "$appdir/usr/lib/$b" ]; then ln -sf "anix/$b" "$appdir/usr/lib/$b"; fi
+done
+# The Wayland client libraries stay the system's: a bundled copy older than the system's Mesa makes
+# WebKit abort with "Could not create default EGL display". Every desktop has them (GTK needs them).
+rm -f "$appdir"/usr/lib/libwayland-client.so* "$appdir"/usr/lib/libwayland-cursor.so* \
+  "$appdir"/usr/lib/libwayland-egl.so* "$appdir"/usr/lib/libwayland-server.so*
 gpl_libs='x264|x265|xvidcore|vidstab|rubberband|fftw3|chromaprint|leptonica|tesseract|jbig|a52|mpeg2|faad|postproc|dvdread|dvdnav|cdio|cdio_paranoia'
 find "$appdir/usr" -regextype posix-extended -regex ".*/lib(${gpl_libs})[._-].*" -print -delete
 # libtiff was only there for the GPL build's OCR filter.

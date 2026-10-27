@@ -220,7 +220,9 @@ PY
 if ldd "$out/lib/anix/libmpv.so.2" | grep -E 'libav|libsw|libplacebo|libass' | grep -v "$out/lib/anix"; then
   echo "libmpv resolves some of its libraries outside $out/lib/anix (above)." >&2; exit 1
 fi
-if grep -rla -e "$HOME" -e "$(id -un)" "$out"; then
+# CI sets ANIX_CHECK_USER='' (it runs as root, a word inside unrelated binaries); the home folder is always checked.
+check_user="${ANIX_CHECK_USER-$(id -un)}"
+if grep -rla -e "$HOME" ${check_user:+-e "$check_user"} "$out"; then
   echo "The libraries contain this machine's home folder or user name (files above)." >&2; exit 1
 fi
 echo; echo "Done in $(( $(date +%s) - t0 ))s: $out/lib/anix"

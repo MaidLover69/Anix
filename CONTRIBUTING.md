@@ -14,9 +14,10 @@ the private process in [SECURITY.md](SECURITY.md), not public issues.
   directly in a pull request.
 - **Suggest a feature:** open a **Feature request** first and wait for a reply before you write
   code. Anix prefers improving what exists over adding new features, so not every idea gets in.
-- **Extensions:** extensions are not in this repository. Problems with the extensions maintained
-  for Anix go to the [extensions repository](https://github.com/MaidLover69/Anix_plugins/issues).
-  Problems with a third-party extension go to its author.
+- **Source requests and extensions:** this repository is for the app only. Requests for a new
+  streaming site or source, and problems with the extensions maintained for Anix, go to the
+  [extensions repository](https://github.com/MaidLover69/Anix_plugins/issues). Problems with a
+  third-party extension go to its author.
 
 ## Setting up
 

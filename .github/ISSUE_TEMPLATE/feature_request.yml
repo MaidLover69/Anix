@@ -2,11 +2,20 @@ name: Feature request
 description: Suggest an improvement or a new feature.
 labels: ["enhancement"]
 body:
+  - type: checkboxes
+    id: not-a-source
+    attributes:
+      label: Is this about a streaming source?
+      description: |
+        This tracker is for the Anix app itself. Requests for a new streaming site or source, and problems with one extension, go to the
+        [extensions repository](https://github.com/MaidLover69/Anix_plugins/issues/new/choose) instead.
+      options:
+        - label: This is NOT a request for a new streaming source, and not a problem with a single extension.
+          required: true
   - type: markdown
     attributes:
       value: |
         Anix prefers improving what it already does over adding new features, so not every idea gets in. Explaining the problem you want solved helps the most.
-        Requests for streaming sites go to the extensions repository, not here.
   - type: textarea
     id: problem
     attributes:

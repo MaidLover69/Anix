@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Request a streaming source
+    url: https://github.com/MaidLover69/Anix_plugins/issues/new/choose
+    about: New anime sites or sources are added as extensions. Ask in the extensions repository, not here.
   - name: Security problem
     url: https://github.com/MaidLover69/Anix/security/advisories/new
     about: Report security problems privately, not in a public issue.

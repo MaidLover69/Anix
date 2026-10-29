@@ -207,6 +207,11 @@ if grep -rla -e "$HOME" ${check_user:+-e "$check_user"} "$appdir"; then
   exit 1
 fi
 
+# Tauri's cached AppRun.wrapped is 0770; mounts that keep the packager as owner (firejail, the
+# AppImage catalog's test) then refuse to start it. Everyone may read every file and run the programs.
+chmod -R a+rX "$appdir"
+chmod a+x "$appdir"/AppRun*
+
 rm -f "$built"
 (cd "$bundle" && ARCH=x86_64 LDAI_OUTPUT="$built" OUTPUT="$built" \
   "$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage" --appdir "$appdir")

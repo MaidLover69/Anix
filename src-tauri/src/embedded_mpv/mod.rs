@@ -95,6 +95,8 @@ pub enum Action {
 pub enum Op {
     Set(&'static str, String),
     Command(Vec<String>),
+    /// A command that may take long (a download), run without waiting for it.
+    CommandAsync(Vec<String>),
     /// `glsl-shaders` for a preset; the folder is only known to the running app.
     Shaders(Anime4k),
 }
@@ -165,8 +167,10 @@ pub fn plan(action: &Action, proxy_base: &str) -> Result<Vec<Op>, String> {
         Action::AddSubtitle { url, title, select } => {
             from_proxy(url, proxy_base)?;
             let title: String = title.as_deref().unwrap_or("").chars().filter(|c| !c.is_control()).take(80).collect();
-            let flag = if *select { "select" } else { "auto" };
-            vec![Command(vec!["sub-add".into(), url.clone(), flag.into(), title])]
+            // "cached" shows the file, and reuses it when it was added before instead of a copy.
+            let flag = if *select { "cached" } else { "auto" };
+            // sub-add downloads the whole file before it returns, which froze playback.
+            vec![Op::CommandAsync(vec!["sub-add".into(), url.clone(), flag.into(), title])]
         }
         Action::Stop => vec![Command(vec!["stop".into()])],
         Action::SetPause { paused } => vec![Set("pause", yes_no(*paused))],
@@ -225,6 +229,12 @@ pub fn plan(action: &Action, proxy_base: &str) -> Result<Vec<Op>, String> {
     })
 }
 
+/// The page's "loaded" event. mpv reports `pause` only when it changes, so its value at load
+/// is sent along; otherwise the page could not know mpv is already playing.
+pub fn loaded_event(tracks: Value, pause: Option<&str>) -> Value {
+    json!({ "kind": "loaded", "tracks": tracks, "paused": pause.map(|p| p == "yes") })
+}
+
 /// True for a libavcodec licence string of a GPL or non-free build.
 pub fn is_gpl_license(license: &str) -> bool {
     let license = license.to_ascii_lowercase();
@@ -277,7 +287,7 @@ impl Player {
                 let dir = SHADER_DIR.get().ok_or("The Anime4K shaders are not installed")?;
                 self.set("glsl-shaders", &policy::shader_list(dir, *preset)?)
             }
-            Op::Command(args) => {
+            Op::Command(args) | Op::CommandAsync(args) => {
                 let owned: Vec<CString> = args
                     .iter()
                     .map(|a| CString::new(a.as_str()))
@@ -285,7 +295,12 @@ impl Player {
                     .map_err(|e| e.to_string())?;
                 let mut ptrs: Vec<*const std::ffi::c_char> = owned.iter().map(|a| a.as_ptr()).collect();
                 ptrs.push(std::ptr::null());
-                self.check(unsafe { (self.lib.command)(self.handle, ptrs.as_mut_ptr()) }, &args[0])
+                // libmpv copies the arguments, so they may be dropped before the command ends.
+                let code = match (op, self.lib.command_async) {
+                    (Op::CommandAsync(_), Some(run)) => unsafe { run(self.handle, 0, ptrs.as_mut_ptr()) },
+                    _ => unsafe { (self.lib.command)(self.handle, ptrs.as_mut_ptr()) },
+                };
+                self.check(code, &args[0])
             }
         }
     }
@@ -301,6 +316,8 @@ impl Player {
                     "lang": field("lang"),
                     "title": field("title"),
                     "codec": field("codec"),
+                    // The file or URL of a track added with sub-add; none for the file's own tracks.
+                    "external_filename": field("external-filename"),
                     "selected": field("selected").as_deref() == Some("yes"),
                     "default": field("default").as_deref() == Some("yes"),
                 })
@@ -795,7 +812,13 @@ fn event_loop(app: AppHandle) {
             ffi::EVENT_SHUTDOWN => break,
             ffi::EVENT_FILE_LOADED => {
                 PLAYING.store(true, Ordering::SeqCst);
-                json!({ "kind": "loaded", "tracks": player.tracks() })
+                loaded_event(player.tracks(), player.get("pause").as_deref())
+            }
+            ffi::EVENT_COMMAND_REPLY => {
+                if event.error < 0 {
+                    tracing::warn!("A background mpv command failed: {}", player.lib.error_text(event.error));
+                }
+                continue;
             }
             ffi::EVENT_SEEK => json!({ "kind": "seeking" }),
             ffi::EVENT_PLAYBACK_RESTART => json!({ "kind": "seeked" }),

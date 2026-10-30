@@ -55,7 +55,28 @@ fn subtitle_titles_are_cleaned() {
         BASE,
     )
     .unwrap();
-    assert_eq!(ops[0], Op::Command(vec!["sub-add".into(), format!("{}/proxy?url=s", BASE), "select".into(), "English".into()]));
+    assert_eq!(ops[0], Op::CommandAsync(vec!["sub-add".into(), format!("{}/proxy?url=s", BASE), "cached".into(), "English".into()]));
+}
+
+#[test]
+fn subtitle_files_are_added_without_blocking_playback() {
+    // sub-add downloads the whole file before it returns; run synchronously it froze playback.
+    let add = |select| plan(&Action::AddSubtitle { url: format!("{}/s", BASE), title: None, select }, BASE).unwrap();
+    // "cached" shows the file and reuses it when it was added before, instead of a second copy.
+    assert_eq!(add(true), vec![Op::CommandAsync(vec!["sub-add".into(), format!("{}/s", BASE), "cached".into(), String::new()])]);
+    assert_eq!(add(false), vec![Op::CommandAsync(vec!["sub-add".into(), format!("{}/s", BASE), "auto".into(), String::new()])]);
+    let outside = Action::AddSubtitle { url: "https://example.com/s.ass".into(), title: None, select: true };
+    assert!(plan(&outside, BASE).is_err());
+}
+
+#[test]
+fn loaded_event_carries_mpv_pause_state() {
+    use anix_lib::embedded_mpv::loaded_event;
+    use serde_json::json;
+    // mpv only reports `pause` when it changes, so the page learns the state at load.
+    assert_eq!(loaded_event(json!([]), Some("no")), json!({ "kind": "loaded", "tracks": [], "paused": false }));
+    assert_eq!(loaded_event(json!([]), Some("yes"))["paused"], json!(true));
+    assert_eq!(loaded_event(json!([]), None)["paused"], json!(null));
 }
 
 #[test]
@@ -219,4 +240,21 @@ fn second_subtitle_track_and_position() {
     assert_eq!(plan(&Action::SetSecondarySubTrack { id: Some(3) }, BASE).unwrap(), vec![Op::Set("secondary-sid", "3".into())]);
     assert_eq!(plan(&Action::SetSecondarySubPos { value: 12.4 }, BASE).unwrap(), vec![Op::Set("secondary-sub-pos", "12".into())]);
     assert_eq!(plan(&Action::SetShaders { preset: Anime4k::Off }, BASE).unwrap(), vec![Op::Shaders(Anime4k::Off)]);
+}
+
+#[test]
+fn a_restart_drops_the_dmabuf_switch_anix_set_itself() {
+    use anix_lib::system::hwaccel::{dmabuf_env, DmabufEnv};
+    // Fresh start, web player: Anix turns the renderer off and marks the value as its own.
+    assert_eq!(dmabuf_env(None, None, false), DmabufEnv::Disable);
+    // Fresh start, mpv: the renderer stays on.
+    assert_eq!(dmabuf_env(None, None, true), DmabufEnv::Untouched);
+    // "Restart now" (web → mpv) inherits Anix's own value: it is removed again.
+    assert_eq!(dmabuf_env(Some("1"), Some("1"), true), DmabufEnv::Clear);
+    // A restart that stays on the web player keeps it off, still as Anix's own.
+    assert_eq!(dmabuf_env(Some("1"), Some("1"), false), DmabufEnv::Disable);
+    // A value the user set is never touched, with or without a stray mark.
+    assert_eq!(dmabuf_env(Some("1"), None, true), DmabufEnv::User);
+    assert_eq!(dmabuf_env(Some("0"), Some("1"), false), DmabufEnv::User);
+    assert_eq!(dmabuf_env(Some("0"), None, true), DmabufEnv::User);
 }

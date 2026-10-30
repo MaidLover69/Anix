@@ -22,6 +22,9 @@ export class MpvMedia extends EventTarget {
   private rate = 1;
   private cachedUntil = 0;
   private message: string | null = null;
+  /** mpv holds playback to fill its cache: a stall, not a pause. */
+  private stalled = false;
+  private readonly send: (action: MpvAction) => void;
   ended = false;
   seeking = false;
   /** 0 until a file is open, then 4 (enough data), as on an element. */
@@ -30,9 +33,14 @@ export class MpvMedia extends EventTarget {
   tracks: MpvTrack[] = [];
   /** Counts the files mpv finished opening. */
   loadCount = 0;
+  /** The proxy URL of the open stream, set by the engine when it loads one. */
+  src: string | null = null;
+  /** True from a reopen after the end until mpv reports the file loaded. */
+  replaying = false;
 
-  constructor(private readonly send: (action: MpvAction) => void) {
+  constructor(send: (action: MpvAction) => void) {
     super();
+    this.send = send;
   }
 
   private fire(...names: string[]) {
@@ -45,11 +53,18 @@ export class MpvMedia extends EventTarget {
   set currentTime(value: number) {
     if (!Number.isFinite(value)) return;
     const target = Math.max(0, Number.isFinite(this.length) ? Math.min(value, this.length) : value);
+    const reopen = this.ended && this.src !== null;
     this.time = target;
     this.seeking = true;
     this.ended = false;
-    this.send({ action: 'seek', seconds: target, absolute: true });
+    // At the end mpv unloads the file (idle, no keep-open), so a seek has nothing to move in.
+    if (reopen) {
+      // Opened paused, as an element stays paused when seeking after the end.
+      this.send({ action: 'set_pause', paused: this.isPaused });
+      this.reopen(target);
+    } else this.send({ action: 'seek', seconds: target, absolute: true });
     this.fire('seeking', 'timeupdate');
+    if (reopen) this.fire('waiting');
   }
 
   get duration(): number {
@@ -100,12 +115,41 @@ export class MpvMedia extends EventTarget {
   }
 
   play(): Promise<void> {
+    const reopen = this.ended && this.src !== null;
     this.send({ action: 'set_pause', paused: false });
+    if (reopen) {
+      this.time = 0;
+      this.ended = false;
+      this.reopen(0);
+    }
+    // Applied at once: mpv reports `pause` only when it changes, so a request that changes
+    // nothing there would otherwise leave the controls showing the wrong state.
+    this.setPaused(false);
+    // Until mpv has opened the file again the controls show buffering, not a frozen frame.
+    if (reopen) this.fire('waiting');
     return Promise.resolve();
   }
 
   pause(): void {
     this.send({ action: 'set_pause', paused: true });
+    this.setPaused(true);
+  }
+
+  /** Opens the current stream again at `start`. */
+  private reopen(start: number) {
+    if (this.src === null) return;
+    this.replaying = true;
+    this.readyState = 0;
+    this.send({ action: 'load', url: this.src, start: start > 0 ? start : null });
+  }
+
+  private setPaused(paused: boolean) {
+    if (paused === this.isPaused) return;
+    this.isPaused = paused;
+    if (!paused) this.ended = false;
+    if (paused) return this.fire('pause');
+    // `playing` means frames are coming; while mpv fills its cache that waits for the cache.
+    this.fire('play', ...(this.stalled ? [] : ['playing']));
   }
 
   /** Applies one report of the backend's `embedded-mpv` event. */
@@ -119,7 +163,12 @@ export class MpvMedia extends EventTarget {
         this.ended = false;
         this.message = null;
         this.loadCount += 1;
-        return this.fire('loadedmetadata', 'durationchange', 'canplay', 'trackschange');
+        this.stalled = false;
+        this.fire('loadedmetadata', 'durationchange', 'canplay', 'trackschange');
+        this.replaying = false;
+        // mpv's pause state at load; it sends no property event for a value that did not change.
+        if (typeof event.paused === 'boolean') this.setPaused(event.paused);
+        return;
       case 'tracks':
         this.tracks = event.tracks;
         return this.fire('trackschange');
@@ -128,14 +177,17 @@ export class MpvMedia extends EventTarget {
         return this.fire('seeking');
       case 'seeked':
         this.seeking = false;
-        return this.fire('seeked', isPlayingEvent(this.isPaused));
+        return this.fire('seeked', this.stalled ? 'waiting' : isPlayingEvent(this.isPaused));
       case 'end':
+        this.stalled = false;
         if (event.reason === 'eof') {
           this.ended = true;
           this.isPaused = true;
           if (Number.isFinite(this.length)) this.time = this.length;
           return this.fire('timeupdate', 'ended');
         }
+        // A reopen that failed is over; the next stream starts from its own position.
+        this.replaying = false;
         this.message = event.error;
         return this.fire('error');
       default:
@@ -154,12 +206,11 @@ export class MpvMedia extends EventTarget {
         this.length = number !== null && number > 0 ? number : Number.NaN;
         return this.fire('durationchange');
       case 'pause':
-        if ((value === true) === this.isPaused) return;
-        this.isPaused = value === true;
-        if (!this.isPaused) this.ended = false;
-        return this.fire(this.isPaused ? 'pause' : 'play', ...(this.isPaused ? [] : ['playing']));
+        return this.setPaused(value === true);
       case 'paused-for-cache':
-        return this.fire(value === true ? 'waiting' : isPlayingEvent(this.isPaused));
+        // Shown as buffering (a spinner), never as the user's pause.
+        this.stalled = value === true;
+        return this.fire(this.stalled ? 'waiting' : isPlayingEvent(this.isPaused));
       case 'demuxer-cache-time':
         this.cachedUntil = number ?? 0;
         return this.fire('progress');

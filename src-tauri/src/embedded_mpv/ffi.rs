@@ -13,6 +13,7 @@ pub const FORMAT_FLAG: c_int = 3;
 pub const FORMAT_DOUBLE: c_int = 5;
 
 pub const EVENT_SHUTDOWN: c_int = 1;
+pub const EVENT_COMMAND_REPLY: c_int = 5;
 pub const EVENT_END_FILE: c_int = 7;
 pub const EVENT_FILE_LOADED: c_int = 8;
 pub const EVENT_SEEK: c_int = 20;
@@ -83,6 +84,9 @@ pub struct Lib {
     pub get_property_string: unsafe extern "C" fn(Handle, *const c_char) -> *mut c_char,
     pub free: unsafe extern "C" fn(*mut c_void),
     pub command: unsafe extern "C" fn(Handle, *mut *const c_char) -> c_int,
+    /// `mpv_command_async`: the result comes later as an `EVENT_COMMAND_REPLY`. Optional, so a
+    /// libmpv without it still loads (its commands then run synchronously).
+    pub command_async: Option<unsafe extern "C" fn(Handle, u64, *mut *const c_char) -> c_int>,
     pub observe_property: unsafe extern "C" fn(Handle, u64, *const c_char, c_int) -> c_int,
     pub wait_event: unsafe extern "C" fn(Handle, c_double) -> *mut Event,
     pub error_string: unsafe extern "C" fn(c_int) -> *const c_char,
@@ -135,6 +139,7 @@ impl Lib {
             }};
         }
         let avcodec = symbol(handle, "avcodec_license");
+        let command_async = symbol(handle, "mpv_command_async");
         Ok(Lib {
             create: sym!("mpv_create"),
             initialize: sym!("mpv_initialize"),
@@ -144,6 +149,16 @@ impl Lib {
             get_property_string: sym!("mpv_get_property_string"),
             free: sym!("mpv_free"),
             command: sym!("mpv_command"),
+            command_async: if command_async.is_null() {
+                None
+            } else {
+                // SAFETY: `int mpv_command_async(mpv_handle *, uint64_t reply_userdata, const char **args)`.
+                Some(unsafe {
+                    std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Handle, u64, *mut *const c_char) -> c_int>(
+                        command_async,
+                    )
+                })
+            },
             observe_property: sym!("mpv_observe_property"),
             wait_event: sym!("mpv_wait_event"),
             error_string: sym!("mpv_error_string"),

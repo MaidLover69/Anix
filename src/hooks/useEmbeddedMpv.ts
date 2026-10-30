@@ -11,6 +11,7 @@ import type { MediaTrackOption, PlayerEngine } from './usePlayerEngine';
 import { defaultSubtitleIndex, SUBTITLES_OFF } from './useSubtitleTracks';
 import type { SubtitleOption } from './useSubtitleTracks';
 import { t } from '../i18n';
+import { addedTrackId, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../lib/mpvSubtitles';
 
 /** The hidden hardware decoding self-test's stored result. */
 export interface HwdecSelfTest {
@@ -114,6 +115,8 @@ export interface MpvTrack {
   codec: string | null;
   selected: boolean;
   default?: boolean;
+  /** The URL a track was added from with `add_subtitle`; null for the file's own tracks. */
+  external_filename?: string | null;
 }
 
 export type MpvEnd = { reason: 'eof' } | { reason: 'error'; error: string };
@@ -122,7 +125,9 @@ const EVENT = 'embedded-mpv';
 
 export type MpvEvent =
   | { kind: 'property'; name: string; value: number | boolean | null }
-  | { kind: 'tracks' | 'loaded'; tracks: MpvTrack[] }
+  | { kind: 'tracks'; tracks: MpvTrack[] }
+  /** `paused`: mpv's pause state when the file opened (null if it could not be read). */
+  | { kind: 'loaded'; tracks: MpvTrack[]; paused?: boolean | null }
   | { kind: 'seeking' | 'seeked' | 'status' | 'hwdec_fallback' }
   | ({ kind: 'end' } & MpvEnd);
 
@@ -158,6 +163,7 @@ export interface MpvEngine extends PlayerEngine {
 }
 
 const SUB_ID = 'mpv:';
+const trackId = (id: string) => (id.startsWith(SUB_ID) ? Number(id.slice(SUB_ID.length)) : null);
 
 /** Drives the embedded player for one episode, with the same shape as the web engine. */
 export function useMpvEngine({
@@ -182,8 +188,13 @@ export function useMpvEngine({
   const [selectedSecondary, setSelectedSecondary] = useState(SUBTITLES_OFF);
   const onFailRef = useRef(onFail);
   onFailRef.current = onFail;
-  /** Set after subtitle files were added: the one mpv then shows becomes the selection. */
+  /** Set when no file is added at load: the track mpv then shows becomes the selection. */
   const adoptSubtitle = useRef(false);
+  /** The subtitle choice that outlives a reload (undefined until the first file opened). */
+  const wantedSubtitle = useRef<string | undefined>(undefined);
+  const secondaryRef = useRef(SUBTITLES_OFF);
+  /** An added file to show as the second subtitle once mpv lists it. */
+  const pendingSecondary = useRef<string | null>(null);
   /** The resume check waits for the file's duration, which mpv reports after it loaded. */
   const resumeCheck = useRef(false);
   // Read once, when loading first begins (as the web engine does).
@@ -227,8 +238,11 @@ export function useMpvEngine({
     }
     const start = startRef.current;
     setLoaded(false);
+    const url = buildProxyUrl(proxyBase, stream);
+    // The stand-in reopens this stream itself for a replay after the end.
+    media.src = url;
     sendMpv({ action: 'set_pause', paused: !start.autoplay });
-    mpvAction({ action: 'load', url: buildProxyUrl(proxyBase, stream), start: start.startAt > 0 ? start.startAt : null }).catch(
+    mpvAction({ action: 'load', url, start: start.startAt > 0 ? start.startAt : null }).catch(
       (e) => onFailRef.current(String(e))
     );
   }, [media, listening, enabled, proxyBase, streams, streamIndex]);
@@ -244,25 +258,82 @@ export function useMpvEngine({
     return () => media.removeEventListener('error', onError);
   }, [media, streamIndex, streams.length]);
 
-  // Once a file is open: subtitle files, the preferred audio language, a resume check.
+  // The proxy URL of the extension's subtitle file `index` for the current stream. mpv renders
+  // the raw file's ASS styling itself.
+  const subtitleUrl = useCallback(
+    (index: number) => {
+      const sub = subtitles[index];
+      const stream = streams[streamIndex];
+      return sub
+        ? buildProxyUrl(proxyBase, { url: sub.url, referer: stream?.referer, origin: stream?.origin, headers: stream?.headers })
+        : null;
+    },
+    [proxyBase, streams, streamIndex, subtitles]
+  );
+
+  const subtitleUrlRef = useRef(subtitleUrl);
+  subtitleUrlRef.current = subtitleUrl;
+
+  const selectSubtitle = useCallback(
+    (id: string) => {
+      adoptSubtitle.current = false;
+      wantedSubtitle.current = id;
+      setSelectedSubtitle(id);
+      const index = providerIndex(id);
+      const url = index === null ? null : subtitleUrl(index);
+      if (index !== null && url) {
+        // Added only now that it is picked; mpv reuses it if it was added before.
+        sendMpv({ action: 'add_subtitle', url, title: subtitles[index]?.language ?? null, select: true });
+      } else {
+        sendMpv({ action: 'set_sub_track', id: trackId(id) });
+      }
+    },
+    [subtitleUrl, subtitles]
+  );
+
+  const selectSecondary = useCallback(
+    (id: string) => {
+      secondaryRef.current = id;
+      pendingSecondary.current = null;
+      setSelectedSecondary(id);
+      const index = providerIndex(id);
+      const url = index === null ? null : subtitleUrl(index);
+      if (index === null || !url || !media) {
+        sendMpv({ action: 'set_secondary_sub_track', id: trackId(id) });
+        return;
+      }
+      const added = addedTrackId(media.tracks, url);
+      if (added !== null) return sendMpv({ action: 'set_secondary_sub_track', id: added });
+      // Added without showing it; the track id is known once mpv lists it (see below).
+      pendingSecondary.current = url;
+      sendMpv({ action: 'add_subtitle', url, title: subtitles[index]?.language ?? null, select: false });
+    },
+    [media, subtitleUrl, subtitles]
+  );
+  const selectSubtitleRef = useRef(selectSubtitle);
+  selectSubtitleRef.current = selectSubtitle;
+  const selectSecondaryRef = useRef(selectSecondary);
+  selectSecondaryRef.current = selectSecondary;
+
+  // Once a file is open: the shown subtitle file, the preferred audio language, a resume check.
   useEffect(() => {
     if (!media) return;
     const onLoaded = () => {
       setLoaded(true);
       const start = startRef.current;
-      const stream = streams[streamIndex];
-      const chosen = start.startSubtitlesOff ? -1 : defaultSubtitleIndex(subtitles, start.subtitleLanguages);
-      subtitles.forEach((sub, index) =>
-        sendMpv({
-          action: 'add_subtitle',
-          // The raw file through the proxy: mpv renders ASS styling itself.
-          url: buildProxyUrl(proxyBase, { url: sub.url, referer: stream?.referer, origin: stream?.origin, headers: stream?.headers }),
-          title: sub.language,
-          select: index === chosen,
-        })
+      const step = subtitleAtLoad(
+        wantedSubtitle.current,
+        SUBTITLES_OFF,
+        subtitles.length,
+        defaultSubtitleIndex(subtitles, start.subtitleLanguages),
+        start.startSubtitlesOff
       );
-      if (start.startSubtitlesOff) sendMpv({ action: 'set_sub_track', id: null });
-      adoptSubtitle.current = !start.startSubtitlesOff;
+      // Only the file that is shown is added: mpv downloads each one before showing it.
+      if (step.kind === 'add') selectSubtitleRef.current(`ext:${step.index}`);
+      else if (step.kind === 'off') selectSubtitleRef.current(SUBTITLES_OFF);
+      else adoptSubtitle.current = true;
+      // A new file has none of the added files; the second subtitle is added again.
+      if (secondaryRef.current !== SUBTITLES_OFF) selectSecondaryRef.current(secondaryRef.current);
 
       const audio = media.tracks.filter((t) => t.type === 'audio' && t.id !== null);
       if (audio.length > 1) {
@@ -270,7 +341,8 @@ export function useMpvEngine({
         const index = preferredAudioTrack(audio.map((t) => ({ lang: t.lang ?? '', name: t.title ?? '' })), start.preferredAudioLanguages);
         if (index !== -1 && !audio[index].selected) sendMpv({ action: 'set_audio_track', id: audio[index].id });
       }
-      resumeCheck.current = !start.startVerified;
+      // A replay after the end starts where the user asked, not at the saved position.
+      resumeCheck.current = !start.startVerified && !media.replaying;
       onDuration();
     };
     const onDuration = () => {
@@ -284,24 +356,49 @@ export function useMpvEngine({
       media.removeEventListener('loadedmetadata', onLoaded);
       media.removeEventListener('durationchange', onDuration);
     };
-  }, [media, proxyBase, streams, streamIndex, subtitles]);
+  }, [media, subtitles]);
 
-  // Follow the track mpv shows after the files were added (their ids are mpv's).
+  // Follow the file's own track mpv shows when no file was added, and show a second subtitle
+  // file once mpv lists it.
   useEffect(() => {
-    if (!adoptSubtitle.current) return;
-    const shown = tracks.find((t) => t.type === 'sub' && t.selected && t.id !== null);
+    const pending = pendingSecondary.current;
+    const added = pending === null ? null : addedTrackId(tracks, pending);
+    if (added !== null) {
+      pendingSecondary.current = null;
+      sendMpv({ action: 'set_secondary_sub_track', id: added });
+    }
+    if (!adoptSubtitle.current) {
+      // A file that finished downloading after the user picked something else selects itself.
+      const wanted = wantedSubtitle.current;
+      const fix = wanted === undefined ? undefined : subtitleCorrection(tracks, wanted, subtitleUrlRef.current);
+      if (fix !== undefined) sendMpv({ action: 'set_sub_track', id: fix });
+      return;
+    }
+    const shown = fileSubtitleTracks(tracks).find((t) => t.selected);
     if (shown) {
       adoptSubtitle.current = false;
+      wantedSubtitle.current = `${SUB_ID}${shown.id}`;
       setSelectedSubtitle(`${SUB_ID}${shown.id}`);
     }
   }, [tracks]);
 
+  // The extension's files (added when picked), then the video file's own tracks.
   const subtitleOptions = useMemo<SubtitleOption[]>(
-    () =>
-      tracks
-        .filter((t) => t.type === 'sub' && t.id !== null)
-        .map((t, index) => ({ id: `${SUB_ID}${t.id}`, label: trackLabel(t, index), format: t.codec ?? 'sub', isDefault: !!t.default })),
-    [tracks]
+    () => [
+      ...subtitles.map((sub, index) => ({
+        id: `ext:${index}`,
+        label: sub.language || t('useEmbeddedMpv.trackNumber', { number: index + 1 }),
+        format: sub.format || 'sub',
+        isDefault: !!sub.is_default,
+      })),
+      ...fileSubtitleTracks(tracks).map((t, index) => ({
+        id: `${SUB_ID}${t.id}`,
+        label: trackLabel(t, index),
+        format: t.codec ?? 'sub',
+        isDefault: !!t.default,
+      })),
+    ],
+    [subtitles, tracks]
   );
   const audioTracks = useMemo<MediaTrackOption[]>(
     () => tracks.filter((t) => t.type === 'audio' && t.id !== null).map((t, index) => ({ id: t.id as number, label: trackLabel(t, index) })),
@@ -309,26 +406,15 @@ export function useMpvEngine({
   );
   const audioTrack = tracks.find((t) => t.type === 'audio' && t.selected)?.id ?? -1;
 
-  const trackId = (id: string) => (id.startsWith(SUB_ID) ? Number(id.slice(SUB_ID.length)) : null);
-  const selectSubtitle = useCallback((id: string) => {
-    adoptSubtitle.current = false;
-    setSelectedSubtitle(id);
-    sendMpv({ action: 'set_sub_track', id: trackId(id) });
-  }, []);
-  const selectSecondary = useCallback((id: string) => {
-    setSelectedSecondary(id);
-    sendMpv({ action: 'set_secondary_sub_track', id: trackId(id) });
-  }, []);
   const selectAudioTrack = useCallback((id: number) => sendMpv({ action: 'set_audio_track', id }), []);
 
   const play = useCallback(() => void media?.play(), [media]);
   const pause = useCallback(() => media?.pause(), [media]);
   const togglePlay = useCallback(() => {
     if (!media) return;
-    if (media.paused || media.ended) {
-      if (media.ended) media.currentTime = 0;
-      media.play();
-    } else media.pause();
+    // After the end, play() opens the stream again from the start.
+    if (media.paused || media.ended) media.play();
+    else media.pause();
   }, [media]);
   const noop = useCallback(() => {}, []);
 

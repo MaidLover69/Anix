@@ -17,6 +17,58 @@ pub fn note_dmabuf_workaround(set_by_app: bool) {
     DMABUF_SET_BY.store(if set_by_app { 1 } else { 2 }, Ordering::SeqCst);
 }
 
+const DMABUF_VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+/// Set next to `WEBKIT_DISABLE_DMABUF_RENDERER=1` when Anix set that itself. A restart inherits
+/// the environment, and without the mark the new run took Anix's value for the user's and so
+/// refused embedded mpv after "Restart now".
+const DMABUF_MARK: &str = "ANIX_DMABUF_SET_BY_APP";
+
+/// What `main` does with `WEBKIT_DISABLE_DMABUF_RENDERER` before WebKit starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmabufEnv {
+    /// Turn the renderer off (it leaves the window blank on some drivers) and mark it as Anix's.
+    Disable,
+    /// An earlier run of Anix turned it off and this run uses mpv, which needs it: remove both.
+    Clear,
+    /// Unset, and embedded mpv needs the renderer on.
+    Untouched,
+    /// The user's own value: never changed.
+    User,
+}
+
+/// The rule for [`apply_dmabuf_workaround`], from the variable, its mark and the engine.
+pub fn dmabuf_env(value: Option<&str>, mark: Option<&str>, wants_mpv: bool) -> DmabufEnv {
+    let set_by_app = match value {
+        None => true,
+        Some(v) => v == "1" && mark == Some("1"),
+    };
+    match (set_by_app, wants_mpv) {
+        (false, _) => DmabufEnv::User,
+        (true, false) => DmabufEnv::Disable,
+        (true, true) if value.is_some() => DmabufEnv::Clear,
+        (true, true) => DmabufEnv::Untouched,
+    }
+}
+
+/// Called once from `main`, before any thread or the webview starts.
+pub fn apply_dmabuf_workaround(wants_mpv: bool) {
+    let value = std::env::var(DMABUF_VAR).ok();
+    let mark = std::env::var(DMABUF_MARK).ok();
+    match dmabuf_env(value.as_deref(), mark.as_deref(), wants_mpv) {
+        DmabufEnv::Disable => {
+            std::env::set_var(DMABUF_VAR, "1");
+            std::env::set_var(DMABUF_MARK, "1");
+            note_dmabuf_workaround(true);
+        }
+        DmabufEnv::Clear => {
+            std::env::remove_var(DMABUF_VAR);
+            std::env::remove_var(DMABUF_MARK);
+        }
+        DmabufEnv::Untouched => {}
+        DmabufEnv::User => note_dmabuf_workaround(false),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct VaInfo {
     pub vaapi_version: Option<String>,

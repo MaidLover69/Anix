@@ -70,7 +70,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/tests/` | Integration tests, `*_support/` helpers, `fixtures/` |
 | `src-tauri/examples/plugin_run.rs` | CLI to run one extension in the real runtime |
 | `src-tauri/resources/` | Anime4K shaders, hardware-decoding self-test clip |
-| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in) and `history-test.mjs` (when a visit counts as watch history), both run by `i18n:test` |
+| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in), `history-test.mjs` (when a visit counts as watch history) and `routes-test.mjs` (accepted anime ids, deep links and episode numbers; anime-page scores), all run by `i18n:test` |
 | `THIRD-PARTY-NOTICES.md` | Bundled components and licences |
 | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Contributor docs and forms. Keep them in step with the rules here |
 | `docs/` | Gitignored and out of date (describes an older stack). Do not trust or copy it. |
@@ -104,7 +104,7 @@ Notes:
 - Only one instance runs at a time (single-instance plugin). A second launch hands its arguments to the running window. Stop only the processes you started. Never kill every `anix` process.
 - Debug-only switches: `ANIX_CATALOGUE_DOWN=anilist,myanimelist,…` simulates catalogue outages, and `ANIX_TEST_NOTIFICATION=1` shows a sample notification.
 - `ANIX_PLAYER_ENGINE=web` or `--web-player` forces the web player. `--background` runs the release checks with no window.
-- The only deep link is `anix://anime/<id>` (negative ids allowed), parsed in `src/router.tsx` `parseDeepLink`.
+- The only deep link is `anix://anime/<id>` (negative ids allowed), parsed by `parseDeepLink` in `src/lib/routes.ts`.
 
 ## Release build (overview)
 

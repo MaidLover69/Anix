@@ -174,7 +174,8 @@ fn anilist_status_and_graphql_errors_are_reported_as_what_they_are() {
         other => panic!("unexpected: {:?}", other),
     }
     match interpret_graphql_response(200, None, r#"{"errors":[{"message":"Syntax Error","status":400}],"data":null}"#) {
-        Err(AppError::Network(message)) => assert_eq!(message, "AniList error: Syntax Error"),
+        // A rejected request, not an outage: it must not pause AniList.
+        Err(AppError::Parse(message)) => assert_eq!(message, "AniList rejected the request (HTTP 400): Syntax Error"),
         other => panic!("unexpected: {:?}", other),
     }
 

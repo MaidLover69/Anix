@@ -24,6 +24,7 @@ import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
 import { describeStream, sourceLabel } from '../lib/languages';
 import { splitPlayFailure } from '../lib/playFailure';
+import { episodeExists, parseAnimeId } from '../lib/routes';
 import { useRememberedSource } from '../hooks/useRememberedSource';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -51,13 +52,6 @@ interface EpisodeTarget {
 const NO_EPISODES: number[] = [];
 /** The "embedded mpv did not start" notice is shown once per run of the app. */
 let mpvStartNoticeShown = false;
-
-function parseAnimeId(value: string | undefined): number | null {
-  if (!value || !/^-?\d+$/.test(value)) return null;
-  const id = Number(value);
-  // Negative ids are anime AniList does not list (see the backend's `catalogue::ids`).
-  return Number.isSafeInteger(id) && id !== 0 ? id : null;
-}
 
 function parseEpisodeNumber(value: string | undefined): number | null {
   if (!value || !/^\d+(\.\d+)?$/.test(value)) return null;
@@ -170,13 +164,6 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const animeCover: string | null =
     details?.coverImage?.extraLarge || details?.coverImage?.large || null;
 
-  // The all-providers listing is only fetched for the server dialog. Whatever is already
-  // cached (the detail page loads it) is used right away.
-  const episodesQuery = useEpisodes(anilistId, malId, titleRomaji, {
-    enabled: !!details && serversOpen,
-  });
-  const episodesData = episodesQuery.data;
-
   // Category and provider come from the URL on every render; settings fill in what the URL
   // leaves open. `prov=auto`, a missing `prov` and an unknown key all mean "no choice".
   const urlCategory = searchParams.get('cat');
@@ -211,6 +198,52 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // What the URL keeps when only the audio or the episode changes.
   const routeProvider = localRequested ? LOCAL_PROVIDER : explicitProvider;
 
+  const catalogQuery = useAnimeCatalogEpisodes(
+    anilistId,
+    malId,
+    details?.episodes,
+    titleRomaji,
+    details?.status,
+    details?.nextAiringEpisode?.episode,
+    { enabled: !!details }
+  );
+  const catalogEpisodes = catalogQuery.data;
+
+  // /watch/<id>/0 or /9999: say the episode does not exist instead of asking every extension.
+  // A number any list has counts (some shows have an episode 0 or 12.5), so a doubtful one
+  // waits for the catalogue's list before it is refused.
+  const knownEpisodes = useMemo(() => {
+    if (!details || localRequested) return null;
+    const nextAiring: number | null = details.nextAiringEpisode?.episode ?? null;
+    return {
+      total: details.episodes ?? null,
+      aired: nextAiring && nextAiring > 0 ? nextAiring - 1 : null,
+      airing: details.status === 'RELEASING' || !!nextAiring,
+      listed: [...(catalogEpisodes ?? []).map((ep) => ep.number), ...localEpisodes],
+    };
+  }, [details, localRequested, catalogEpisodes, localEpisodes]);
+  const notInCatalogue = knownEpisodes !== null && !episodeExists(episodeNumber, knownEpisodes);
+  // A whole number above the catalogue's count may be an extra episode an extension lists
+  // (episode 13 of a 12-episode entry), so the extensions' lists are read before refusing it.
+  const checkExtensionLists =
+    notInCatalogue && !catalogQuery.isPending && Number.isInteger(episodeNumber) && episodeNumber >= 1;
+
+  // The all-providers listing is otherwise only fetched for the server dialog. Whatever is
+  // already cached (the detail page loads it) is used right away.
+  const episodesQuery = useEpisodes(anilistId, malId, titleRomaji, {
+    enabled: !!details && (serversOpen || checkExtensionLists),
+  });
+  const episodesData = episodesQuery.data;
+
+  const episodeMissing = useMemo(() => {
+    if (!notInCatalogue || !knownEpisodes) return false;
+    const fromExtensions = Object.values(episodesData ?? {}).flatMap((p) =>
+      [...(p?.sub ?? []), ...(p?.dub ?? [])].map((ep) => ep.number)
+    );
+    return !episodeExists(episodeNumber, { ...knownEpisodes, listed: [...knownEpisodes.listed, ...fromExtensions] });
+  }, [notInCatalogue, knownEpisodes, episodesData, episodeNumber]);
+  const episodeCheckPending = catalogQuery.isPending || (checkExtensionLists && episodesQuery.isPending);
+
   const sourcesQuery = useEpisodeSources({
     anilistId,
     malId,
@@ -222,7 +255,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     fallbackToAny: explicitProvider === null && preferredProvider !== null,
     // Which provider to ask is not known before the plugin list is, and with no usable
     // plugin there is nobody to ask.
-    enabled: !!details && settingsReady && providers.settled && !noPlugins && !localRequested,
+    enabled: !!details && settingsReady && providers.settled && !noPlugins && !localRequested && !episodeMissing,
   });
   const sources = localRequested ? localQuery.data?.sources : sourcesQuery.data;
   const servingProvider = sources?.provider || null;
@@ -233,16 +266,6 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const proxyQuery = useStreamProxyBase();
 
-  const catalogQuery = useAnimeCatalogEpisodes(
-    anilistId,
-    malId,
-    details?.episodes,
-    titleRomaji,
-    details?.status,
-    details?.nextAiringEpisode?.episode,
-    { enabled: !!details }
-  );
-  const catalogEpisodes = catalogQuery.data;
 
   // The serving provider's own list when it is known, otherwise the catalogue, otherwise
   // the released episode count from AniList.
@@ -508,8 +531,17 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         actions={[{ label: t('common.retry'), onClick: () => detailsQuery.refetch(), primary: true }]}
       />
     );
-  } else if (!details || !settingsReady || !providers.settled) {
+  } else if (!details || !settingsReady || !providers.settled || (episodeMissing && episodeCheckPending)) {
     status = <PlayerStatus kind="loading" title={t('common.loading')} />;
+  } else if (episodeMissing) {
+    status = (
+      <PlayerStatus
+        kind="error"
+        title={t('watch.episodeNotFound')}
+        detail={t('watch.episodeNotFoundDetail')}
+        actions={[{ label: t('router.openAnime'), onClick: () => navigate(`/detail/${anilistId}`, { replace: true }), primary: true }]}
+      />
+    );
   } else if (localRequested && localQuery.isPending) {
     status = <PlayerStatus kind="loading" title={t('watch.openingLocalFile', { number: episodeNumber })} />;
   } else if (localRequested && localQuery.isError) {

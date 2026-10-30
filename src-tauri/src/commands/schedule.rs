@@ -31,7 +31,7 @@ pub async fn fetch_airing_schedule(
         Err(e) if offline::is_offline_error(&e) => {
             let saved = offline::load_all(&state.pool, offline::Kind::Schedule).await.unwrap_or_default();
             let (entries, saved_at) = offline::saved_schedule(saved, from_ts, to_ts);
-            offline::mark_offline(&app, saved_at);
+            super::anilist::mark_offline_if_all_down(&app, &e, saved_at);
             if saved_at.is_none() {
                 return Err(e.to_string());
             }

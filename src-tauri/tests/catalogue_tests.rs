@@ -698,6 +698,8 @@ async fn a_paused_anilist_still_means_offline() {
     catalogue.breaker().record("AniList", &Err::<(), _>(AppError::Network("AniList HTTP 403".into())));
     let err = catalogue.search(&frieren()).await.unwrap_err();
     assert!(offline::is_offline_error(&err), "{:?}", err);
+    // MyAnimeList was reached, so the app is not offline.
+    assert!(!anix_lib::catalogue::is_all_down(&err), "{:?}", err);
     assert_eq!(server.hits("/anilist"), 0);
 }
 
@@ -1186,4 +1188,150 @@ fn jikan_reads_real_answers() {
     assert_eq!(details.media.episodes, Some(28));
     assert_eq!(details.studios, vec!["Madhouse"]);
     assert!(details.media.genres.iter().any(|g| g == "Adventure"));
+}
+
+// ---------------------------------------------------------------------------- not found and offline
+
+#[tokio::test]
+async fn a_catalogue_that_has_no_such_anime_beats_a_paused_anilist() {
+    // AniList's API is disabled; the id maps to a MyAnimeList id that MyAnimeList does not have.
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        ("GET", u) if u.starts_with("/arm/ids?") => (200, r#"{"anilist":999999,"myanimelist":999998}"#.to_string()),
+        ("GET", u) if u.starts_with("/mal/anime/999998?") => (404, r#"{"error":"not_found"}"#.to_string()),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(999999).await.unwrap_err();
+    assert!(model::is_not_found(&err), "{:?}", err);
+    assert!(!offline::is_offline_error(&err), "a missing anime is not a lost connection: {:?}", err);
+
+    // The same while AniList is already paused.
+    let err = catalogue.details(999999).await.unwrap_err();
+    assert!(model::is_not_found(&err), "{:?}", err);
+}
+
+#[tokio::test]
+async fn a_stand_in_id_no_catalogue_knows_is_not_found() {
+    // IMDb 99: MyAnimeList and the others cannot look it up without their own id; IMDb has nothing.
+    let server = serve(|method, url, _| match (method, url) {
+        ("GET", u) if u.starts_with("/imdb/") => (200, r#"{"d":[]}"#.to_string()),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(ids::synthetic_id(Site::Imdb, 99).unwrap()).await.unwrap_err();
+    assert!(model::is_not_found(&err), "{:?}", err);
+}
+
+#[tokio::test]
+async fn an_id_beyond_anilists_range_is_not_found_without_asking() {
+    let server = serve(|_, _, _| down(500));
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(3_000_000_000).await.unwrap_err();
+    assert!(model::is_not_found(&err), "{:?}", err);
+    assert_eq!(server.hits("/anilist"), 0);
+    assert!(!catalogue.breaker().is_open("AniList"));
+}
+
+#[tokio::test]
+async fn offline_only_when_every_catalogue_is_down() {
+    let server = serve(|_, _, _| down(500));
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    // A paused AniList counts as down, like the others failing now.
+    catalogue.breaker().record("AniList", &Err::<(), _>(AppError::Network("AniList HTTP 403".into())));
+    let err = catalogue.search(&frieren()).await.unwrap_err();
+    assert!(anix_lib::catalogue::is_all_down(&err), "every catalogue failed: {:?}", err);
+    assert!(offline::is_offline_error(&err), "{:?}", err);
+    assert!(err.to_string().contains("AniList"), "the first outage is still named: {}", err);
+}
+
+#[tokio::test]
+async fn details_are_offline_when_every_catalogue_that_knows_the_id_is_down() {
+    // The id mapping is known, but AniList and every catalogue fail.
+    let server = serve(|method, url, _| match (method, url) {
+        ("GET", u) if u.starts_with("/arm/ids?") => (200, fixture("arm_ids.json")),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(154587).await.unwrap_err();
+    assert!(anix_lib::catalogue::is_all_down(&err), "{:?}", err);
+}
+
+#[tokio::test]
+async fn details_nobody_else_can_look_up_are_not_offline_while_anilist_is_down() {
+    // AniList's API is disabled and no mapping is known: the others cannot even be asked.
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(154587).await.unwrap_err();
+    assert!(offline::is_offline_error(&err), "the saved copy is still served: {:?}", err);
+    assert!(!anix_lib::catalogue::is_all_down(&err), "{:?}", err);
+}
+
+#[tokio::test]
+async fn the_schedule_is_offline_when_its_catalogues_are_down() {
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.schedule(0, schedule::WEEK_S, true).await.unwrap_err();
+    assert!(anix_lib::catalogue::is_all_down(&err), "{:?}", err);
+}
+
+#[tokio::test]
+async fn a_saved_copy_answers_a_fallbacks_not_found() {
+    // AniList's API is disabled and MyAnimeList has no anime under the mapped id (a stale mapping).
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        ("GET", u) if u.starts_with("/arm/ids?") => (200, r#"{"anilist":999999,"myanimelist":999998}"#.to_string()),
+        ("GET", u) if u.starts_with("/mal/anime/999998?") => (404, r#"{"error":"not_found"}"#.to_string()),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.details(999999).await.unwrap_err();
+    assert!(model::is_not_found(&err), "{:?}", err);
+    assert!(!anix_lib::catalogue::is_all_down(&err), "{:?}", err);
+
+    let pool = db::init_db_in_memory().await.unwrap();
+    assert_eq!(offline::saved_details(&pool, 999999, &err).await, None, "nothing saved: not found");
+    let saved = json!({ "id": 999999 });
+    offline::store(&pool, offline::Kind::Details, "999999", &saved).await.unwrap();
+    assert_eq!(offline::saved_details(&pool, 999999, &err).await.map(|(v, _)| v), Some(saved));
+    // A rejected request is not answered with saved data.
+    let rejected = AppError::Database("locked".into());
+    assert_eq!(offline::saved_details(&pool, 999999, &rejected).await, None);
+}
+
+#[test]
+fn anilist_request_rejections_do_not_pause_anilist() {
+    let rejected = [
+        interpret_graphql_response(
+            400,
+            None,
+            r#"{"errors":[{"message":"Int cannot represent non 32-bit signed integer value: 3000000000","status":400}],"data":null}"#,
+        ),
+        interpret_graphql_response(200, None, r#"{"errors":[{"message":"Syntax Error","status":400}],"data":null}"#),
+        interpret_graphql_response(422, None, "{}"),
+    ];
+    for result in rejected {
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Parse(_)), "{:?}", err);
+        assert!(!breaker::trips(&err), "{:?}", err);
+        assert!(!offline::is_offline_error(&err), "{:?}", err);
+        // A tracker push AniList rejects is still dropped after its attempts, not kept forever.
+        assert!(anix_lib::accounts::sync::is_refusal(&err), "{:?}", err);
+    }
+
+    let missing = interpret_graphql_response(404, None, r#"{"errors":[{"message":"Not Found.","status":404}]}"#).unwrap_err();
+    assert!(model::is_not_found(&missing), "{:?}", missing);
+    assert!(!breaker::trips(&missing));
+
+    // Outages still pause it.
+    for status in [403, 500, 502, 503] {
+        let err = interpret_graphql_response(status, None, r#"{"errors":[{"message":"down","status":500}]}"#).unwrap_err();
+        assert!(breaker::trips(&err), "{}: {:?}", status, err);
+    }
 }

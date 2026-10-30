@@ -70,6 +70,7 @@ pub async fn fetch_home_data(app: AppHandle, state: State<'_, AppState>) -> Resu
             offline::mark_served(&app, notice);
         }
         Some(e) if offline::is_offline_error(e) => {
+            let served_any = lists.iter().any(Option::is_some);
             if let Ok(Some((saved, at))) = offline::load(&state.pool, offline::Kind::Home, &home_key).await {
                 for (name, list) in NAMES.iter().zip(lists.iter_mut()) {
                     if list.is_none() {
@@ -79,7 +80,12 @@ pub async fn fetch_home_data(app: AppHandle, state: State<'_, AppState>) -> Resu
                 stale = true;
                 saved_at = Some(at);
             }
-            offline::mark_offline(&app, saved_at);
+            // A catalogue served the other lists, so the app is not offline.
+            if served_any {
+                offline::mark_served(&app, notice);
+            } else {
+                mark_offline_if_all_down(&app, e, saved_at);
+            }
         }
         Some(_) => {}
     }
@@ -104,6 +110,16 @@ pub async fn fetch_home_data(app: AppHandle, state: State<'_, AppState>) -> Resu
         "stale": stale,
         "saved_at": saved_at,
     }))
+}
+
+/// Says "offline" only when no catalogue could be reached for this read. A failed read while
+/// another catalogue still answers (AniList paused while MyAnimeList serves, or one title
+/// nobody can look up) shows its error on its own page and leaves the "using MyAnimeList"
+/// notice alone.
+pub(crate) fn mark_offline_if_all_down(app: &AppHandle, error: &crate::error::AppError, saved_at: Option<i64>) {
+    if crate::catalogue::is_all_down(error) {
+        offline::mark_offline(app, saved_at);
+    }
 }
 
 /// The home lists depend on the adult-content setting, so each setting has its own copy.
@@ -177,11 +193,11 @@ pub async fn search_anime(
             });
             match parsed {
                 Some((list, at)) => {
-                    offline::mark_offline(&app, Some(at));
+                    mark_offline_if_all_down(&app, &e, Some(at));
                     Ok(list)
                 }
                 None => {
-                    offline::mark_offline(&app, None);
+                    mark_offline_if_all_down(&app, &e, None);
                     Err(e.to_string())
                 }
             }
@@ -212,19 +228,16 @@ pub async fn fetch_anime_details(
             offline::mark_served(&app, served.notice());
             Ok(served.value)
         }
-        Err(e) if offline::is_offline_error(&e) => {
-            match offline::load(&state.pool, offline::Kind::Details, &key).await.ok().flatten() {
-                Some((details, at)) => {
-                    offline::mark_offline(&app, Some(at));
-                    Ok(details)
-                }
-                None => {
-                    offline::mark_offline(&app, None);
-                    Err(e.to_string())
-                }
+        Err(e) => match offline::saved_details(&state.pool, id, &e).await {
+            Some((details, at)) => {
+                mark_offline_if_all_down(&app, &e, Some(at));
+                Ok(details)
             }
-        }
-        Err(e) => Err(e.to_string()),
+            None => {
+                mark_offline_if_all_down(&app, &e, None);
+                Err(e.to_string())
+            }
+        },
     }
 }
 

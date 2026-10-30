@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import { isNotFoundError } from '../lib/errorCodes';
 import type {
   Media,
   HomeData,
@@ -86,6 +87,8 @@ export function useAnimeDetails(id: number | null) {
       return await invoke<any>('fetch_anime_details', { id });
     },
     enabled: !!id,
+    // Asking again cannot find an anime a catalogue said it does not have.
+    retry: (failures, error) => !isNotFoundError(error) && failures < 2,
     staleTime: 15 * 60 * 1000,
   });
 }

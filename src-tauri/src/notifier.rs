@@ -858,7 +858,8 @@ pub fn click_for(media_id: i64, response: &NotificationResponse) -> Click {
         NotificationResponse::Action(key) => key == OPEN_ACTION,
         _ => false,
     };
-    match (clicked, media_id > 0) {
+    // Negative ids are stand-ins for anime AniList does not list; only 0 (the debug sample) is no anime.
+    match (clicked, media_id != 0) {
         (false, _) => Click::Nothing,
         (true, true) => Click::OpenAnime(media_id),
         (true, false) => Click::Focus,

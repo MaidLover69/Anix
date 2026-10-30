@@ -38,6 +38,9 @@ import {
 import { useUIStore } from '../stores/uiStore';
 import { mediaFormatLabel } from '../components/library/format';
 import { CompletedStamp } from '../components/CompletedStamp';
+import { isNotFoundError } from '../lib/errorCodes';
+import { parseAnimeId } from '../lib/routes';
+import { detailScores } from '../lib/scores';
 import type { AnimeDetails, EpisodeItem as EpisodeItemType, FuzzyDate, Media } from '../types';
 import { formatNumber, locale, t, type TKey } from '../i18n';
 
@@ -225,7 +228,7 @@ const NO_EPISODES: EpisodeItemType[] = [];
 const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const navigate = useNavigate();
   // Negative ids stand for anime AniList does not list (see the backend's `catalogue::ids`).
-  const anilistId = id && /^-?[1-9]\d*$/.test(id) ? Number(id) : null;
+  const anilistId = parseAnimeId(id);
 
   const openBulkDownloadDialog = useUIStore((s) => s.openBulkDownloadDialog);
 
@@ -330,8 +333,8 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
     );
   }
 
-  // The backend reports an unknown id as an error; that is "not found", not a failure to retry.
-  const isMissing = detailsQuery.isError && /not found/i.test(String(detailsQuery.error));
+  // A catalogue answered that it has no such anime: "not found", not a failure to retry.
+  const isMissing = detailsQuery.isError && isNotFoundError(detailsQuery.error);
   if (detailsQuery.isError && !isMissing) {
     return (
       <div className="flex flex-col gap-4">
@@ -353,7 +356,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         <EmptyState
           icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
           title={t('detail.notFound')}
-          description={t('detail.noAniListEntry')}
+          description={t('detail.noCatalogueEntry')}
           action={
             <Button variant="secondary" onClick={() => navigate('/')}>
               {t('detail.goHome')}
@@ -450,18 +453,17 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       ? t('detail.seasonYear', { season: seasonName, year: details.seasonYear })
       : seasonName ?? (details.seasonYear ? String(details.seasonYear) : '');
 
+  const scores = detailScores(details.averageScore, details.servedBy, malDetails?.score);
   const metadata = [
     mediaFormatLabel(details.format) || null,
     details.status ? enumLabel(STATUS_KEYS, details.status) : null,
     seasonLabel || null,
     details.episodes ? t('common.episodeCount', { count: details.episodes }) : null,
     details.duration ? t('detail.durationMinutes', { minutes: details.duration }) : null,
-    // Scores are shown only where the source really has one.
-    details.averageScore ? t('detail.aniListScore', { score: details.averageScore }) : null,
-    typeof malDetails?.score === 'number' && malDetails.score > 0
-      ? t('detail.malScore', {
-          score: formatNumber(malDetails.score, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        })
+    // Scores are shown only where the source really has one, credited to it, each source once.
+    scores.percent ? t('detail.sourceScore', { name: scores.percent.source, score: scores.percent.score }) : null,
+    scores.mal !== null
+      ? t('detail.malScore', { score: formatNumber(scores.mal, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })
       : null,
   ]
     .filter(Boolean)

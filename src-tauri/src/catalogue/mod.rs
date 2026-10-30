@@ -38,6 +38,15 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Starts the error of a request no catalogue could take because each was down.
+const ALL_DOWN: &str = "no anime catalogue could be reached";
+
+/// Whether `error` says that no catalogue could be reached for the request (see
+/// `Catalogue::run`), so the app shows itself offline; any other failure is shown on its page.
+pub fn is_all_down(error: &AppError) -> bool {
+    matches!(error, AppError::Unreachable(message) if message.starts_with(ALL_DOWN))
+}
+
 /// How long one catalogue gets to answer before the next one is asked.
 pub const SOURCE_TIMEOUT: Duration = Duration::from_secs(7);
 /// The schedule reads several pages and maps many ids.
@@ -288,7 +297,9 @@ impl Catalogue {
     /// Asks `sources` in turn until one answers. A paused catalogue is skipped; a failure
     /// that says the catalogue is down pauses it. When all fail, the error is one that
     /// means "unreachable" if any was (a paused one counts), so the caller serves its saved
-    /// copy. Each call times its own catalogue requests with [`timed`], not its id mapping.
+    /// copy. When every catalogue that could take the request was down, and one of them was
+    /// not AniList, the error also passes [`is_all_down`]: only then is the app "offline".
+    /// Each call times its own catalogue requests with [`timed`], not its id mapping.
     async fn run<T, F, Fut>(&self, sources: &[Source], call: F) -> Result<Served<T>, AppError>
     where
         F: Fn(Source) -> Fut,
@@ -297,9 +308,13 @@ impl Catalogue {
         let mut anilist_missed = false;
         let mut first_error: Option<AppError> = None;
         let mut offline_error: Option<AppError> = None;
+        // AniList alone being down is its outage, not a lost connection; a catalogue that
+        // turned the request down was reached. One that cannot take it at all says nothing.
+        let (mut other_down, mut reached) = (false, false);
         for &source in sources {
             if self.breaker.is_open(source.label()) {
                 anilist_missed |= source == Source::AniList;
+                other_down |= source != Source::AniList;
                 offline_error.get_or_insert_with(|| {
                     AppError::Network(format!("{} is paused after failing a moment ago", source.label()))
                 });
@@ -319,12 +334,18 @@ impl Catalogue {
                 Err(e) => {
                     tracing::info!("{} could not answer: {}", source.label(), e);
                     anilist_missed |= source == Source::AniList;
-                    if breaker::trips(&e) && offline_error.is_none() {
-                        offline_error = Some(e.clone());
+                    if breaker::trips(&e) {
+                        other_down |= source != Source::AniList;
+                        offline_error.get_or_insert_with(|| e.clone());
+                    } else if !model::is_unsupported(&e) {
+                        reached = true;
                     }
                     first_error.get_or_insert(e);
                 }
             }
+        }
+        if let (Some(e), true, false) = (&offline_error, other_down, reached) {
+            return Err(AppError::Unreachable(format!("{} ({})", ALL_DOWN, e)));
         }
         Err(offline_error.or(first_error).unwrap_or_else(|| {
             AppError::Unreachable("every anime catalogue failed a moment ago; trying again shortly".to_string())
@@ -403,9 +424,12 @@ impl Catalogue {
 
     /// One anime in AniList's details shape. `id` is an AniList id or a synthetic one.
     pub async fn details(&self, id: i64) -> Result<Served<Value>, AppError> {
-        let key = ids::decode(id).ok_or_else(|| AppError::Parse(format!("Anime with ID {} not found", id)))?;
+        let not_found = || AppError::Parse(format!("Anime with ID {} not found", id));
+        let key = ids::decode(id).ok_or_else(not_found)?;
         let mut sources = self.order();
         match key {
+            // AniList ids are 32-bit; AniList would reject a larger one as a malformed request.
+            AnimeKey::AniList(n) if n > i32::MAX as i64 => return Err(not_found()),
             AnimeKey::AniList(_) => {}
             AnimeKey::Other(site, _) => {
                 sources.retain(|s| *s != Source::AniList);
@@ -415,31 +439,52 @@ impl Catalogue {
             }
         }
         let site_ids = tokio::sync::OnceCell::new();
-        self.run(&sources, |source| {
-            let site_ids = &site_ids;
+        let missing = std::sync::Mutex::new(None);
+        let result = self.run(&sources, |source| {
+            let (site_ids, missing) = (&site_ids, &missing);
             async move {
-                if source == Source::AniList {
-                    let details = timed(source, self.timeout, self.anilist.fetch_details(id)).await?;
-                    if let Some(mal) = details["idMal"].as_i64() {
-                        self.remember(&[ExtIds { anilist: Some(id), mal: Some(mal), ..Default::default() }]).await;
-                    }
-                    return Ok(details);
+                let result = self.details_from(source, id, key, site_ids).await;
+                if result.as_ref().is_err_and(model::is_not_found) {
+                    missing.lock().unwrap().get_or_insert_with(|| result.as_ref().unwrap_err().clone());
                 }
-                let known = *site_ids.get_or_init(|| self.site_ids(key)).await;
-                let mut found = timed(source, self.timeout, self.details_on(source, &known)).await?;
-                // The mapping knows ids the catalogue may not list (Kitsu often has no MAL id).
-                found.ids.merge(known);
-                self.resolve(std::slice::from_mut(&mut found)).await;
-                self.fill_gaps(source, &mut found).await;
-                // The page asked for this id; keep it even when a mapping is found later.
-                found.media.id = id as i32;
-                let mut json = model::anilist_json(&found);
-                // The page names it where a section stays empty ("Characters aren't available from …").
-                json["servedBy"] = json!(source.label());
-                Ok(json)
+                result
             }
         })
-        .await
+        .await;
+        // A catalogue that could look the id up and has no such anime is the answer, ahead of
+        // a paused AniList or the others that could not look it up at all.
+        match (result, missing.into_inner().unwrap()) {
+            (Err(_), Some(not_found)) => Err(not_found),
+            (result, _) => result,
+        }
+    }
+
+    async fn details_from(
+        &self,
+        source: Source,
+        id: i64,
+        key: AnimeKey,
+        site_ids: &tokio::sync::OnceCell<ExtIds>,
+    ) -> Result<Value, AppError> {
+        if source == Source::AniList {
+            let details = timed(source, self.timeout, self.anilist.fetch_details(id)).await?;
+            if let Some(mal) = details["idMal"].as_i64() {
+                self.remember(&[ExtIds { anilist: Some(id), mal: Some(mal), ..Default::default() }]).await;
+            }
+            return Ok(details);
+        }
+        let known = *site_ids.get_or_init(|| self.site_ids(key)).await;
+        let mut found = timed(source, self.timeout, self.details_on(source, &known)).await?;
+        // The mapping knows ids the catalogue may not list (Kitsu often has no MAL id).
+        found.ids.merge(known);
+        self.resolve(std::slice::from_mut(&mut found)).await;
+        self.fill_gaps(source, &mut found).await;
+        // The page asked for this id; keep it even when a mapping is found later.
+        found.media.id = id as i32;
+        let mut json = model::anilist_json(&found);
+        // The page names it where a section stays empty ("Characters aren't available from …").
+        json["servedBy"] = json!(source.label());
+        Ok(json)
     }
 
     async fn details_on(&self, source: Source, known: &ExtIds) -> Result<Found, AppError> {

@@ -1365,3 +1365,11 @@ async fn an_anilist_air_time_is_still_announced_and_then_the_release() {
     notifier.step(&pool, &schedule, &display, true, air + 600).await;
     assert_eq!(display.shown()[1], out("Show 101", "Episode 12 is out — Japanese audio · English subtitles"));
 }
+
+#[test]
+fn a_click_on_a_stand_in_anime_opens_it() {
+    use notifier::Click;
+    use notify_rust::NotificationResponse;
+    // Anime known only by a stand-in (negative) id while AniList is down.
+    assert_eq!(notifier::click_for(-300_000_099, &NotificationResponse::Default), Click::OpenAnime(-300_000_099));
+}

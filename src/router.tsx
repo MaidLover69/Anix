@@ -37,12 +37,7 @@ import { Schedule } from './screens/Schedule';
 import { Settings } from './screens/Settings';
 import { Notifications } from './screens/Notifications';
 import { Downloads } from './screens/Downloads';
-
-/** `anix://anime/<id>` (or the older `anilili://…`) → the id, or null for anything else. Negative ids are catalogue stand-ins. */
-function parseDeepLink(url: string): string | null {
-  const match = url.trim().match(/^(?:anix|anilili):\/\/anime\/(-?[1-9]\d*)\/?(?:[?#].*)?$/i);
-  return match ? match[1] : null;
-}
+import { openAnimeId, parseAnimeId, parseDeepLink } from './lib/routes';
 
 // The URL the app was launched with is delivered once; later mounts must not replay it.
 let launchUrlHandled = false;
@@ -81,7 +76,7 @@ const AppLayout: React.FC = () => {
     const handleUrls = (urls: string[] | null | undefined) => {
       for (const url of urls ?? []) {
         const id = parseDeepLink(url);
-        if (id) {
+        if (id !== null) {
           navigate(`/detail/${id}`);
           return;
         }
@@ -116,14 +111,15 @@ const AppLayout: React.FC = () => {
     };
   }, [navigate]);
 
-  // A clicked release notification: the backend sends the AniList id of the anime to open.
+  // A clicked release alert or tray item: the backend sends the id of the anime to open
+  // (negative for a stand-in while AniList does not list it).
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
     listen<number>('open-anime', (event) => {
-      const id = Number(event.payload);
-      if (Number.isInteger(id) && id > 0) navigate(`/detail/${id}`);
+      const id = openAnimeId(event.payload);
+      if (id !== null) navigate(`/detail/${id}`);
     })
       .then((fn) => {
         // The effect may have been cleaned up before the listener was registered.
@@ -246,7 +242,7 @@ const AppLayout: React.FC = () => {
 const WatchRoute: React.FC = () => {
   const { id, episodeNum } = useParams<{ id: string; episodeNum: string }>();
   const navigate = useNavigate();
-  const idValid = !!id && /^-?\d+$/.test(id);
+  const idValid = parseAnimeId(id) !== null;
   const episodeValid = !!episodeNum && /^\d+(\.\d+)?$/.test(episodeNum);
 
   if (!idValid || !episodeValid) {

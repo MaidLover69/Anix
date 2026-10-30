@@ -169,6 +169,16 @@ pub fn is_offline_error(error: &AppError) -> bool {
     )
 }
 
+/// The saved details of anime `id` to show after its lookup failed with `error`, and when
+/// they were saved. A saved copy also answers a "not found": it proves the anime exists, and
+/// while AniList is down a fallback's "not found" may come from a stale id mapping.
+pub async fn saved_details(pool: &SqlitePool, id: i64, error: &AppError) -> Option<(Value, i64)> {
+    if !is_offline_error(error) && !crate::catalogue::model::is_not_found(error) {
+        return None;
+    }
+    load(pool, Kind::Details, &id.to_string()).await.ok().flatten()
+}
+
 /// The cache key of a search: the request in a fixed order, with the text trimmed and in
 /// lower case so the same search typed differently finds the same row.
 #[allow(clippy::too_many_arguments)]

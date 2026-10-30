@@ -23,6 +23,16 @@ function connectionDetail(m: string): string {
   return 'CONNECT';
 }
 
+/**
+ * Whether a catalogue answered that it has no such anime (the backend's
+ * `catalogue::model::is_not_found`: a parse error saying "not found"). It is shown as
+ * "Anime not found" and not retried, unlike a lost connection.
+ */
+export function isNotFoundError(error: unknown): boolean {
+  const m = String(error ?? '').trim();
+  return m.startsWith('Parse error: ') && /not found/i.test(m);
+}
+
 export function errorCode(message: string): string {
   const m = message.trim();
   const after = (prefix: string) => (m.startsWith(prefix) ? m.slice(prefix.length) : null);

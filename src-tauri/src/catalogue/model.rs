@@ -104,9 +104,22 @@ pub fn is_filtered_out(error: &AppError) -> bool {
     matches!(error, AppError::Other(message) if message.ends_with(FILTERED_OUT))
 }
 
+/// Whether `error` is a catalogue's answer that it has no such anime (a `Parse` error saying
+/// "not found", as [`read_json`] and the AniList client raise it). The page shows "Anime not
+/// found" for it, matching the same words, instead of a connection error.
+pub fn is_not_found(error: &AppError) -> bool {
+    matches!(error, AppError::Parse(message) if message.to_ascii_lowercase().contains("not found"))
+}
+
 /// Raised for a request a catalogue cannot answer; it never pauses the catalogue.
 pub fn unsupported(source: &str, what: &str) -> AppError {
     AppError::Other(format!("{} cannot {}", source, what))
+}
+
+/// Whether `error` is [`unsupported`]: the catalogue was not asked, so it says nothing about
+/// the connection. Catalogue code raises `Other` only for this and [`kept`]'s error.
+pub fn is_unsupported(error: &AppError) -> bool {
+    matches!(error, AppError::Other(_)) && !is_filtered_out(error)
 }
 
 /// GETs or POSTs `request` and returns its JSON. 404 and other rejections of the request are

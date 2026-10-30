@@ -252,8 +252,9 @@ fn first_graphql_error(json: &Value) -> Option<(String, Option<u64>)> {
 }
 
 /// Turns an AniList HTTP status and body into the `data` object or the error they describe:
-/// 429 is a rate limit, 401 (or a GraphQL "Invalid token") an auth failure, any other failing
-/// status or a GraphQL `errors` array without data a network error carrying AniList's message.
+/// 429 is a rate limit, 401 (or a GraphQL "Invalid token") an auth failure, 400/404/422 (as
+/// the HTTP status or the GraphQL error's) a rejected request, any other failing status or a
+/// GraphQL `errors` array without data a network error carrying AniList's message.
 pub fn interpret_graphql_response(
     status: u16,
     retry_after_s: Option<u64>,
@@ -281,13 +282,24 @@ pub fn interpret_graphql_response(
         return Err(AppError::AuthRequired);
     }
 
-    if !(200..300).contains(&status) {
+    // A request AniList refuses (bad variables such as an id beyond 32 bits, or a record it
+    // does not have) is not an outage: a `Parse` error, which neither pauses AniList nor counts
+    // as offline. 403 ("API disabled"), 5xx and the rest still do.
+    let ok_status = (200..300).contains(&status);
+    let data = json.as_ref().and_then(|j| j.get("data")).filter(|d| d.is_object());
+    let refused = if ok_status { graphql_error.as_ref().and_then(|(_, s)| *s) } else { Some(status as u64) };
+    let said = graphql_error.as_ref().map(|(m, _)| format!(": {}", m)).unwrap_or_default();
+    match refused {
         // A missing record is reported as HTTP 404 with a null field; let the caller see it.
-        if status == 404 {
-            if let Some(data) = json.as_ref().and_then(|j| j.get("data")).filter(|d| d.is_object()) {
-                return Ok(data.clone());
-            }
+        Some(404) if data.is_some() => return Ok(data.unwrap().clone()),
+        Some(404) => return Err(AppError::Parse(format!("AniList: not found (HTTP 404){}", said))),
+        Some(code @ (400 | 422)) if !ok_status || data.is_none() => {
+            return Err(AppError::Parse(format!("AniList rejected the request (HTTP {}){}", code, said)));
         }
+        _ => {}
+    }
+
+    if !(200..300).contains(&status) {
         return Err(match graphql_error {
             Some((message, _)) => AppError::Network(format!("AniList HTTP {}: {}", status, message)),
             None => AppError::Network(format!("AniList HTTP {}", status)),

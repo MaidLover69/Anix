@@ -71,11 +71,19 @@ pub struct MpvState {
     pub duration: f64,
     pub paused: bool,
     pub ended: bool,
-    /// Playback really advanced; before that nothing is saved, so opening an episode never
-    /// replaces its saved position.
+    /// Enough real playback for history (see [`MIN_PLAYED_S`]); before that nothing is saved,
+    /// so opening an episode never replaces its saved position or lists it as watched.
     pub played: bool,
-    first_position: Option<f64>,
+    last_position: Option<f64>,
+    played_seconds: f64,
 }
+
+/// The rule of `src/hooks/watchProgress.ts` (`hasPlayedEnough`, `playedStep`), kept the same
+/// for every player: a visit counts after 10 s or 2 % of real playback, whichever comes first,
+/// and a forward step above 3 s between readings is a seek, not playback.
+const MIN_PLAYED_S: f64 = 10.0;
+const MIN_PLAYED_FRACTION: f64 = 0.02;
+const MAX_PLAYED_STEP_S: f64 = 3.0;
 
 /// What one IPC line changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,16 +116,19 @@ impl MpvState {
                     return Change::None;
                 };
                 self.position = time;
-                match self.first_position {
-                    None => self.first_position = Some(time),
-                    Some(first) if !self.paused && (time - first).abs() >= 0.5 => self.played = true,
-                    _ => {}
+                if let Some(last) = self.last_position.replace(time) {
+                    let step = time - last;
+                    if !self.paused && step > 0.0 && step <= MAX_PLAYED_STEP_S {
+                        self.played_seconds += step;
+                    }
                 }
+                self.check_played();
                 Change::Position
             }
             Some("duration") => {
                 if let Some(d) = data.and_then(|d| d.as_f64()).filter(|d| d.is_finite() && *d > 0.0) {
                     self.duration = d;
+                    self.check_played();
                 }
                 Change::None
             }
@@ -131,6 +142,12 @@ impl MpvState {
             }
             Some("eof-reached") if data.and_then(|d| d.as_bool()) == Some(true) => self.mark_ended(),
             _ => Change::None,
+        }
+    }
+
+    fn check_played(&mut self) {
+        if self.duration > 0.0 && self.played_seconds >= MIN_PLAYED_S.min(self.duration * MIN_PLAYED_FRACTION) {
+            self.played = true;
         }
     }
 
@@ -277,17 +294,46 @@ mod tests {
         format!("{{\"event\":\"property-change\",\"id\":1,\"name\":\"{}\",\"data\":{}}}", name, data)
     }
 
+    /// Plays from `from` to `to` seconds, reporting the time every half second like mpv does.
+    fn play(s: &mut MpvState, from: f64, to: f64) {
+        let mut t = from;
+        while t <= to {
+            s.apply(&prop("time-pos", &t.to_string()));
+            t += 0.5;
+        }
+    }
+
     #[test]
-    fn nothing_is_saveable_before_playback_advances() {
+    fn nothing_is_saveable_before_ten_seconds_of_playback() {
         let mut s = MpvState::default();
         s.apply(&prop("duration", "1420.5"));
         s.apply(&prop("pause", "false"));
-        s.apply(&prop("time-pos", "300.0"));
+        play(&mut s, 300.0, 301.0);
+        assert_eq!(s.saveable(), None, "a second of playback is a visit, not watching");
+        play(&mut s, 301.5, 309.5);
         assert_eq!(s.saveable(), None);
-        s.apply(&prop("time-pos", "300.2"));
-        assert_eq!(s.saveable(), None);
-        s.apply(&prop("time-pos", "301.0"));
-        assert_eq!(s.saveable(), Some((301_000, 1_420_500)));
+        play(&mut s, 310.0, 310.0);
+        assert_eq!(s.saveable(), Some((310_000, 1_420_500)));
+    }
+
+    #[test]
+    fn seeks_do_not_count_as_playback() {
+        let mut s = MpvState::default();
+        s.apply(&prop("duration", "1400"));
+        for t in [100.0, 200.0, 300.0, 400.0, 500.0] {
+            s.apply(&prop("time-pos", &t.to_string()));
+        }
+        assert!(!s.played);
+    }
+
+    #[test]
+    fn a_short_clip_counts_after_two_percent() {
+        let mut s = MpvState::default();
+        s.apply(&prop("duration", "100"));
+        play(&mut s, 0.0, 1.5);
+        assert!(!s.played);
+        play(&mut s, 2.0, 2.0);
+        assert!(s.played);
     }
 
     #[test]
@@ -314,7 +360,7 @@ mod tests {
     fn the_end_of_the_file_counts_as_finished() {
         let mut s = MpvState::default();
         s.apply(&prop("duration", "1400"));
-        s.apply(&prop("time-pos", "1390"));
+        play(&mut s, 1385.0, 1398.0);
         s.apply(&prop("time-pos", "1398.4"));
         assert_eq!(s.apply("{\"event\":\"end-file\",\"reason\":\"eof\"}"), Change::Ended);
         assert_eq!(s.saveable(), Some((1_400_000, 1_400_000)));
@@ -325,8 +371,7 @@ mod tests {
     fn quitting_mid_episode_is_not_the_end() {
         let mut s = MpvState::default();
         s.apply(&prop("duration", "1400"));
-        s.apply(&prop("time-pos", "100"));
-        s.apply(&prop("time-pos", "200"));
+        play(&mut s, 180.0, 200.0);
         assert_eq!(s.apply("{\"event\":\"end-file\",\"reason\":\"quit\"}"), Change::None);
         assert_eq!(s.saveable(), Some((200_000, 1_400_000)));
     }
@@ -335,8 +380,7 @@ mod tests {
     fn a_stream_that_breaks_off_is_not_finished() {
         let mut s = MpvState::default();
         s.apply(&prop("duration", "1400"));
-        s.apply(&prop("time-pos", "100"));
-        s.apply(&prop("time-pos", "200"));
+        play(&mut s, 180.0, 200.0);
         assert_eq!(s.apply("{\"event\":\"end-file\",\"reason\":\"eof\"}"), Change::None);
         assert_eq!(s.saveable(), Some((200_000, 1_400_000)));
     }

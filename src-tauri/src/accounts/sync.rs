@@ -17,8 +17,9 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
-/// A queued push that keeps being refused is dropped after this many refusals. Being offline
-/// or rate limited does not count.
+/// A queued push that keeps being refused is dropped after this many refusals. Being offline,
+/// timeouts, server errors, rate limits and AniList's "API disabled" do not count (see
+/// [`is_refusal`]).
 pub const MAX_ATTEMPTS: i64 = 10;
 
 pub const LIST_STATUSES: [&str; 6] = [
@@ -72,7 +73,9 @@ pub enum SkipReason {
 
 /// Decides what a watched episode changes on a list. Progress is never lowered and a status
 /// the user chose (REPEATING, PAUSED, DROPPED) is kept; a new or PLANNING entry becomes
-/// CURRENT, and the final episode of a finished show makes it COMPLETED.
+/// CURRENT, and the final episode of a finished show makes it COMPLETED. An episode number
+/// above a known total is a numbering mismatch (absolute numbering, a wrongly matched file),
+/// not the end of the show, so it changes nothing.
 pub fn plan_progress_update(
     current: Option<&ListEntryState>,
     watched: i32,
@@ -83,7 +86,10 @@ pub fn plan_progress_update(
         return Err(SkipReason::InvalidProgress);
     }
     let total = total_episodes.filter(|total| *total > 0);
-    let progress = total.map_or(watched, |total| watched.min(total));
+    if total.is_some_and(|total| watched > total) {
+        return Err(SkipReason::InvalidProgress);
+    }
+    let progress = watched;
 
     if let Some(current) = current {
         if current.status == "COMPLETED" {
@@ -200,6 +206,10 @@ async fn ensure_queue(pool: &SqlitePool) -> Result<(), AppError> {
     )
     .execute(pool)
     .await?;
+    // Until when a rate-limited service is left alone (its Retry-After).
+    sqlx::query("CREATE TABLE IF NOT EXISTS account_sync_pause (service TEXT PRIMARY KEY, until_ms INTEGER NOT NULL)")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -706,6 +716,9 @@ pub async fn drain(ctx: &Context<'_>) -> DrainReport {
         if !ctx.store.is_connected(service) {
             continue;
         }
+        if paused_service(ctx.pool, service).await {
+            continue;
+        }
         let items = match pending(ctx.pool, service).await {
             Ok(items) => items,
             Err(e) => {
@@ -746,11 +759,25 @@ pub async fn drain(ctx: &Context<'_>) -> DrainReport {
                     report.skipped += 1;
                     settle(ctx.pool, &item).await
                 }
-                // Signed out, offline or rate limited: the rest would fail the same way.
-                Err(e @ (AppError::AuthRequired | AppError::Unreachable(_) | AppError::RateLimited { .. })) => {
+                // Signed out, offline, rate limited or AniList's API switched off: the push stays
+                // as it is and the rest would fail the same way.
+                Err(e) if stops_the_service(e) => {
                     tracing::warn!("{} sync postponed: {}", service.label(), e);
                     report.failed += 1;
+                    if let AppError::RateLimited { retry_after_s } = e {
+                        if let Err(e) = pause_service(ctx.pool, service, *retry_after_s).await {
+                            tracing::error!("could not note the {} rate limit: {}", service.label(), e);
+                        }
+                    }
                     break;
+                }
+                // A timeout, a server error or a garbled answer for this push: it stays as it
+                // is, and the next ones are still tried, so one stuck push (it keeps its place at
+                // the head of the queue) cannot hold back the rest.
+                Err(e) if !is_refusal(e) => {
+                    tracing::warn!("{} sync of anime {} postponed: {}", service.label(), item.anilist_id, e);
+                    report.failed += 1;
+                    continue;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -788,6 +815,73 @@ pub fn local_status(remote: &str) -> &'static str {
         "DROPPED" => "DROPPED",
         _ => "PLANNING",
     }
+}
+
+/// Whether a failed push was refused in a way the service would repeat however often it is
+/// asked, so that it counts toward [`MAX_ATTEMPTS`]: HTTP 400, 401, 404 or 422 (the clients
+/// report these as "<Service> HTTP <status>: …"), an answer saying the anime is not there or
+/// the request was rejected, or a deliberate "cannot be done" (`Other`). Timeouts, lost
+/// connections, 5xx, other 4xx (a Cloudflare 403 page, AniList's 403 "API disabled"), and
+/// bodies cut off or replaced by a portal page pass by themselves; dropping the push then
+/// would lose the user's progress.
+pub fn is_refusal(error: &AppError) -> bool {
+    match error {
+        AppError::Other(_) => true,
+        AppError::Parse(message) => message.contains("not found") || message.contains("rejected the request"),
+        AppError::Network(message) => {
+            matches!(http_status(message), Some(400 | 401 | 404 | 422))
+        }
+        _ => false,
+    }
+}
+
+/// The status in a client's "<Service> HTTP <status>…" message.
+fn http_status(message: &str) -> Option<u16> {
+    message
+        .split_once("HTTP ")
+        .and_then(|(_, rest)| rest.get(..3))
+        .and_then(|code| code.parse::<u16>().ok())
+}
+
+/// Failures that hit every push to the service alike, so the drain stops for that service.
+fn stops_the_service(error: &AppError) -> bool {
+    match error {
+        AppError::AuthRequired | AppError::Unreachable(_) | AppError::RateLimited { .. } => true,
+        AppError::Network(message) => {
+            http_status(message) == Some(403) && message.to_ascii_lowercase().contains("disabled")
+        }
+        _ => false,
+    }
+}
+
+/// Holds back a rate-limited service for the wait it asked for. Kept in the database, so a
+/// restart in between does not ask again early.
+async fn pause_service(pool: &SqlitePool, service: Service, wait_s: u64) -> Result<(), AppError> {
+    ensure_queue(pool).await?;
+    let until = db::current_unix_millis().saturating_add(wait_s.min(24 * 3600) as i64 * 1000);
+    sqlx::query(
+        "INSERT INTO account_sync_pause (service, until_ms) VALUES (?1, ?2) \
+         ON CONFLICT(service) DO UPDATE SET until_ms = excluded.until_ms",
+    )
+    .bind(service.key())
+    .bind(until)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Whether a service asked to be left alone for now (see [`pause_service`]).
+async fn paused_service(pool: &SqlitePool, service: Service) -> bool {
+    if ensure_queue(pool).await.is_err() {
+        return false;
+    }
+    sqlx::query("SELECT until_ms FROM account_sync_pause WHERE service = ?1")
+        .bind(service.key())
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|row| row.get::<i64, _>("until_ms") > db::current_unix_millis())
 }
 
 /// Failures that say "try again later" rather than "this will never work".

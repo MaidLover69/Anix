@@ -727,6 +727,13 @@ impl Catalogue {
                 return;
             }
         }
+        // A newly learned AniList id may belong to an anime the user has data for under a
+        // stand-in id.
+        if list.iter().any(|ids| ids.anilist.is_some()) {
+            if let Err(e) = crate::db::merge_stand_in_ids(pool).await {
+                tracing::warn!("could not merge stand-in ids: {}", e);
+            }
+        }
     }
 
     /// POSTs a batch to arm.haglund.dev; one answer (or `None` for an unknown id) per entry.

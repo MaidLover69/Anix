@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useUpdateWatchProgress } from './useLibrary';
+import { hasPlayedEnough, playedStep } from './watchProgress';
 
 export interface WatchProgressTarget {
   anilistId: number;
@@ -17,9 +18,10 @@ const SAVE_INTERVAL_MS = 10_000;
 
 /**
  * Saves the watch position of the episode in `videoRef`: on an interval while playing, on
- * pause, at the end, and when the player goes away. Nothing is written before playback has
- * really advanced, so opening an episode never replaces its saved position with 0, and the
- * duration is only ever the media's own finite duration.
+ * pause, at the end, and when the player goes away. Nothing is written (no history row, no
+ * resume point, no "watched" mark) before 10 s or 2 % of real playback, counted from the media
+ * time while it plays, so a quick visit leaves no trace. The duration is only ever the media's
+ * own finite duration.
  */
 export function useWatchProgress(videoRef: RefObject<HTMLVideoElement>, target: WatchProgressTarget) {
   const { mutate } = useUpdateWatchProgress();
@@ -33,18 +35,21 @@ export function useWatchProgress(videoRef: RefObject<HTMLVideoElement>, target: 
     // Last values read from the element; the final save runs after its source is gone.
     let position = 0;
     let duration = 0;
-    let played = false;
+    let playedSeconds = 0;
+    let lastTime: number | null = null;
     let lastSaved = -1;
 
     const read = () => {
       if (video.readyState === 0) return;
       if (Number.isFinite(video.duration) && video.duration > 0) duration = video.duration;
       position = video.currentTime;
-      if (!video.paused && !video.seeking && video.currentTime > 0) played = true;
+      // Paused, buffering or seeking time does not advance the media clock while playing.
+      if (lastTime !== null && !video.paused && !video.seeking) playedSeconds += playedStep(lastTime, position);
+      lastTime = position;
     };
 
     const save = () => {
-      if (!played || duration <= 0) return;
+      if (!hasPlayedEnough(playedSeconds, duration)) return;
       const clamped = Math.min(Math.max(0, position), duration);
       if (Math.abs(clamped - lastSaved) < 1) return;
       lastSaved = clamped;

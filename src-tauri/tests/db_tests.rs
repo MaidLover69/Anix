@@ -390,11 +390,183 @@ async fn watched_means_at_least_85_percent() {
     db::update_watch_progress(&pool, &history(7, 1.0, 1_300_000, duration, 6)).await.unwrap();
     assert_eq!(db::get_watched_episodes(&pool, 7).await.unwrap(), vec![1.0, 3.0, 4.0]);
 
-    // Replaying a watched episode from the start does not un-watch it, but its saved
-    // position follows the replay.
+    // Replaying a watched episode from the start does not un-watch it, and its finished
+    // position stays until the replay finishes too.
     db::update_watch_progress(&pool, &history(7, 3.0, 5_000, duration, 7)).await.unwrap();
     assert_eq!(db::get_watched_episodes(&pool, 7).await.unwrap(), vec![1.0, 3.0, 4.0]);
-    assert_eq!(db::get_episode_progress(&pool, 7, 3.0).await.unwrap(), Some((5_000, duration)));
+    assert_eq!(db::get_episode_progress(&pool, 7, 3.0).await.unwrap(), Some((1_224_000, duration)));
+}
+
+#[tokio::test]
+async fn revisiting_a_finished_episode_changes_nothing_until_it_is_finished_again() {
+    let pool = memory_db().await;
+    let duration = 1_440_000;
+    let finished_at = 1_700_000_000_000_i64;
+    db::update_watch_progress(&pool, &history(9, 1.0, 1_400_000, duration, finished_at)).await.unwrap();
+    db::update_watch_progress(&pool, &history(9, 2.0, 600_000, duration, finished_at + 1)).await.unwrap();
+    let events = count(&pool, "SELECT COUNT(*) FROM watch_events").await;
+
+    // Opened again later and left early: still finished, same time, same place in the lists.
+    let later = finished_at + 86_400_000 * 30;
+    let mut revisit = history(9, 1.0, 12_000, duration, later);
+    revisit.provider = "other".to_string();
+    revisit.category = "dub".to_string();
+    db::update_watch_progress(&pool, &revisit).await.unwrap();
+    assert_eq!(db::get_episode_progress(&pool, 9, 1.0).await.unwrap(), Some((1_400_000, duration)));
+    let continuing = db::get_continue_watching(&pool).await.unwrap();
+    assert_eq!(continuing.len(), 1);
+    assert_eq!((continuing[0].episode_number, continuing[0].updated_at), (2.0, finished_at + 1));
+    let watched = db::get_watched_history(&pool).await.unwrap();
+    assert_eq!(watched.iter().find(|row| row.episode_number == 1.0).map(|row| row.updated_at), Some(finished_at));
+    assert!(!db::get_watch_times(&pool).await.unwrap().contains(&later), "a visit is not a watch day");
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_events").await, events);
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM watch_history WHERE anilist_id = 9 AND provider = 'kiwi' AND category = 'sub' AND episode_number = 1.0").await,
+        1
+    );
+
+    // A rewatch to the end is real watching: the row follows it.
+    db::update_watch_progress(&pool, &history(9, 1.0, 1_430_000, duration, later + 1)).await.unwrap();
+    assert_eq!(db::get_episode_progress(&pool, 9, 1.0).await.unwrap(), Some((1_430_000, duration)));
+    assert!(db::get_watch_times(&pool).await.unwrap().contains(&(later + 1)));
+}
+
+#[tokio::test]
+async fn unmarking_an_episode_drops_its_watch_days() {
+    let pool = memory_db().await;
+    db::set_episodes_watched(&pool, 303, "Three", None, &[1.0, 2.0, 3.0], true).await.unwrap();
+    // Episode 2 was also watched to the end on an earlier day.
+    sqlx::query("INSERT INTO watch_events (anilist_id, episode_number, day, watched_at) VALUES (303, 2.0, 19000, 1641600000000)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(db::get_watch_times(&pool).await.unwrap().len(), 4 + 3);
+
+    db::set_episodes_watched(&pool, 303, "Three", None, &[2.0, 3.0], false).await.unwrap();
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_events WHERE anilist_id = 303").await, 1);
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM watch_events WHERE anilist_id = 303 AND episode_number = 1.0").await,
+        1
+    );
+    // One watch event and one finished row left, both for episode 1.
+    assert_eq!(db::get_watch_times(&pool).await.unwrap().len(), 2);
+    assert_eq!(db::get_watched_episodes(&pool, 303).await.unwrap(), vec![1.0]);
+}
+
+#[tokio::test]
+async fn stand_in_rows_are_merged_into_the_anilist_id_once_it_is_known() {
+    use anix_lib::catalogue::ids::{self, ExtIds, Site};
+    let pool = memory_db().await;
+    let duration = 1_440_000;
+    let real = 154_587;
+    let stand_in = ids::synthetic_id(Site::Mal, 52_991).unwrap() as i32;
+
+    // Watched while the mapping was down, under the stand-in.
+    db::update_watch_progress(&pool, &history(stand_in, 1.0, 1_400_000, duration, 1_000)).await.unwrap();
+    db::update_watch_progress(&pool, &history(stand_in, 2.0, 700_000, duration, 3_000)).await.unwrap();
+    db::update_watch_progress(&pool, &history(stand_in, 4.0, 100_000, duration, 4_000)).await.unwrap();
+    db::add_to_watchlist(&pool, stand_in, "Frieren", None, None, None).await.unwrap();
+    sqlx::query("INSERT INTO notification_preferences (media_id, enabled, media_title, enabled_at) VALUES (?1, 1, 'Frieren', 5)")
+        .bind(stand_in)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO local_media_links (anilist_id, folder_path, updated_at) VALUES (?1, '/media/frieren', 1)")
+        .bind(stand_in)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO local_media_files (anilist_id, file_path, episode_number, added_at) VALUES (?1, '/media/frieren/01.mkv', 1.0, 1)")
+        .bind(stand_in)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // And some under the real id: an older, shorter episode 2, and a finished episode 4.
+    db::update_watch_progress(&pool, &history(real, 2.0, 60_000, duration, 2_000)).await.unwrap();
+    db::update_watch_progress(&pool, &history(real, 4.0, 1_430_000, duration, 1_500)).await.unwrap();
+    db::update_watch_progress(&pool, &history(real, 3.0, 50_000, duration, 2_500)).await.unwrap();
+
+    // Without a mapping nothing moves.
+    db::merge_stand_in_ids(&pool).await.unwrap();
+    assert_eq!(db::get_watched_episodes(&pool, real).await.unwrap(), vec![4.0]);
+    assert_eq!(db::get_continue_watching(&pool).await.unwrap().len(), 2);
+
+    ids::remember(&pool, &ExtIds { anilist: Some(real as i64), mal: Some(52_991), ..Default::default() }, 1).await.unwrap();
+    for _ in 0..2 {
+        // Twice: the merge is safe to repeat (it runs at every start).
+        db::merge_stand_in_ids(&pool).await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+
+        assert_eq!(db::get_watched_episodes(&pool, real).await.unwrap(), vec![1.0, 4.0]);
+        // The newer save of episode 2 wins; the finished episode 4 is not lowered.
+        assert_eq!(db::get_episode_progress(&pool, real, 2.0).await.unwrap(), Some((700_000, duration)));
+        assert_eq!(db::get_episode_progress(&pool, real, 3.0).await.unwrap(), Some((50_000, duration)));
+        assert_eq!(db::get_episode_progress(&pool, real, 4.0).await.unwrap(), Some((1_430_000, duration)));
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM watch_history WHERE anilist_id = {real}")).await, 4);
+
+        // The lists show the anime once, under its AniList id.
+        let continuing = db::get_continue_watching(&pool).await.unwrap();
+        assert_eq!(continuing.iter().map(|e| e.anilist_id).collect::<Vec<_>>(), vec![real]);
+        assert_eq!(db::get_watchlist(&pool).await.unwrap().iter().map(|e| e.anilist_id).collect::<Vec<_>>(), vec![real]);
+        assert!(db::is_in_watchlist(&pool, real).await.unwrap());
+        assert_eq!(db::list_notification_bells(&pool).await.unwrap().iter().map(|b| b.media_id).collect::<Vec<_>>(), vec![real as i64]);
+        assert!(db::get_watched_history(&pool).await.unwrap().iter().all(|row| row.anilist_id == real));
+        assert_eq!(
+            count(&pool, &format!("SELECT COUNT(*) FROM local_media_files WHERE anilist_id = {real} AND file_path = '/media/frieren/01.mkv'")).await,
+            1
+        );
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM local_media_links WHERE anilist_id = {real}")).await, 1);
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM watch_events WHERE anilist_id = {real}")).await, 2);
+
+        // Nothing under the stand-in was deleted.
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM watch_history WHERE anilist_id = {stand_in}")).await, 3);
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM watchlist WHERE anilist_id = {stand_in}")).await, 1);
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM local_media_files WHERE anilist_id = {stand_in}")).await, 1);
+    }
+
+    // What the user removes under the AniList id after the merge stays removed, however often
+    // the merge runs again (at every start and while browsing).
+    db::set_episodes_watched(&pool, real, "Frieren", None, &[1.0], false).await.unwrap();
+    db::remove_from_watchlist(&pool, real).await.unwrap();
+    anix_lib::local_media::unlink(&pool, real).await.unwrap();
+    for _ in 0..2 {
+        db::merge_stand_in_ids(&pool).await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        assert_eq!(db::get_watched_episodes(&pool, real).await.unwrap(), vec![4.0]);
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM watch_events WHERE anilist_id = {real} AND episode_number = 1.0")).await, 0);
+        assert!(!db::is_in_watchlist(&pool, real).await.unwrap());
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM local_media_links WHERE anilist_id = {real}")).await, 0);
+        assert_eq!(count(&pool, &format!("SELECT COUNT(*) FROM local_media_files WHERE anilist_id = {real}")).await, 0);
+    }
+}
+
+#[tokio::test]
+async fn a_merge_that_fails_does_not_stop_the_database_from_opening() {
+    let tmp = TempDir::new("merge-fails");
+    let path = tmp.db_path();
+    let pool = db::init_db_at(&path).await.unwrap();
+    // A stand-in file row whose link is gone (written with foreign keys off) and a mapping for
+    // it: copying the file to the AniList id, which has no link either, would break the
+    // foreign key.
+    let stand_in = anix_lib::catalogue::ids::synthetic_id(anix_lib::catalogue::ids::Site::Mal, 77).unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.unwrap();
+    sqlx::query("INSERT INTO local_media_files (anilist_id, file_path, added_at) VALUES (?1, '/x.mkv', 1)")
+        .bind(stand_in)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await.unwrap();
+    drop(conn);
+    sqlx::query("INSERT INTO catalogue_ids (site, ext_id, anilist_id, checked_at) VALUES ('mal', 77, 5000, 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let pool = db::init_db_at(&path).await.expect("the database opens");
+    db::merge_stand_in_ids(&pool).await.unwrap();
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM local_media_files WHERE anilist_id = 5000").await, 0);
 }
 
 #[tokio::test]

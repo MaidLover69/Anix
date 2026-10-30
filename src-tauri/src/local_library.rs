@@ -841,7 +841,11 @@ pub async fn clear_match(pool: &SqlitePool, key: &str) -> Result<(), AppError> {
 
 /// Every file linked under "Your files", by path, with its title.
 pub async fn linked_files(pool: &SqlitePool) -> Result<HashMap<String, i32>, AppError> {
-    let rows = sqlx::query("SELECT file_path, anilist_id FROM local_media_files")
+    // A stand-in merged into its AniList id has the same files under both; the AniList id wins.
+    let rows = sqlx::query(
+        "SELECT file_path, anilist_id FROM local_media_files \
+         WHERE anilist_id NOT IN (SELECT stand_in FROM catalogue_merged_ids)",
+    )
         .fetch_all(pool)
         .await?;
     Ok(rows

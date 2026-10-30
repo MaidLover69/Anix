@@ -433,6 +433,7 @@ pub async fn pending(pool: &SqlitePool) -> Result<Vec<CheckRow>, sqlx::Error> {
         "SELECT media_id, episode, track, airing_at, checks, last_check_at FROM release_checks \
          WHERE outcome IS NULL \
            AND media_id IN (SELECT media_id FROM notification_preferences WHERE enabled = 1) \
+           AND media_id NOT IN (SELECT stand_in FROM catalogue_merged_ids) \
          ORDER BY airing_at, media_id, episode, track",
     )
     .fetch_all(pool)

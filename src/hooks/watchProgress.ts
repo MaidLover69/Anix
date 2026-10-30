@@ -13,6 +13,24 @@ export function isHistoryEntryFinished(entry: HistoryEntry): boolean {
   return entry.duration_ms > 0 && entry.position_ms / entry.duration_ms >= WATCHED_FRACTION;
 }
 
+/** History counts an episode only after this much real playback: 10 s or 2 % of it, whichever comes first. */
+export const HISTORY_MIN_PLAYED_SECONDS = 10;
+export const HISTORY_MIN_PLAYED_FRACTION = 0.02;
+/** A forward step between two time readings above this is a jump (seek, skip), not playback. */
+const MAX_PLAYED_STEP_SECONDS = 3;
+
+/** Seconds of playback between two readings of the media time while it plays; jumps and steps back count 0. */
+export function playedStep(previous: number, current: number): number {
+  const step = current - previous;
+  return Number.isFinite(step) && step > 0 && step <= MAX_PLAYED_STEP_SECONDS ? step : 0;
+}
+
+/** Whether `playedSeconds` of real playback is enough for a history entry (needs a known duration). */
+export function hasPlayedEnough(playedSeconds: number, duration: number): boolean {
+  if (!(duration > 0)) return false;
+  return playedSeconds >= Math.min(HISTORY_MIN_PLAYED_SECONDS, duration * HISTORY_MIN_PLAYED_FRACTION);
+}
+
 /**
  * Number of episodes that have aired, or null when it cannot be told.
  * `nextAiringEpisode` is the number of the next episode still to air.

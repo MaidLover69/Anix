@@ -148,6 +148,15 @@ const SCHEMA: &str = r#"
         PRIMARY KEY (site, ext_id)
     );
     CREATE INDEX IF NOT EXISTS idx_catalogue_ids_anilist ON catalogue_ids(anilist_id);
+
+    -- Stand-in ids whose rows were copied to the AniList id learned later
+    -- (`db::merge_stand_in_ids`). The stand-in rows are kept; lists leave them out.
+    -- merged_at = 0 means the copy has not run yet; each mapping is copied once.
+    CREATE TABLE IF NOT EXISTS catalogue_merged_ids (
+        stand_in    INTEGER PRIMARY KEY,
+        anilist_id  INTEGER NOT NULL,
+        merged_at   INTEGER NOT NULL
+    );
 "#;
 
 /// Creates the mapping cache; called from `db::run_migrations`.

@@ -58,6 +58,10 @@ struct Remote {
     broken: Option<u16>,
     /// The same for MyAnimeList requests only.
     mal_broken: Option<u16>,
+    /// The body sent with `broken` instead of the default one.
+    broken_body: Option<String>,
+    /// One AniList id whose list saves are answered with this status.
+    broken_for: Option<(i32, u16)>,
 }
 
 type Shared = Arc<Mutex<Remote>>;
@@ -65,7 +69,8 @@ type Shared = Arc<Mutex<Remote>>;
 fn respond(remote: &Shared, request: &Recorded) -> (u16, String) {
     let mut remote = remote.lock().unwrap();
     if let Some(status) = remote.broken {
-        return (status, r#"{"errors":[{"message":"broken","status":500}],"error":"broken"}"#.to_string());
+        let body = remote.broken_body.clone();
+        return (status, body.unwrap_or_else(|| r#"{"errors":[{"message":"broken","status":500}],"error":"broken"}"#.to_string()));
     }
 
     if request.url == "/graphql" {
@@ -79,6 +84,9 @@ fn respond(remote: &Shared, request: &Recorded) -> (u16, String) {
                 return (400, r#"{"errors":[{"message":"Invalid token","status":400}],"data":null}"#.to_string());
             }
             let id = variables["mediaId"].as_i64().unwrap_or(0) as i32;
+            if let Some((_, status)) = remote.broken_for.filter(|(broken, _)| *broken == id) {
+                return (status, r#"{"errors":[{"message":"broken","status":500}],"data":null}"#.to_string());
+            }
             let Some(anime) = remote.anime.get_mut(&id) else {
                 return (404, r#"{"errors":[{"message":"Not Found.","status":404}],"data":{"SaveMediaListEntry":null}}"#.to_string());
             };
@@ -303,12 +311,72 @@ fn test_account_plan_completes_on_the_final_episode_of_a_finished_show() {
             Ok(ProgressUpdate { progress: 500, status: None })
         );
     }
-    // An episode number past the count is the final episode, not more.
-    assert_eq!(plan_progress_update(Some(&entry("CURRENT", 11)), 13, Some(12), true), done);
+}
+
+#[test]
+fn test_account_episode_numbers_above_the_known_total_change_nothing() {
+    // Absolute numbering or a wrongly matched file: neither clamped to the total nor COMPLETED.
+    let cases = [
+        (Some(entry("CURRENT", 11)), 13, 12),
+        (Some(entry("CURRENT", 3)), 60, 24),
+        (Some(entry("PLANNING", 0)), 25, 24),
+        (None, 60, 24),
+    ];
+    for (current, watched, total) in cases {
+        assert_eq!(
+            plan_progress_update(current.as_ref(), watched, Some(total), true),
+            Err(SkipReason::InvalidProgress),
+            "{:?} {} of {}",
+            current,
+            watched,
+            total
+        );
+    }
+    assert_eq!(plan_progress_update(None, 60, Some(24), false), Err(SkipReason::InvalidProgress));
+    // The total itself still completes a finished show.
     assert_eq!(
-        plan_progress_update(Some(&entry("CURRENT", 12)), 13, Some(12), true),
-        Err(SkipReason::AlreadyAtOrAhead)
+        plan_progress_update(Some(&entry("CURRENT", 23)), 24, Some(24), true),
+        Ok(ProgressUpdate { progress: 24, status: Some("COMPLETED") })
     );
+}
+
+#[test]
+fn test_account_only_real_refusals_count_toward_dropping_a_push() {
+    let network = |m: &str| AppError::Network(m.to_string());
+    for refused in [
+        network("AniList HTTP 400: Validation error"),
+        network("AniList HTTP 404"),
+        network("MyAnimeList HTTP 422: bad value"),
+        network("Comick HTTP 404: title not found"),
+        network("AniList HTTP 401"),
+        AppError::Parse("Anime with ID 5 not found".to_string()),
+        AppError::Parse("MyAnimeList rejected the request (HTTP 422)".to_string()),
+        AppError::Other("MyAnimeList did not take the update".to_string()),
+    ] {
+        assert!(sync::is_refusal(&refused), "{}", refused);
+    }
+    for passing in [
+        network("graphql.anilist.co timed out"),
+        network("graphql.anilist.co: connection reset by peer"),
+        network("AniList HTTP 403: The AniList API has been temporarily disabled due to severe stability issues."),
+        network("AniList HTTP 500: Internal Server Error"),
+        network("MyAnimeList HTTP 503"),
+        network("Comick HTTP 502"),
+        network("AniList HTTP 408"),
+        network("AniList HTTP 429"),
+        // A Cloudflare block page or an ISP in the way, not an answer about this push.
+        network("AniList HTTP 403"),
+        network("AniList HTTP 403: Forbidden"),
+        // A body cut off mid-read, or a captive portal's page sent with HTTP 200.
+        AppError::Parse("graphql.anilist.co: error decoding response body".to_string()),
+        AppError::Parse("AniList sent invalid JSON".to_string()),
+        AppError::Unreachable("graphql.anilist.co: dns error".to_string()),
+        AppError::RateLimited { retry_after_s: 60 },
+        AppError::AuthRequired,
+        AppError::Database("database is locked".to_string()),
+    ] {
+        assert!(!sync::is_refusal(&passing), "{}", passing);
+    }
 }
 
 #[test]
@@ -600,13 +668,14 @@ async fn test_account_refused_pushes_are_retried_then_dropped() {
     connect_anilist(&world);
     sync::queue_watched_episode(&world.pool, 100, 3.0).await.unwrap();
 
-    remote.lock().unwrap().broken = Some(500);
+    // A real refusal (HTTP 400 that is not about the login).
+    remote.lock().unwrap().broken = Some(400);
     let report = sync::drain(&world.ctx()).await;
     assert_eq!((report.updated, report.failed), (0, 1));
     assert_eq!(queued(&world, Service::AniList).await, vec![(100, PendingKind::Progress, 3, 1)]);
     let item = &sync::pending(&world.pool, Service::AniList).await.unwrap()[0];
-    assert!(item.last_error.as_deref().unwrap_or_default().contains("500"), "{:?}", item.last_error);
-    // A server error is not a sign-out.
+    assert!(item.last_error.as_deref().unwrap_or_default().contains("400"), "{:?}", item.last_error);
+    // A refusal is not a sign-out.
     assert!(world.store.is_connected(Service::AniList));
 
     // A later episode starts counting again.
@@ -625,6 +694,84 @@ async fn test_account_refused_pushes_are_retried_then_dropped() {
     sync::queue_watched_episode(&world.pool, 100, 5.0).await.unwrap();
     sync::drain(&world.ctx()).await;
     assert_eq!(anilist_entry(&remote, 100), some("CURRENT", 5));
+}
+
+#[tokio::test]
+async fn test_account_outages_and_server_errors_never_drop_queued_progress() {
+    let disabled = include_str!("fixtures/catalogue/anilist_disabled.json").to_string();
+    let (remote, server) = remote_with(vec![(100, Anime::new(Some(5100), Some(24), "FINISHED"))]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    connect_mal(&world);
+    sync::queue_watched_episode(&world.pool, 100, 7.0).await.unwrap();
+
+    // AniList's API switched off (MAL's push asks AniList first too), then plain server errors.
+    for (status, body) in [(403, Some(disabled)), (500, None), (502, None), (503, None)] {
+        {
+            let mut remote = remote.lock().unwrap();
+            remote.broken = Some(status);
+            remote.broken_body = body;
+        }
+        for _ in 0..MAX_ATTEMPTS + 2 {
+            let report = sync::drain(&world.ctx()).await;
+            assert_eq!((report.updated, report.failed), (0, 2), "HTTP {}", status);
+        }
+        assert_eq!(queued(&world, Service::AniList).await, vec![(100, PendingKind::Progress, 7, 0)], "HTTP {}", status);
+        assert_eq!(queued(&world, Service::Mal).await, vec![(100, PendingKind::Progress, 7, 0)], "HTTP {}", status);
+    }
+    assert!(world.store.is_connected(Service::AniList) && world.store.is_connected(Service::Mal));
+
+    // Back up: the kept progress goes through.
+    remote.lock().unwrap().broken = None;
+    sync::drain(&world.ctx()).await;
+    assert_eq!(anilist_entry(&remote, 100), some("CURRENT", 7));
+    assert_eq!(mal_entry(&remote, 100), some("watching", 7));
+    assert!(queued(&world, Service::AniList).await.is_empty());
+}
+
+#[tokio::test]
+async fn test_account_one_push_that_keeps_failing_does_not_hold_back_the_rest() {
+    let (remote, server) = remote_with(vec![
+        (100, Anime::new(Some(5100), Some(24), "FINISHED")),
+        (200, Anime::new(Some(5200), Some(24), "FINISHED")),
+    ]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    sync::queue_watched_episode(&world.pool, 100, 3.0).await.unwrap();
+    sync::queue_watched_episode(&world.pool, 200, 6.0).await.unwrap();
+
+    // The server fails anime 100 only, every time: 200 still goes through, 100 is kept.
+    remote.lock().unwrap().broken_for = Some((100, 500));
+    for _ in 0..MAX_ATTEMPTS + 2 {
+        sync::drain(&world.ctx()).await;
+    }
+    assert_eq!(anilist_entry(&remote, 200), some("CURRENT", 6));
+    assert_eq!(queued(&world, Service::AniList).await, vec![(100, PendingKind::Progress, 3, 0)]);
+
+    remote.lock().unwrap().broken_for = None;
+    sync::drain(&world.ctx()).await;
+    assert_eq!(anilist_entry(&remote, 100), some("CURRENT", 3));
+}
+
+#[tokio::test]
+async fn test_account_rate_limited_service_is_left_alone_for_its_retry_after() {
+    let (remote, server) = remote_with(vec![(100, Anime::new(Some(5100), Some(24), "FINISHED"))]);
+    let world = World::new(&server.base).await;
+    connect_anilist(&world);
+    sync::queue_watched_episode(&world.pool, 100, 2.0).await.unwrap();
+
+    remote.lock().unwrap().broken = Some(429);
+    let report = sync::drain(&world.ctx()).await;
+    assert_eq!((report.updated, report.failed), (0, 1));
+    let asked = server.requests().len();
+    assert_eq!(asked, 1);
+    // Within the wait (60 s without a Retry-After header) nothing is sent and nothing is lost.
+    remote.lock().unwrap().broken = None;
+    for _ in 0..3 {
+        sync::drain(&world.ctx()).await;
+    }
+    assert_eq!(server.requests().len(), asked);
+    assert_eq!(queued(&world, Service::AniList).await, vec![(100, PendingKind::Progress, 2, 0)]);
 }
 
 #[tokio::test]

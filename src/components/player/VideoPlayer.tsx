@@ -550,6 +550,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [anilistId, episodeNumber, queryClient, notify]);
 
+  // Hidden to the tray: nobody can see or stop the video, so it pauses (both engines; the
+  // backend also pauses mpv). It does not resume when the window comes back.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    listen('main-window-hidden', () => videoRef.current?.pause()).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // While the web player plays, the backend keeps a marker so a crash of WebKit during web
+  // playback is recognised and Anix can move to embedded mpv (repeated reports are ignored).
+  useEffect(() => {
+    const video = videoRef.current;
+    if (isMpv || !video) return;
+    const playing = () => invoke('web_player_active', { active: true }).catch(() => {});
+    const stopped = () => invoke('web_player_active', { active: false }).catch(() => {});
+    // Cleared whenever playback stops, not only at the end: a paused or failed player left open
+    // at logout (SIGTERM gives no clean exit) must not look like a crash on the next start.
+    const stops = ['ended', 'pause', 'error', 'emptied'];
+    video.addEventListener('playing', playing);
+    stops.forEach((name) => video.addEventListener(name, stopped));
+    return () => {
+      video.removeEventListener('playing', playing);
+      stops.forEach((name) => video.removeEventListener(name, stopped));
+      stopped();
+    };
+  }, [isMpv]);
+
   useMpris(
     videoRef,
     {

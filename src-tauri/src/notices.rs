@@ -100,6 +100,26 @@ pub async fn push(
     Ok(id)
 }
 
+/// Adds a notice whose title and body are `crate::i18n` keys, in the interface language, and
+/// waits until it is saved: callers may restart the app right after, or be on the async runtime
+/// or the GTK main thread, so the write runs on a thread of its own.
+pub fn push_translated(app: &AppHandle, kind: &str, title_key: &str, body_key: &str, link: Option<&str>) {
+    use tauri::Manager;
+    let Some(state) = app.try_state::<crate::state::AppState>() else { return };
+    let pool = state.pool.clone();
+    let lang = crate::i18n::current();
+    let title = crate::i18n::text(lang, title_key).to_string();
+    let body = crate::i18n::text(lang, body_key).to_string();
+    let (kind, link) = (kind.to_string(), link.map(str::to_string));
+    let _ = std::thread::spawn(move || {
+        let saved = tauri::async_runtime::block_on(push(&pool, &kind, &title, &body, link.as_deref()));
+        if let Err(e) = saved {
+            tracing::warn!("Could not save the {} notice: {}", kind, e);
+        }
+    })
+    .join();
+}
+
 /// Newest first; `kind` limits the list to one kind.
 pub async fn list(pool: &SqlitePool, kind: Option<&str>) -> Result<Vec<Notice>, AppError> {
     let rows = sqlx::query(

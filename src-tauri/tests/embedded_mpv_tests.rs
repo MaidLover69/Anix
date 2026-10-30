@@ -258,3 +258,68 @@ fn a_restart_drops_the_dmabuf_switch_anix_set_itself() {
     assert_eq!(dmabuf_env(Some("0"), Some("1"), false), DmabufEnv::User);
     assert_eq!(dmabuf_env(Some("0"), None, true), DmabufEnv::User);
 }
+
+#[test]
+fn a_web_engine_crash_during_web_playback_switches_to_mpv_only_once_and_only_when_mpv_can_run() {
+    use policy::switch_to_mpv_after_crash as switch;
+    let fresh = EngineState::default();
+    assert!(switch("web", true, false, true, &fresh));
+    // Not while nothing played on the web player, without a usable libmpv (RPM/DEB), or when
+    // the engine already is mpv.
+    assert!(!switch("web", false, false, true, &fresh));
+    assert!(!switch("web", true, false, false, &fresh));
+    assert!(!switch("mpv", true, false, true, &fresh));
+    // Never twice: once mpv failed and the web player came back, it stays.
+    let switched = policy::auto_switched_to_mpv(fresh);
+    assert!(switched.auto_switched);
+    assert!(!switch("web", true, false, true, &switched));
+    // The switch is confirmed like any other (the window may be blank with mpv).
+    let confirmed = EngineState { confirmed: Some("fp".into()), reason: Some("old".into()), ..Default::default() };
+    let switched = policy::auto_switched_to_mpv(confirmed);
+    assert!(switched.confirmed.is_none() && switched.reason.is_none());
+}
+
+#[test]
+fn engine_state_files_from_before_the_crash_switch_still_load() {
+    let old: EngineState = serde_json::from_value(json!({ "confirmed": "fp", "trial": false })).unwrap();
+    assert!(!old.auto_switched);
+    assert_eq!(old.confirmed.as_deref(), Some("fp"));
+}
+
+#[test]
+fn a_web_playback_marker_counts_only_when_its_owner_is_gone() {
+    use policy::marker_owner_gone as gone;
+    const ME: u32 = 500;
+    let alive = |pid: u32| pid == 42 || pid == ME;
+    // A second launch while Anix plays: the marker belongs to the running instance, keep it.
+    assert!(!gone("42", ME, alive));
+    assert!(!gone("42\n", ME, alive));
+    // Its owner died with the web player playing: a crash.
+    assert!(gone("43", ME, alive));
+    // An empty or garbled marker (an older build or a torn write) belongs to nobody alive.
+    assert!(gone("", ME, alive));
+    assert!(gone("not a pid", ME, alive));
+    // A pid reused by this very start cannot be the owner: this start wrote nothing yet.
+    assert!(gone("500", ME, alive));
+}
+
+#[test]
+fn a_crash_does_not_switch_when_the_web_player_is_forced() {
+    use policy::switch_to_mpv_after_crash as switch;
+    let fresh = EngineState::default();
+    assert!(switch("web", true, false, true, &fresh));
+    // `--web-player` or ANIX_PLAYER_ENGINE=web: the user asked for the web player.
+    assert!(!switch("web", true, true, true, &fresh));
+}
+
+#[test]
+fn only_a_user_value_that_turns_the_dmabuf_renderer_off_blocks_mpv() {
+    use anix_lib::system::hwaccel::dmabuf_off_by_user as off;
+    assert!(off(Some("1"), None));
+    assert!(off(Some("yes"), None));
+    // "0" keeps the renderer on, which embedded mpv needs (install() accepts it too).
+    assert!(!off(Some("0"), None));
+    // Unset, or Anix's own value from an earlier run.
+    assert!(!off(None, None));
+    assert!(!off(Some("1"), Some("1")));
+}

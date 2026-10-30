@@ -50,6 +50,19 @@ pub fn dmabuf_env(value: Option<&str>, mark: Option<&str>, wants_mpv: bool) -> D
     }
 }
 
+/// The user turned WebKit's DMA-BUF renderer off themselves, which embedded mpv cannot run with.
+pub fn dmabuf_turned_off_by_user() -> bool {
+    let value = std::env::var(DMABUF_VAR).ok();
+    let mark = std::env::var(DMABUF_MARK).ok();
+    dmabuf_off_by_user(value.as_deref(), mark.as_deref())
+}
+
+/// The rule for [`dmabuf_turned_off_by_user`]: a user value other than "0", which keeps the
+/// renderer on (the same check `embedded_mpv::install` makes).
+pub fn dmabuf_off_by_user(value: Option<&str>, mark: Option<&str>) -> bool {
+    dmabuf_env(value, mark, true) == DmabufEnv::User && value != Some("0")
+}
+
 /// Called once from `main`, before any thread or the webview starts.
 pub fn apply_dmabuf_workaround(wants_mpv: bool) {
     let value = std::env::var(DMABUF_VAR).ok();

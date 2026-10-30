@@ -31,6 +31,9 @@ use tauri::{AppHandle, Emitter, Manager};
 pub const EVENT: &str = "embedded-mpv";
 const SETTING_KEY: &str = "player_engine";
 const STATE_FILE: &str = "embedded-mpv.json";
+/// Exists while the web player plays (next to the settings). Still there at the next start
+/// means the whole app died during web playback (WebKit can abort the main process).
+const WEB_PLAYBACK_MARKER: &str = "web-playback.marker";
 /// The page has this long to show the question and get "Keep" before the backend itself
 /// goes back to the web player (the page's own countdown is 15 s).
 const CONFIRM_DEADLINE: Duration = Duration::from_secs(45);
@@ -349,6 +352,11 @@ pub(crate) static TIME_POS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static MARGINS: Mutex<[f64; 4]> = Mutex::new([0.0; 4]);
 /// The self-test should run once nothing plays.
 pub(crate) static SELFTEST_DUE: AtomicBool = AtomicBool::new(false);
+/// The web player plays now (the marker file exists). A mutex, not an atomic: the flag and the
+/// file must change together, and the page's reports arrive on several runtime threads.
+static WEB_PLAYBACK: Mutex<bool> = Mutex::new(false);
+/// This start moved to embedded mpv after a crash during web playback; told once setup runs.
+static CRASH_SWITCH_NOTICE: AtomicBool = AtomicBool::new(false);
 
 fn set_status(status: Result<(), String>) {
     if let Err(ref e) = status {
@@ -470,8 +478,11 @@ fn load_lib() -> Result<&'static ffi::Lib, String> {
 
 fn decision() -> &'static Start {
     DECISION.get_or_init(|| {
-        let args: Vec<String> = std::env::args().collect();
-        let forced = policy::forced_web(&args, std::env::var("ANIX_PLAYER_ENGINE").ok().as_deref());
+        let forced = forced_web();
+        // The whole app died during web playback last time.
+        if take_stale_web_playback() && switch_to_mpv_after_crash(forced.is_some()) {
+            CRASH_SWITCH_NOTICE.store(true, Ordering::SeqCst);
+        }
         let state = load_state();
         let mut decision = policy::decide(&engine_setting(&read_settings()), forced, &state);
         // Checked before WebKit's DMA-BUF renderer is kept on for mpv: a missing or refused
@@ -500,6 +511,134 @@ fn decision() -> &'static Start {
     })
 }
 
+/// Why this run must use the web engine whatever the setting says (`--web-player`, env).
+fn forced_web() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    policy::forced_web(&args, std::env::var("ANIX_PLAYER_ENGINE").ok().as_deref())
+}
+
+fn web_playback_marker() -> Option<PathBuf> {
+    crate::db::get_config_dir().ok().map(|dir| dir.join(WEB_PLAYBACK_MARKER))
+}
+
+/// Creates or removes the marker; only when the state changes, since the page reports every
+/// `playing` event. The marker holds this process's pid, so a second launch can tell it from
+/// one left by a crash (see [`take_stale_web_playback`]).
+fn set_web_playback(active: bool) {
+    let mut playing = WEB_PLAYBACK.lock().unwrap_or_else(|p| p.into_inner());
+    if *playing == active {
+        return;
+    }
+    *playing = active;
+    let Some(path) = web_playback_marker() else { return };
+    let result = if active { std::fs::write(&path, std::process::id().to_string()) } else { remove_marker(&path) };
+    if let Err(e) = result {
+        tracing::warn!("The web playback marker could not be updated: {}", e);
+    }
+}
+
+fn remove_marker(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_file(path).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+}
+
+/// In the process that owns the marker (its page crashed): whether the web player was playing;
+/// removes the marker.
+fn take_web_playback() -> bool {
+    let mut playing = WEB_PLAYBACK.lock().unwrap_or_else(|p| p.into_inner());
+    *playing = false;
+    web_playback_marker().is_some_and(|path| std::fs::remove_file(path).is_ok())
+}
+
+/// At startup: whether an Anix that is gone now died while the web player played; removes that
+/// marker. A marker whose owner still runs is left alone: this start is a second launch (the
+/// launcher, an `anix://` link) that hands over to the running instance and exits.
+fn take_stale_web_playback() -> bool {
+    let Some(path) = web_playback_marker() else { return false };
+    let Ok(contents) = std::fs::read(&path) else { return false };
+    let contents = String::from_utf8_lossy(&contents);
+    policy::marker_owner_gone(&contents, std::process::id(), pid_is_anix) && std::fs::remove_file(path).is_ok()
+}
+
+fn pid_is_anix(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|name| name.trim_end() == "anix")
+}
+
+/// Moves the setting to embedded mpv after a crash during web playback, when this build can
+/// run it and that was not done before. Returns whether it switched.
+fn switch_to_mpv_after_crash(forced_web: bool) -> bool {
+    let engine = engine_setting(&read_settings());
+    let state = load_state();
+    // libmpv is only loaded when the rest already says yes.
+    let candidate = policy::switch_to_mpv_after_crash(&engine, true, forced_web, true, &state);
+    let available = candidate && !crate::system::hwaccel::dmabuf_turned_off_by_user() && load_lib().is_ok();
+    if !policy::switch_to_mpv_after_crash(&engine, true, forced_web, available, &state) {
+        return false;
+    }
+    if let Err(e) = set_engine_setting("mpv") {
+        tracing::warn!("The player engine could not be set to mpv after the web player crashed: {}", e);
+        return false;
+    }
+    update_state(policy::auto_switched_to_mpv);
+    tracing::warn!("The web player crashed during playback; Anix switches to embedded mpv");
+    true
+}
+
+fn post_crash_switch_notice(app: &AppHandle) {
+    crate::notices::push_translated(
+        app,
+        crate::notices::PLAYER,
+        "mpv_auto_title",
+        "mpv_auto_body",
+        Some("/settings?section=playback"),
+    );
+}
+
+/// Called off the main thread after the page's web process died. Stops embedded mpv, whose
+/// controls died with the page. When the web player was playing and this build can run
+/// embedded mpv, switches to it and restarts on `route`; then it does not return.
+pub fn after_page_crash(route: Option<String>) {
+    if let Some(player) = PLAYER.get() {
+        if let Err(e) = player.apply(&Op::Command(vec!["stop".into()])) {
+            tracing::warn!("Embedded mpv could not be stopped after the page crashed: {}", e);
+        }
+    }
+    if !(take_web_playback() && switch_to_mpv_after_crash(forced_web().is_some())) {
+        return;
+    }
+    let route = route.filter(|r| policy::valid_route(r));
+    update_state(move |mut s| {
+        s.reopen = route;
+        s
+    });
+    if let Some(app) = APP.get() {
+        post_crash_switch_notice(app);
+    }
+    restart();
+}
+
+/// Pauses embedded mpv from the backend (the window was hidden to the tray), in case the page
+/// does not get to it. On its own thread: the caller may be the GTK main thread, which renders
+/// the video and must not call into mpv.
+pub fn pause_from_backend() {
+    if PLAYER.get().is_none() {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("embedded-mpv-pause".into()).spawn(|| {
+        if let Some(Err(e)) = PLAYER.get().map(|p| p.apply(&Op::Set("pause", yes_no(true)))) {
+            tracing::warn!("Embedded mpv could not be paused: {}", e);
+        }
+    });
+}
+
+/// The app quits normally: the web player is not playing any more. Removes the marker whatever
+/// the flag says, so a clean exit never leaves one behind.
+pub fn on_exit() {
+    *WEB_PLAYBACK.lock().unwrap_or_else(|p| p.into_inner()) = false;
+    if let Some(Err(e)) = web_playback_marker().map(|path| remove_marker(&path)) {
+        tracing::warn!("The web playback marker could not be removed: {}", e);
+    }
+}
+
 /// This run uses the embedded player (decided before the window exists).
 pub fn wants_embedded_player() -> bool {
     *decision() == Start::Mpv
@@ -510,6 +649,11 @@ pub fn install(app: &AppHandle) {
     let _ = APP.set(app.clone());
     if let Ok(dir) = app.path().resource_dir() {
         let _ = SHADER_DIR.set(dir.join("resources/anime4k"));
+    }
+    if CRASH_SWITCH_NOTICE.swap(false, Ordering::SeqCst) {
+        // The switch itself happened before logging started; this is its record in anix.log.
+        tracing::warn!("The app stopped during web playback last time; Anix switched to embedded mpv");
+        post_crash_switch_notice(app);
     }
     match decision() {
         Start::Web { reason: None } => return,
@@ -627,26 +771,12 @@ fn finish_confirmation(answer: Answer, route: Option<String>) -> Result<(), Stri
 }
 
 /// Tells the user, in the notification centre, why the web player came back and where to turn
-/// embedded mpv on again; otherwise the silent restart looks like mpv never worked. Runs on its
-/// own thread because callers may be on the async runtime, and waits so the restart cannot cut it.
+/// embedded mpv on again; otherwise the silent restart looks like mpv never worked. Waits until
+/// saved, so the restart cannot cut it.
 fn post_switched_back_notice() {
-    let Some(pool) = APP.get().map(|app| app.state::<crate::state::AppState>().pool.clone()) else { return };
-    let _ = std::thread::spawn(move || {
-        let lang = crate::i18n::current();
-        let title = crate::i18n::text(lang, "mpv_back_title").to_string();
-        let body = crate::i18n::text(lang, "mpv_back_body").to_string();
-        let saved = tauri::async_runtime::block_on(crate::notices::push(
-            &pool,
-            crate::notices::PLAYER,
-            &title,
-            &body,
-            Some("/settings?section=playback"),
-        ));
-        if let Err(e) = saved {
-            tracing::warn!("Could not save the player notice: {}", e);
-        }
-    })
-    .join();
+    if let Some(app) = APP.get() {
+        crate::notices::push_translated(app, crate::notices::PLAYER, "mpv_back_title", "mpv_back_body", Some("/settings?section=playback"));
+    }
 }
 
 fn restart() -> ! {
@@ -960,6 +1090,12 @@ pub async fn embedded_mpv_restart(route: Option<String>) -> Result<(), String> {
         s
     });
     restart();
+}
+
+/// The web player started (`true`) or stopped playing; see [`WEB_PLAYBACK_MARKER`].
+#[tauri::command]
+pub async fn web_player_active(active: bool) {
+    set_web_playback(active);
 }
 
 /// The route to reopen after a restart Anix asked for, handed out once.

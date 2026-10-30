@@ -578,3 +578,30 @@ async fn exactly_one_process_owns_the_checking() {
     assert!(handoff.may_check());
     assert!(handoff.holds_checker());
 }
+
+// ---- web page crash recovery ------------------------------------------------------------
+
+use anix_lib::system::page_crash::{allow_reload, route_from_url, RELOADS_PER_MINUTE};
+
+#[test]
+fn a_crashed_page_is_reloaded_at_most_three_times_a_minute() {
+    let mut crashes = Vec::new();
+    for i in 0..RELOADS_PER_MINUTE as u64 {
+        assert!(allow_reload(&mut crashes, 100 + i), "crash {i}");
+    }
+    // One more within the minute is a crash loop: no further reload.
+    assert!(!allow_reload(&mut crashes, 110));
+    assert!(!allow_reload(&mut crashes, 150));
+    // A minute after the last crashes, a new crash is reloaded again.
+    assert!(allow_reload(&mut crashes, 300));
+}
+
+#[test]
+fn the_route_to_reopen_comes_from_the_hash_route_of_the_page() {
+    assert_eq!(route_from_url("tauri://localhost/#/watch/21/3?cat=sub").as_deref(), Some("/watch/21/3?cat=sub"));
+    assert_eq!(route_from_url("http://localhost:1420/#/settings").as_deref(), Some("/settings"));
+    // The start page and anything that is not an in-app route are not reopened.
+    assert_eq!(route_from_url("tauri://localhost/"), None);
+    assert_eq!(route_from_url("tauri://localhost/#//evil.example"), None);
+    assert_eq!(route_from_url("not a url"), None);
+}

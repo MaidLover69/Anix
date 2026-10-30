@@ -122,6 +122,8 @@ pub fn run() {
                         tracing::error!("{}", e);
                     }
                     embedded_mpv::install(app.handle());
+                    #[cfg(target_os = "linux")]
+                    system::page_crash::watch(app.handle());
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize database: {}", e);
@@ -262,6 +264,7 @@ pub fn run() {
             embedded_mpv::embedded_mpv_engine_changed,
             embedded_mpv::embedded_mpv_restart,
             embedded_mpv::embedded_mpv_take_route,
+            embedded_mpv::web_player_active,
             embedded_mpv::embedded_mpv_clear_cache,
             // Custom Playlists & Queue
             commands::create_playlist,
@@ -278,6 +281,11 @@ pub fn run() {
             commands::cancel_account_login,
             commands::get_comick_library,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                embedded_mpv::on_exit();
+            }
+        });
 }

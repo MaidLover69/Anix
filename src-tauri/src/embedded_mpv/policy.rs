@@ -25,6 +25,9 @@ pub struct EngineState {
     pub selftest: Option<SelfTest>,
     /// Playback saw a black picture with full interop: run the self-test again.
     pub selftest_recheck: bool,
+    /// Anix itself moved from the web player to embedded mpv after the web engine crashed;
+    /// it does that only once, so a failing mpv that falls back to web cannot loop.
+    pub auto_switched: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +107,39 @@ pub fn engine_changed(mut state: EngineState, engine: &str) -> EngineState {
     if engine == "mpv" {
         state.confirmed = None;
     }
+    state
+}
+
+/// Whether the web engine crashing while the web player played should move this install to
+/// embedded mpv: only from the web engine, only when this build can run mpv (the AppImage's
+/// bundled libmpv; RPM/DEB have none), never when this run is forced onto the web player, and
+/// only once.
+pub fn switch_to_mpv_after_crash(
+    engine_setting: &str,
+    web_playback: bool,
+    forced_web: bool,
+    mpv_available: bool,
+    state: &EngineState,
+) -> bool {
+    engine_setting == "web" && web_playback && !forced_web && mpv_available && !state.auto_switched
+}
+
+/// Whether the web playback marker found at startup was left by an Anix that is gone (so the
+/// web player was playing when it died). The marker holds its owner's pid; while that process
+/// still runs, this start is a second launch handing over to it. An empty or garbled marker
+/// has no living owner. `own_pid` cannot be the owner: this start wrote no marker yet.
+pub fn marker_owner_gone(contents: &str, own_pid: u32, is_alive: impl Fn(u32) -> bool) -> bool {
+    match contents.trim().parse::<u32>() {
+        Ok(pid) => pid == own_pid || !is_alive(pid),
+        Err(_) => true,
+    }
+}
+
+/// The state after that automatic switch: asked about like a switch in Settings (the window
+/// may be blank with mpv), and remembered so it is never repeated.
+pub fn auto_switched_to_mpv(state: EngineState) -> EngineState {
+    let mut state = engine_changed(state, "mpv");
+    state.auto_switched = true;
     state
 }
 

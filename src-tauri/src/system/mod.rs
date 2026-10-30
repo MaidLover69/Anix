@@ -5,6 +5,7 @@ pub mod autostart;
 pub mod background;
 pub mod gnutls;
 pub mod hwaccel;
+pub mod page_crash;
 pub mod tray;
 
 use serde::Serialize;

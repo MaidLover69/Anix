@@ -18,6 +18,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 pub const TRAY_ID: &str = "anix-tray";
+/// Sent to the main window when it is hidden to the tray; the player pauses.
+pub const WINDOW_HIDDEN_EVENT: &str = "main-window-hidden";
 const MAIN_WINDOW: &str = "main";
 const MENU_OPEN: &str = "tray-open";
 const MENU_QUIT: &str = "tray-quit";
@@ -114,6 +116,9 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } if hide_on_close() => {
             api.prevent_close();
+            // Nobody can see or stop a video in a hidden window. Not resumed when shown again.
+            let _ = window.app_handle().emit_to(MAIN_WINDOW, WINDOW_HIDDEN_EVENT, ());
+            crate::embedded_mpv::pause_from_backend();
             let _ = window.hide();
         }
         // Hidden helper windows (site sessions) would otherwise keep the process alive.

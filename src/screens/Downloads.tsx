@@ -133,8 +133,8 @@ const DiskUsage: React.FC<{ savedBytes: number }> = ({ savedBytes }) => {
   );
 };
 
-/** The download running now, larger, at the top. */
-const CurrentBanner: React.FC<{ record: DownloadRecord }> = ({ record }) => {
+/** The download running now, larger, at the top; `children` are its buttons. */
+const CurrentBanner: React.FC<{ record: DownloadRecord; children?: React.ReactNode }> = ({ record, children }) => {
   const percent = Math.round(fractionOf(record) * 100);
   return (
     <section aria-label={t('downloads.downloadingNow')} className="flex items-center gap-4 rounded-xl ui-card bg-accent-tint p-4">
@@ -158,6 +158,7 @@ const CurrentBanner: React.FC<{ record: DownloadRecord }> = ({ record }) => {
           {record.file_size ? ` · ${formatBytes(record.file_size)}` : ''}
         </p>
       </div>
+      <div className="flex flex-shrink-0 items-center gap-1">{children}</div>
     </section>
   );
 };
@@ -334,7 +335,7 @@ export const Downloads: React.FC = () => {
         />
       ) : (
         <>
-          {running[0] && <CurrentBanner record={running[0]} />}
+          {running[0] && <CurrentBanner record={running[0]}>{removeButton(running[0])}</CurrentBanner>}
 
           {running.length > 1 && (
             <Group title={t('downloads.alsoDownloading')} count={running.length - 1}>

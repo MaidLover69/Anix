@@ -21,7 +21,10 @@ use std::sync::Mutex;
 /// Provider key of local files in watch history and in `/watch?prov=`.
 pub const LOCAL_PROVIDER: &str = "local";
 
-pub const VIDEO_EXTENSIONS: [&str; 5] = ["mkv", "mp4", "m4v", "webm", "avi"];
+/// The one list of video containers: what folder scans find, what the file picker offers, what
+/// the built-in player serves and what a finished download may be saved as (downloads keep the
+/// original container, such as `.ts`, when ffmpeg cannot remux it).
+pub const VIDEO_EXTENSIONS: [&str; 8] = ["mkv", "mp4", "m4v", "webm", "avi", "mov", "ts", "flv"];
 pub const SUBTITLE_EXTENSIONS: [&str; 4] = ["srt", "ass", "ssa", "vtt"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -497,6 +500,9 @@ pub fn video_content_type(path: &Path) -> &'static str {
         "webm" => "video/webm",
         "mkv" => "video/x-matroska",
         "avi" => "video/x-msvideo",
+        "mov" => "video/quicktime",
+        "ts" => "video/mp2t",
+        "flv" => "video/x-flv",
         _ => "application/octet-stream",
     }
 }

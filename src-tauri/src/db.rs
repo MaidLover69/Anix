@@ -1326,6 +1326,20 @@ pub async fn update_download_status(
     Ok(())
 }
 
+/// Turns a `FAILED` download back into `QUEUED` with its progress and error cleared, in one
+/// statement so only a row that really failed is queued again. Returns whether it was.
+pub async fn requeue_failed_download(pool: &SqlitePool, id: &str) -> Result<bool, AppError> {
+    let result = sqlx::query(
+        "UPDATE downloads SET status = 'QUEUED', progress = 0.0, error_msg = NULL, updated_at = ?1 \
+         WHERE id = ?2 AND status = 'FAILED'",
+    )
+    .bind(current_unix_millis())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 /// Records progress of a running download. Does nothing unless the row is `DOWNLOADING`,
 /// so a late write cannot disturb a row that has already finished or failed.
 pub async fn update_download_progress(

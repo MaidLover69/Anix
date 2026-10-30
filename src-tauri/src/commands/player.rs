@@ -76,6 +76,17 @@ pub fn sanitized_command(program: &str) -> Command {
     cmd
 }
 
+/// Starts `cmd` and waits for it on a thread, so a player or helper the user closes is reaped
+/// instead of staying behind as a zombie process until Anix quits. Returns the process id.
+/// Stdin is closed so a player started from a terminal never reads keys from Anix's terminal
+/// (mpv's --input-terminal); stdout and stderr stay inherited for debugging.
+pub fn spawn_reaped(cmd: &mut Command) -> std::io::Result<u32> {
+    let mut child = cmd.stdin(std::process::Stdio::null()).spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || child.wait());
+    Ok(pid)
+}
+
 /// The web address to hand to the browser: only absolute `http`/`https` addresses, in the
 /// form the `url` crate writes them, so nothing else ever reaches `xdg-open`.
 pub fn external_url(url: &str) -> Result<String, String> {
@@ -92,18 +103,14 @@ pub fn external_url(url: &str) -> Result<String, String> {
 /// GTK, GIO and GStreamer paths and may fail to start or never hand a sign-in back.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     let url = external_url(url)?;
-    let mut child = sanitized_command("xdg-open")
-        .arg(&url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Could not open the browser: {}", e))?;
-    // Reap it; xdg-open hands the address to the browser and exits.
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    spawn_reaped(
+        sanitized_command("xdg-open")
+            .arg(&url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .map(drop)
+    .map_err(|e| format!("Could not open the browser: {}", e))
 }
 
 /// The UI's "open in browser" links (see `useOpenExternal.ts`).
@@ -361,7 +368,7 @@ pub async fn launch_stream_player(
     cmd.args(args);
 
     let (Some(socket), Some((app, episode))) = (socket, sync) else {
-        return match cmd.spawn() {
+        return match spawn_reaped(&mut cmd) {
             Ok(_) => Ok(true),
             Err(e) => Err(format!("Failed to spawn {}: {}", player_bin, e)),
         };

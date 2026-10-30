@@ -202,7 +202,7 @@ pub fn run() {
             // Downloads
             commands::create_download,
             commands::start_episode_download,
-            commands::update_download_status,
+            commands::retry_download,
             commands::get_all_downloads,
             commands::delete_download,
             commands::check_storage_for_download,

@@ -134,7 +134,7 @@ export function useRetryDownload() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      await invoke('update_download_status', { id, status: 'QUEUED', progress: 0, errorMsg: null });
+      await invoke('retry_download', { id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['allDownloads'] });

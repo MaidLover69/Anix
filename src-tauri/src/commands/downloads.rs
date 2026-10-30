@@ -25,34 +25,11 @@ pub async fn create_download(
     Ok(id)
 }
 
+/// Downloads › Try again: queues a `FAILED` download again. Any other row is left alone, so
+/// the page can never start a second job for a running row or mark a row finished.
 #[tauri::command]
-pub async fn update_download_status(
-    state: State<'_, AppState>,
-    id: String,
-    status: String,
-    progress: Option<f64>,
-    file_path: Option<String>,
-    file_size: Option<i64>,
-    duration_s: Option<f64>,
-    error_msg: Option<String>,
-) -> Result<(), String> {
-    db::update_download_status(
-        &state.pool,
-        &id,
-        &status,
-        progress,
-        file_path.as_deref(),
-        file_size,
-        duration_s,
-        error_msg.as_deref(),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    if status.trim().eq_ignore_ascii_case(db::STATUS_QUEUED) {
-        downloads::notify_queue();
-    }
-    Ok(())
+pub async fn retry_download(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    downloads::retry_download(&state.pool, &id).await.map(drop)
 }
 
 #[tauri::command]
@@ -84,13 +61,14 @@ pub async fn delete_download(
     delete_file: Option<bool>,
 ) -> Result<(), String> {
     downloads::cancel_download(&id).await;
+    let record = db::get_download_by_id(&state.pool, &id)
+        .await
+        .map_err(|e| e.to_string())?;
     if delete_file.unwrap_or(false) {
-        let record = db::get_download_by_id(&state.pool, &id)
-            .await
-            .map_err(|e| e.to_string())?;
         if let Some(path) = record
+            .as_ref()
             .filter(|r| r.status.eq_ignore_ascii_case("COMPLETED"))
-            .and_then(|r| r.file_path)
+            .and_then(|r| r.file_path.clone())
         {
             tokio::task::spawn_blocking(move || downloads::delete_finished_files(Path::new(&path)))
                 .await
@@ -102,6 +80,17 @@ pub async fn delete_download(
         .map_err(|e| e.to_string())?;
     // The queue worker may have picked the row up between the two steps above.
     downloads::cancel_download(&id).await;
+    // What a failed try kept for Try again is not wanted any more. Leftovers in a folder the
+    // user has since moved away from are cleaned up at the next start.
+    if let Some(record) = record {
+        let removed = tokio::task::spawn_blocking(move || {
+            downloads::get_download_dir().map(|dir| downloads::remove_resume_files(&dir, &record))
+        })
+        .await;
+        if let Ok(Err(e)) = removed {
+            tracing::warn!("Could not remove the kept files of download {}: {}", id, e);
+        }
+    }
     Ok(())
 }
 

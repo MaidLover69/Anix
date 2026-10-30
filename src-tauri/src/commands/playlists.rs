@@ -205,7 +205,7 @@ pub async fn launch_playlist_external_player(
         cmd.arg(&m3u_path);
     }
 
-    match cmd.spawn() {
+    match crate::commands::player::spawn_reaped(&mut cmd) {
         Ok(_) => Ok(true),
         Err(e) => Err(format!("Failed to spawn {}: {}", player_bin, e)),
     }

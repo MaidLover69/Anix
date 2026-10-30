@@ -5,7 +5,7 @@
 //! need ffmpeg print a note and pass when it is not installed.
 
 use anix_lib::db;
-use anix_lib::downloads::{self, work_file_path, work_tag, DownloadOutcome, DownloadSource, PART_SUFFIX};
+use anix_lib::downloads::{self, work_file_path, work_tag, DownloadOutcome, DownloadSource, PART_SUFFIX, RESUME_ROLES};
 use anix_lib::models::{DownloadRecord, SubtitleItem};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -356,7 +356,12 @@ async fn truncated_body_is_a_failure_not_a_completed_download() {
         "message was: {}",
         message
     );
-    assert!(tmp.file_names().is_empty(), "the partial file is removed: {:?}", tmp.file_names());
+    // A network failure keeps the bytes so far and their total, so Try again can resume.
+    let kept: Vec<String> = ["download", "resume"]
+        .iter()
+        .map(|role| work_file_path(tmp.path(), &rec, role).file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(tmp.file_names(), kept, "only the resumable files are left");
 
     let stored = row(&pool, "truncated").await;
     assert_eq!(stored.status, "FAILED");
@@ -874,4 +879,220 @@ async fn a_failed_download_is_posted_to_the_notification_centre() {
     assert_eq!(notices[0].title, "Download failed: Test Show, episode 3");
     assert!(notices[0].body.contains("403"), "{}", notices[0].body);
     assert_eq!(notices[0].link.as_deref(), Some("/downloads"));
+}
+
+// ---------------------------------------------------------------------------------------
+// Running jobs, Try again and Remove
+// ---------------------------------------------------------------------------------------
+
+/// A host that sends the first 1.5 MB of a 50 MB file and then stalls with the connection open.
+fn stalling() -> Response {
+    Response {
+        status: 200,
+        content_type: "video/mp4",
+        body: vec![1u8; 1_500_000],
+        announced_len: Some(50_000_000),
+        hang: true,
+        extra: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn a_running_download_is_never_started_twice_and_cancel_stops_it() {
+    let (base, seen) = serve(|_| stalling()).await;
+    let tmp = TempDir::new("twice");
+    // The running-jobs registry is shared by the whole test binary, so the id is unique.
+    let rec = record("running-twice");
+    let pool = db_with(&rec).await;
+    let url = format!("{}/v.mp4", base);
+
+    downloads::start_download_in(pool.clone(), rec.clone(), source(url.clone()), tmp.path().to_path_buf());
+    let mut started = false;
+    for _ in 0..200 {
+        if row(&pool, &rec.id).await.file_size.is_some() {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(started, "the download never started: {:?}", tmp.file_names());
+
+    // A second start for the same row (a re-queue racing the worker) is refused.
+    downloads::start_download_in(pool.clone(), rec.clone(), source(url), tmp.path().to_path_buf());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(seen.lock().unwrap().len(), 1, "only one job asked for the stream");
+
+    // Try again on a running row does nothing.
+    assert_eq!(downloads::retry_download(&pool, &rec.id).await, Ok(false));
+    assert_eq!(row(&pool, &rec.id).await.status, "DOWNLOADING");
+
+    // Cancel (what Remove does) stops the one job and removes its partial files.
+    assert!(downloads::cancel_download(&rec.id).await, "the job was registered and cancelled");
+    assert!(tmp.file_names().is_empty(), "partial files must be gone: {:?}", tmp.file_names());
+    assert!(!downloads::cancel_download(&rec.id).await, "nothing is left running");
+}
+
+#[tokio::test]
+async fn try_again_requeues_only_a_failed_download() {
+    let pool = db::init_db_in_memory().await.unwrap();
+    for (id, status) in [("r-queued", "QUEUED"), ("r-running", "DOWNLOADING"), ("r-done", "COMPLETED"), ("r-failed", "FAILED")] {
+        let mut rec = record(id);
+        rec.status = status.to_string();
+        rec.progress = 0.4;
+        rec.error_msg = Some("HTTP 503".to_string());
+        db::create_download(&pool, &rec).await.unwrap();
+    }
+
+    for id in ["r-queued", "r-running", "r-done", "no-such-row"] {
+        assert_eq!(downloads::retry_download(&pool, id).await, Ok(false), "{} is left alone", id);
+    }
+    for (id, status) in [("r-queued", "QUEUED"), ("r-running", "DOWNLOADING"), ("r-done", "COMPLETED")] {
+        let stored = row(&pool, id).await;
+        assert_eq!(stored.status, status);
+        assert_eq!(stored.progress, 0.4);
+    }
+
+    assert_eq!(downloads::retry_download(&pool, "r-failed").await, Ok(true));
+    let stored = row(&pool, "r-failed").await;
+    assert_eq!(stored.status, "QUEUED");
+    assert_eq!(stored.progress, 0.0);
+    assert_eq!(stored.error_msg, None);
+    assert_eq!(downloads::retry_download(&pool, "r-failed").await, Ok(false), "a double click queues it once");
+}
+
+#[test]
+fn only_network_failures_keep_what_was_fetched_for_a_retry() {
+    for kept in [
+        "Could not reach the stream host: error sending request for url",
+        "The stream host did not answer in time.",
+        "A segment of the stream was interrupted: connection reset",
+        "The stream stalled: no data for 60 seconds.",
+        "A segment of the stream is incomplete: received 10 bytes.",
+        "The download was interrupted after 50000 bytes: error decoding response body",
+        "The download stalled after 50000 bytes: no data for 60 seconds.",
+        "The download is incomplete: received 1 of 2 bytes.",
+        "A segment of the stream could not be fetched: HTTP 503 Service Unavailable.",
+        "The stream host answered HTTP 502 Bad Gateway.",
+        "The stream host answered HTTP 429 Too Many Requests.",
+    ] {
+        assert!(downloads::keeps_partial_files_after(kept), "kept: {}", kept);
+    }
+    for dropped in [
+        "A segment of the stream could not be fetched: HTTP 403 Forbidden.",
+        "The stream host answered HTTP 404 Not Found.",
+        "The stream host returned a web page instead of a video.",
+        "Could not write to /x/a.download.anix-part: No space left on device (os error 28)",
+        "Could not create /x/a.hls.anix-part: Permission denied (os error 13)",
+        "The download produced an empty file.",
+        "ffmpeg failed (exit code 1): Invalid data found when processing input",
+        "No playable stream was found for this episode.",
+    ] {
+        assert!(!downloads::keeps_partial_files_after(dropped), "dropped: {}", dropped);
+    }
+}
+
+#[tokio::test]
+async fn try_again_after_a_network_failure_resumes_where_it_stopped() {
+    let body = test_body(300_000);
+    let served = body.clone();
+    let first = Arc::new(AtomicU32::new(0));
+    let (base, seen) = serve(move |req| {
+        if first.fetch_add(1, Ordering::SeqCst) == 0 {
+            // The first try gets 120 kB, then the connection closes early.
+            return Response { announced_len: Some(served.len()), ..Response::ok("video/mp4", served[..120_000].to_vec()) };
+        }
+        ranged(req, &served)
+    })
+    .await;
+    let tmp = TempDir::new("retry-resume");
+    let rec = record("retry-resume");
+    let pool = db_with(&rec).await;
+    let url = format!("{}/v.mp4", base);
+
+    let outcome = downloads::download_into(&pool, &rec, source(url.clone()), tmp.path()).await;
+    assert!(matches!(outcome, DownloadOutcome::Failed(_)), "{:?}", outcome);
+    assert_eq!(std::fs::metadata(work_file_path(tmp.path(), &rec, "download")).unwrap().len(), 120_000);
+
+    assert_eq!(downloads::retry_download(&pool, &rec.id).await, Ok(true));
+    let outcome = downloads::download_into(&pool, &rec, source(url), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    assert_eq!(std::fs::read(tmp.path().join("Test Show - EP 03 [SUB 720p].mp4")).unwrap(), body);
+    assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mp4"], "the kept files are gone after success");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].header("range"), Some("bytes=120000-"), "only the missing part is fetched again");
+}
+
+#[tokio::test]
+async fn an_hls_download_that_failed_on_a_segment_keeps_the_others_for_try_again() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg is not installed");
+        return;
+    }
+    let media = TempDir::new("hls-media-retry");
+    let Some(files) = make_hls(media.path()) else {
+        eprintln!("skipped: this ffmpeg cannot generate the test stream");
+        return;
+    };
+    let playlist = String::from_utf8(files["index.m3u8"].clone()).unwrap();
+    let refused_once = Arc::new(AtomicU32::new(0));
+    let (base, seen) = serve(move |req| {
+        let name = req.path.trim_start_matches("/hls/");
+        if name == "seg1.jpg" && refused_once.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Response::status(503);
+        }
+        match files.get(name) {
+            Some(body) => Response::ok("application/octet-stream", body.clone()),
+            None => Response::status(404),
+        }
+    })
+    .await;
+    let tmp = TempDir::new("hls-retry");
+    let rec = record("hls-retry");
+    let pool = db_with(&rec).await;
+    let url = format!("{}/hls/index.m3u8", base);
+
+    let outcome = downloads::download_into(&pool, &rec, source(url.clone()), tmp.path()).await;
+    let DownloadOutcome::Failed(message) = outcome else { panic!("{:?}", outcome) };
+    assert!(message.contains("503"), "{}", message);
+    let plan = downloads::plan_hls_download(&playlist, &url).expect("the fixture is plannable");
+    let folder = work_file_path(tmp.path(), &rec, "hls");
+    assert!(folder.join(&plan.files[0].1).is_file(), "the segment fetched before the failure is kept");
+
+    let outcome = downloads::download_into(&pool, &rec, source(url), tmp.path()).await;
+
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mkv"], "the segment folder is gone after success");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.iter().filter(|r| r.path == "/hls/seg0.jpg").count(), 1, "seg0 is fetched once");
+}
+
+#[test]
+fn removing_a_download_deletes_only_its_own_kept_files() {
+    let tmp = TempDir::new("forget");
+    let gone = record("forget-me");
+    let mut other = record("someone-else");
+    other.episode_num = 4.0;
+    for rec in [&gone, &other] {
+        for role in RESUME_ROLES {
+            let path = work_file_path(tmp.path(), rec, role);
+            if role == "hls" {
+                std::fs::create_dir_all(&path).unwrap();
+                std::fs::write(path.join("seg0.ts"), b"segment").unwrap();
+            } else {
+                std::fs::write(&path, b"partial").unwrap();
+            }
+        }
+    }
+    let finished = tmp.path().join("Test Show - EP 03 [SUB 720p].mkv");
+    std::fs::write(&finished, b"a finished video").unwrap();
+
+    assert_eq!(downloads::remove_resume_files(tmp.path(), &gone), RESUME_ROLES.len());
+
+    assert!(finished.is_file(), "a finished video is never touched");
+    for role in RESUME_ROLES {
+        assert!(!work_file_path(tmp.path(), &gone, role).exists(), "{} of the removed row is gone", role);
+        assert!(work_file_path(tmp.path(), &other, role).exists(), "{} of another row stays", role);
+    }
 }

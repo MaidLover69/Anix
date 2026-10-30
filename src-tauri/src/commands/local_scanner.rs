@@ -1,4 +1,4 @@
-use crate::commands::player::{local_file_player_args, resolve_player_bin, sanitized_command};
+use crate::commands::player::{local_file_player_args, resolve_player_bin, sanitized_command, spawn_reaped};
 use crate::release_parser::{file_stem, parse_file_name, ReleaseKind};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -36,26 +36,32 @@ fn scan_dir_recursive(path: &Path, depth: usize, max_depth: usize, results: &mut
         let p = entry.path();
         if p.is_dir() {
             scan_dir_recursive(&p, depth + 1, max_depth, results);
-        } else if p.is_file() {
-            if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                let ext_lower = ext.to_lowercase();
-                if matches!(ext_lower.as_str(), "mkv" | "mp4" | "webm" | "avi") {
-                    let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("").to_string();
-                    let metadata = fs::metadata(&p).ok();
-                    let file_size = metadata.map(|m| m.len()).unwrap_or(0);
-                    let (parsed_title, parsed_episode) = parse_episode_and_title(&file_name);
+        } else if p.is_file() && crate::local_media::is_video_file(&p) && !is_ts_but_not_mpeg_ts(&p) {
+            let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("").to_string();
+            let metadata = fs::metadata(&p).ok();
+            let file_size = metadata.map(|m| m.len()).unwrap_or(0);
+            let (parsed_title, parsed_episode) = parse_episode_and_title(&file_name);
 
-                    results.push(LocalAnimeFile {
-                        file_path: p.to_string_lossy().to_string(),
-                        file_name,
-                        file_size,
-                        parsed_title,
-                        parsed_episode,
-                    });
-                }
-            }
+            results.push(LocalAnimeFile {
+                file_path: p.to_string_lossy().to_string(),
+                file_name,
+                file_size,
+                parsed_title,
+                parsed_episode,
+            });
         }
     }
+}
+
+/// `.ts` is also TypeScript; a real MPEG-TS file starts with the sync byte 0x47. Only the
+/// folder scan reads the byte: elsewhere the user picked the file or a download wrote it.
+fn is_ts_but_not_mpeg_ts(path: &Path) -> bool {
+    use std::io::Read;
+    if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ts")) {
+        return false;
+    }
+    let mut first = [0u8; 1];
+    !matches!(fs::File::open(path).and_then(|mut f| f.read_exact(&mut first)), Ok(()) if first[0] == 0x47)
 }
 
 #[tauri::command]
@@ -104,7 +110,7 @@ pub async fn open_file_in_player(file_path: String, player: Option<String>) -> R
     let mut cmd = sanitized_command(player_bin);
     cmd.args(local_file_player_args(player_bin, &file));
 
-    match cmd.spawn() {
+    match spawn_reaped(&mut cmd) {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("Failed to launch {}: {}", player_bin, e)),
     }

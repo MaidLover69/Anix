@@ -358,3 +358,17 @@ fn only_web_addresses_are_handed_to_the_browser() {
         assert!(external_url(bad).is_err(), "{bad} must be refused");
     }
 }
+
+#[test]
+fn an_external_player_that_exits_is_reaped_not_left_as_a_zombie() {
+    let pid = anix_lib::commands::player::spawn_reaped(&mut std::process::Command::new("true")).expect("start true");
+    // A child nobody waits for stays in /proc as a zombie until this process exits.
+    let entry = std::path::PathBuf::from(format!("/proc/{}", pid));
+    for _ in 0..200 {
+        if !entry.exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("process {} was never reaped", pid);
+}

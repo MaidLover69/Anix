@@ -389,3 +389,30 @@ async fn test_local_media_proxy_routes() {
         assert_eq!(response.status().as_u16(), status, "{}", url);
     }
 }
+
+#[tokio::test]
+async fn every_container_a_download_can_produce_counts_as_a_local_video() {
+    // What downloads save when ffmpeg cannot remux (see `container_extension`), plus m4v.
+    for ext in ["mkv", "mp4", "m4v", "webm", "avi", "mov", "ts", "flv"] {
+        assert!(local_media::is_video_file(Path::new(&format!("/a/Show - 01.{}", ext))), "{}", ext);
+        assert!(local_media::is_video_file(Path::new(&format!("/a/Show - 01.{}", ext.to_uppercase()))), "{}", ext);
+    }
+    assert!(!local_media::is_video_file(Path::new("/a/notes.txt")));
+    assert_eq!(video_content_type(Path::new("/a/b.mov")), "video/quicktime");
+    assert_eq!(video_content_type(Path::new("/a/b.ts")), "video/mp2t");
+    assert_eq!(video_content_type(Path::new("/a/b.flv")), "video/x-flv");
+
+    // The folder scan uses the same list.
+    let dir = TempDir::new("scan-extensions");
+    dir.file("Show - 01.m4v", b"video");
+    // MPEG-TS packets start with the sync byte 0x47; TypeScript sources share the extension.
+    dir.file("Show - 02.ts", b"\x47\x40\x00\x10video");
+    dir.file("src/player.ts", b"export const x = 1;");
+    dir.file("Season 1/Show - 03.MOV", b"video");
+    dir.file("notes.txt", b"text");
+    let found = anix_lib::commands::scan_local_anime_directory(dir.0.to_string_lossy().to_string())
+        .await
+        .unwrap();
+    let names: Vec<&str> = found.iter().map(|f| f.file_name.as_str()).collect();
+    assert_eq!(names, vec!["Show - 01.m4v", "Show - 02.ts", "Show - 03.MOV"]);
+}

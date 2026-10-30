@@ -43,13 +43,12 @@ pub async fn save_diagnostics_report(app: AppHandle, state: State<'_, AppState>)
 #[tauri::command]
 pub async fn open_log_folder() -> Result<(), String> {
     let dir = crate::db::get_app_dir().map_err(|e| e.to_string())?;
-    crate::commands::player::sanitized_command("xdg-open")
-        .arg(&dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        // Waited for in the background so it does not linger as a zombie.
-        .map(|mut child| drop(std::thread::spawn(move || child.wait())))
-        .map_err(|e| format!("Could not open {}: {}", dir.display(), e))
+    crate::commands::player::spawn_reaped(
+        crate::commands::player::sanitized_command("xdg-open")
+            .arg(&dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .map(drop)
+    .map_err(|e| format!("Could not open {}: {}", dir.display(), e))
 }

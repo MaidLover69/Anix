@@ -263,6 +263,54 @@ fn work_file_name(base: &str, tag: &str, role: &str) -> String {
 /// a direct file so far, what it was expected to total, and the folder of fetched HLS segments.
 pub const RESUME_ROLES: [&str; 3] = ["download", "resume", "hls"];
 
+/// Whether `path` is one of the resumable working files ([`RESUME_ROLES`]) of a download.
+fn is_resume_file(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    RESUME_ROLES.iter().any(|role| name.ends_with(&format!(".{}{}", role, PART_SUFFIX)))
+}
+
+/// Deletes the resumable working files a failed try of `record` kept in `dir` for Try again.
+/// Only these exact `*.anix-part` names are touched, never a finished video. Returns how many
+/// entries were removed. Call it only while the download is not running.
+pub fn remove_resume_files(dir: &Path, record: &DownloadRecord) -> usize {
+    RESUME_ROLES
+        .iter()
+        .map(|role| work_file_path(dir, record, role))
+        .filter(|path| match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path).is_ok(),
+            Ok(_) => std::fs::remove_file(path).is_ok(),
+            Err(_) => false,
+        })
+        .count()
+}
+
+/// Whether a download that failed with `error` keeps its resumable files for Try again. Only
+/// failures a later try can get past do: the network dropped, stalled or timed out, or the host
+/// answered 408, 429 or 5xx. Anything else (a refusal, a web page, a full disk, ffmpeg) starts
+/// over, so a bad or unwanted partial never lingers.
+///
+/// shortcut: matches the English failure messages written in this module, so a reworded message
+/// falls back to starting over; switch to a typed error if more callers need the reason.
+pub fn keeps_partial_files_after(error: &str) -> bool {
+    const NETWORK: [&str; 8] = [
+        "Could not reach the stream host",
+        "The stream host did not answer in time",
+        "A segment of the stream was interrupted",
+        "The stream stalled",
+        "A segment of the stream is incomplete",
+        "The download was interrupted after",
+        "The download stalled after",
+        "The download is incomplete",
+    ];
+    if NETWORK.iter().any(|start| error.starts_with(start)) {
+        return true;
+    }
+    let refused = error.starts_with("A segment of the stream could not be fetched: HTTP ")
+        || error.starts_with("The stream host answered HTTP ");
+    let status = error.split("HTTP ").nth(1).and_then(|rest| rest.get(..3)).and_then(|code| code.parse::<u16>().ok());
+    refused && matches!(status, Some(408 | 429 | 500..=599))
+}
+
 /// Where a download keeps the working file `role` in `dir`.
 pub fn work_file_path(dir: &Path, record: &DownloadRecord, role: &str) -> PathBuf {
     let base = output_base_name(&record.series_title, record.episode_num, &record.category, &record.quality);
@@ -943,8 +991,13 @@ impl WorkFiles {
     }
 
     async fn remove_all(&self) {
+        self.remove_where(|_| true).await
+    }
+
+    /// Removes the tracked files `doomed` picks and forgets the rest, which stay on disk.
+    async fn remove_where(&self, doomed: impl Fn(&Path) -> bool) {
         let paths: Vec<PathBuf> = std::mem::take(&mut *lock(&self.0));
-        for path in paths {
+        for path in paths.into_iter().filter(|p| doomed(p)) {
             // The HLS segment folder is the one tracked directory.
             if tokio::fs::remove_file(&path).await.is_err() {
                 let _ = tokio::fs::remove_dir_all(&path).await;
@@ -1014,7 +1067,7 @@ fn container_extension(url: &str) -> &'static str {
     let path = reqwest::Url::parse(url)
         .map(|u| u.path().to_ascii_lowercase())
         .unwrap_or_default();
-    for ext in ["mkv", "webm", "mov", "m4v", "avi", "flv", "ts"] {
+    for ext in crate::local_media::VIDEO_EXTENSIONS {
         if path.ends_with(&format!(".{}", ext)) {
             return ext;
         }
@@ -1531,8 +1584,6 @@ async fn finalize(
     Ok(Finished { path: final_path, size })
 }
 
-/// Containers a finished download can have (see `container_extension`).
-const VIDEO_EXTENSIONS: [&str; 8] = ["mkv", "mp4", "webm", "mov", "m4v", "avi", "flv", "ts"];
 
 /// Deletes a finished download's video and the subtitle side files `finalize` saved next to
 /// it (`<stem>.<language>.<vtt|ass|srt>`). Anything that is not a plain file with a video
@@ -1547,7 +1598,7 @@ pub fn delete_finished_files(video: &Path) -> Result<usize, String> {
     let (Some(dir), Some(stem)) = (video.parent(), video.file_stem().and_then(|s| s.to_str())) else {
         return Err(format!("{} is not a downloaded video.", video.display()));
     };
-    if !video.is_absolute() || !VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+    if !video.is_absolute() || !crate::local_media::VIDEO_EXTENSIONS.contains(&ext.as_str()) {
         return Err(format!("{} is not a downloaded video.", video.display()));
     }
     let mut removed = 0;
@@ -1686,12 +1737,15 @@ async fn download_file(
             Ok(Ok(Some(chunk))) => chunk,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {
+                // The bytes still buffered are written out, so a retry resumes after them.
+                let _ = file.flush().await;
                 return Err(format!(
                     "The download was interrupted after {} bytes: {}",
                     downloaded, e
                 ))
             }
             Err(_) => {
+                let _ = file.flush().await;
                 return Err(format!(
                     "The download stalled after {} bytes: no data for {} seconds.",
                     downloaded,
@@ -1861,8 +1915,14 @@ where
         result = transfer(pool, record, source, dir, &work) => Some(result),
         _ = cancelled(cancel) => None,
     };
-    // Nothing of the transfer is running any more, so its leftovers can go.
-    work.remove_all().await;
+    // Nothing of the transfer is running any more, so its leftovers can go. A network failure
+    // keeps the resumable ones, so Try again continues; a success or a later Remove deletes them.
+    match &result {
+        Some(Err(message)) if keeps_partial_files_after(message) => {
+            work.remove_where(|path| !is_resume_file(path)).await
+        }
+        _ => work.remove_all().await,
+    }
 
     match result {
         None => {
@@ -1954,18 +2014,29 @@ static QUEUE_WAKE: Lazy<Notify> = Lazy::new(Notify::new);
 static QUEUE_STARTED: AtomicBool = AtomicBool::new(false);
 static RECONCILED: AtomicBool = AtomicBool::new(false);
 
-fn spawn_job<S>(pool: SqlitePool, record: DownloadRecord, source: S, permit: Option<OwnedSemaphorePermit>)
-where
+fn spawn_job<S>(
+    pool: SqlitePool,
+    record: DownloadRecord,
+    source: S,
+    dir: Option<PathBuf>,
+    permit: Option<OwnedSemaphorePermit>,
+) where
     S: Future<Output = Result<DownloadSource, String>> + Send + 'static,
 {
     let id = record.id.clone();
-    let (cancel_tx, cancel_rx) = watch::channel(false);
 
     // Held across the spawn so the task cannot unregister itself before it is registered.
     let mut active = lock(&ACTIVE);
+    if active.contains_key(&id) {
+        // A second job would write the same working files, and the first could no longer be
+        // cancelled. The running one owns the row and writes its result.
+        warn!("Download {} is already running; it is not started a second time", id);
+        return;
+    }
+    let (cancel_tx, cancel_rx) = watch::channel(false);
     let handle = tokio::spawn(async move {
         let _permit = permit;
-        run_job(&pool, &record, source, None, cancel_rx).await;
+        run_job(&pool, &record, source, dir, cancel_rx).await;
         lock(&ACTIVE).remove(&record.id);
     });
     active.insert(id, ActiveDownload { cancel: cancel_tx, handle });
@@ -1974,7 +2045,30 @@ where
 /// Starts downloading `source` for `record` in the background. The row of `record` must
 /// already exist with status `DOWNLOADING`.
 pub fn start_download(pool: SqlitePool, record: DownloadRecord, source: DownloadSource) {
-    spawn_job(pool, record, async move { Ok(source) }, None);
+    spawn_job(pool, record, async move { Ok(source) }, None, None);
+}
+
+/// [`start_download`] into `dir` instead of the download folder, for tests.
+#[doc(hidden)]
+pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
+    spawn_job(pool, record, async move { Ok(source) }, Some(dir), None);
+}
+
+/// Puts a `FAILED` download back in the queue (Downloads › Try again). Any other row, or one
+/// whose failed job is still winding down, is left alone, so a double click or a stale page can
+/// never start a second job for the same row. Returns whether the row was queued again.
+pub async fn retry_download(pool: &SqlitePool, id: &str) -> Result<bool, String> {
+    // Checked before the row changes: a job leaves ACTIVE only after writing its final status.
+    // The window is milliseconds (the final status is written, then the job leaves), so
+    // reporting "not queued" is enough; the row keeps its status and a later click works.
+    if lock(&ACTIVE).contains_key(id) {
+        return Ok(false);
+    }
+    let queued = db::requeue_failed_download(pool, id).await.map_err(|e| e.to_string())?;
+    if queued {
+        notify_queue();
+    }
+    Ok(queued)
 }
 
 /// Stops the running download `id`, if there is one, and waits until ffmpeg is gone and
@@ -2066,6 +2160,7 @@ async fn queue_loop(app: tauri::AppHandle) {
                     pool.clone(),
                     record,
                     async move { resolve_queued_source(&resolver_app, &resolver_record).await },
+                    None,
                     Some(permit),
                 );
             }

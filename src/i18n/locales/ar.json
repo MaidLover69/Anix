@@ -1594,6 +1594,7 @@
     "other": "{count} إضافة"
   },
   "settings.pluginListFailed": "تعذّر تحميل قائمة الإضافات: {error}",
+  "settings.pluginStale": "تعذّر تثبيت أحدث إصدار منه في آخر تحديث، لذلك تم الإبقاء على النسخة المثبّتة.",
   "settings.pluginsInstalled": {
     "zero": "{count} إضافة مثبّتة.",
     "one": "{count} إضافة مثبّتة.",

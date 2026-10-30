@@ -734,6 +734,8 @@ export interface PluginInfo {
   servers: string[];
   /** The plugin has settings of its own (`get_plugin_config`). */
   configurable: boolean;
+  /** The last refresh could not read its manifest or code; the installed version is kept. */
+  stale: boolean;
 }
 
 /** One setting of a plugin (`get_plugin_config`). */

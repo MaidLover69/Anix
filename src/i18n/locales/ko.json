@@ -1314,6 +1314,7 @@
     "other": "플러그인 {count}개"
   },
   "settings.pluginListFailed": "플러그인 목록을 불러오지 못했어요: {error}",
+  "settings.pluginStale": "마지막 새로 고침 때 최신 버전을 설치하지 못해 설치된 버전을 그대로 유지합니다.",
   "settings.pluginsInstalled": {
     "other": "플러그인 {count}개를 설치했어요."
   },

@@ -1426,6 +1426,7 @@
     "other": "{count} plugins"
   },
   "settings.pluginListFailed": "La liste des plugins n’a pas pu être chargée : {error}",
+  "settings.pluginStale": "Sa dernière version n’a pas pu être installée lors de la dernière actualisation, la version installée est donc conservée.",
   "settings.pluginsInstalled": {
     "one": "{count} plugin installé.",
     "many": "{count} plugins installés.",

@@ -1071,6 +1071,29 @@ fn text_is_decoded_with_the_declared_character_set() {
 }
 
 #[test]
+fn a_site_verified_after_the_list_is_full_is_remembered_in_place_of_the_oldest() {
+    let dir = std::env::temp_dir().join(format!("anix-known-full-{}-{:?}", std::process::id(), Instant::now()));
+    let path = dir.join("site-sessions.json");
+    let known = KnownOrigins::open(Some(path.clone()));
+    for n in 0..256 {
+        known.add(&format!("https://mirror{}.example", n));
+    }
+    known.add("https://newest.example");
+    assert!(known.contains("https://newest.example"));
+    assert!(!known.contains("https://mirror0.example"));
+    assert!(known.contains("https://mirror1.example"));
+
+    // After a restart the newest one is still known, and the list stays bounded.
+    let reopened = KnownOrigins::open(Some(path.clone()));
+    assert!(reopened.contains("https://newest.example") && reopened.contains("https://mirror255.example"));
+    reopened.add("https://later.example");
+    assert!(reopened.contains("https://later.example") && !reopened.contains("https://mirror1.example"));
+    let stored: Vec<String> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 256);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn only_origins_are_remembered_across_restarts() {
     let dir = std::env::temp_dir().join(format!("anix-known-origins-{}-{:?}", std::process::id(), Instant::now()));
     let path = dir.join("site-sessions.json");
@@ -1083,7 +1106,7 @@ fn only_origins_are_remembered_across_restarts() {
 
     // What is on disk is a list of origins and nothing else.
     let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(stored, json!(["https://api.site.example:8443", "https://site.example"]));
+    assert_eq!(stored, json!(["https://site.example", "https://api.site.example:8443"]));
 
     // The next run knows them; a site that refuses again is forgotten.
     let reopened = KnownOrigins::open(Some(path.clone()));

@@ -21,8 +21,14 @@ use tokio::sync::OnceCell;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 
-/// Limit for one provider's episode listing.
-const EPISODES_TIMEOUT: Duration = Duration::from_secs(20);
+/// Limit for one provider's episode listing: the catalogue lookup for its titles, then an
+/// extension's search and its episode list, one after the other, each with its own limit. A
+/// shorter budget cut off slow sites that would have answered within those limits.
+pub const EPISODES_TIMEOUT: Duration = Duration::from_millis(
+    HINT_TIMEOUT.as_millis() as u64
+        + crate::plugins::provider::SEARCH_TIMEOUT.as_millis() as u64
+        + crate::plugins::provider::EPISODES_TIMEOUT.as_millis() as u64,
+);
 /// Limit for one provider's whole attempt at a play request: episode lookup, source
 /// resolution and stream verification. The race ends as soon as any provider delivers, so a
 /// slow site only costs this when nothing else plays.
@@ -1126,7 +1132,12 @@ impl ProviderManager {
                     }
                 }));
                 let outcome = match timeout(EPISODES_TIMEOUT, listing).await {
-                    Err(_) => Err("timed out".to_string()),
+                    Err(_) => {
+                        // A site that hangs this long is skipped by the next pages opened for a
+                        // while, so it does not hold every episode list back again.
+                        inner.note_unreachable(site);
+                        Err("timed out".to_string())
+                    }
                     Ok(Err(join_err)) => {
                         tracing::error!("episode listing task failed: {}", join_err);
                         Err("internal error".to_string())

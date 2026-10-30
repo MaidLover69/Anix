@@ -196,6 +196,9 @@ pub struct PluginInfo {
     pub servers: Vec<String>,
     /// The plugin has settings of its own; see `get_plugin_config`.
     pub configurable: bool,
+    /// The last refresh could not install what its repository lists now (the manifest or code
+    /// could not be read or used), so the installed version is kept as it was.
+    pub stale: bool,
 }
 
 /// One setting of a plugin as the settings form shows it.
@@ -271,6 +274,9 @@ struct StoredPlugin {
     /// Changes whenever the payload on disk changes.
     #[serde(default)]
     revision: u64,
+    /// See `PluginInfo::stale`.
+    #[serde(default)]
+    stale: bool,
 }
 
 impl StoredPlugin {
@@ -456,6 +462,17 @@ fn repo_name(link: &str) -> String {
     }
 }
 
+/// What a repository's index asks for, downloaded before the registry lock is taken.
+struct Fetched {
+    wanted: Vec<Wanted>,
+    problems: Vec<String>,
+    /// Every id the index lists, in its order: the wanted ones, and those whose manifest could
+    /// not be read this time (their installed copies stay).
+    listed: Vec<String>,
+    /// Code downloaded for wanted plugins that were not up to date when the download started.
+    payloads: HashMap<String, Result<(String, bool), String>>,
+}
+
 /// What one index entry asks to be installed.
 struct Wanted {
     id: String,
@@ -597,6 +614,7 @@ impl PluginRegistry {
                 dub_languages: plugin.effective_languages().dub,
                 servers: plugin.servers.clone(),
                 configurable: plugin.user_config.as_ref().map_or(false, |config| !config.fields.is_empty()),
+                stale: plugin.stale,
             })
             .collect()
     }
@@ -684,21 +702,44 @@ impl PluginRegistry {
 
     /// Loads every enabled plugin that is not loaded yet. Run once at startup, in the
     /// background; a plugin that fails to load is marked with the reason.
+    ///
+    /// The plugins start without the registry lock, so a switch flipped or a repository added
+    /// during launch is not held up by them; the outcome is then written only into plugins that
+    /// still run the same code.
     pub async fn load_all(&self) {
+        let is_loaded = |plugin: &StoredPlugin| {
+            let loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
+            loaded.get(&plugin.id).map_or(false, |l| l.revision == plugin.revision)
+        };
+        let pending: Vec<StoredPlugin> =
+            self.state().plugins.into_iter().filter(|plugin| plugin.enabled && !is_loaded(plugin)).collect();
+        let mut started = Vec::with_capacity(pending.len());
+        for mut plugin in pending {
+            self.refresh_status(&mut plugin).await;
+            started.push(plugin);
+        }
+
         let _changing = self.inner.changes.lock().await;
         let mut state = self.state();
         let mut changed = false;
-        for plugin in state.plugins.iter_mut().filter(|plugin| plugin.enabled) {
-            let already = {
-                let loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
-                loaded.get(&plugin.id).map_or(false, |l| l.revision == plugin.revision)
-            };
-            if already {
+        for done in started {
+            let current = state
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == done.id && p.revision == done.revision && p.enabled);
+            let Some(plugin) = current else {
+                // Switched off, removed or updated meanwhile: drop the copy started here.
+                let mut loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
+                if loaded.get(&done.id).map_or(false, |l| l.revision == done.revision) {
+                    loaded.remove(&done.id);
+                }
                 continue;
+            };
+            let outcome = (done.error, done.supports_dub, done.servers);
+            if (plugin.error.clone(), plugin.supports_dub, plugin.servers.clone()) != outcome {
+                (plugin.error, plugin.supports_dub, plugin.servers) = outcome;
+                changed = true;
             }
-            let before = (plugin.error.clone(), plugin.supports_dub, plugin.servers.clone());
-            self.refresh_status(plugin).await;
-            changed |= before != (plugin.error.clone(), plugin.supports_dub, plugin.servers.clone());
         }
         if changed {
             self.store(state);
@@ -718,7 +759,7 @@ impl PluginRegistry {
             let languages = plugin.effective_languages();
             if let Some(known) = loaded.get_mut(&plugin.id).filter(|l| l.revision == plugin.revision) {
                 // A refreshed manifest can change the languages without changing the code.
-                if known.provider.languages().as_ref() != Some(&languages) {
+                if known.provider.languages() != languages.clone().declared() {
                     known.provider = Arc::new(known.provider.relabelled(languages));
                 }
                 providers.push(known.provider.clone());
@@ -898,10 +939,12 @@ impl PluginRegistry {
     }
 
     /// Turns index entries into what to install. Entries of other extension types are left
-    /// out silently; malformed ones are reported in the second value.
-    async fn wanted_from(&self, index_url: &Url, entries: Vec<Value>) -> (Vec<Wanted>, Vec<String>) {
+    /// out silently; malformed ones are reported in the second value. The third is every id
+    /// the index lists, including those whose manifest could not be read.
+    async fn wanted_from(&self, index_url: &Url, entries: Vec<Value>) -> (Vec<Wanted>, Vec<String>, Vec<String>) {
         let mut wanted: Vec<Wanted> = Vec::new();
         let mut problems: Vec<String> = Vec::new();
+        let mut listed: Vec<String> = Vec::new();
         for entry in entries {
             if wanted.len() >= MAX_PLUGINS_PER_REPO {
                 problems.push(format!("only the first {} plugins are used", MAX_PLUGINS_PER_REPO));
@@ -922,10 +965,11 @@ impl PluginRegistry {
                 ));
                 continue;
             }
-            if wanted.iter().any(|known| known.id == id) {
+            if listed.contains(&id) {
                 problems.push(format!("{} is listed twice", id));
                 continue;
             }
+            listed.push(id.clone());
 
             let has_payload = entry.get("payload").and_then(Value::as_str).map_or(false, |p| !p.trim().is_empty())
                 || entry.get("payloadURI").and_then(Value::as_str).map_or(false, |p| !p.trim().is_empty());
@@ -971,7 +1015,7 @@ impl PluginRegistry {
                 Err(reason) => problems.push(format!("{}: {}", id, reason)),
             }
         }
-        (wanted, problems)
+        (wanted, problems, listed)
     }
 
     /// Downloads (or takes inline) the payload a manifest names.
@@ -1021,13 +1065,52 @@ impl PluginRegistry {
         stored.user_config = UserConfig::from_manifest(manifest);
     }
 
-    /// Brings the plugins of one repository in line with its index. Returns the notes for the
-    /// repository's `error` (problems that left a plugin out or on its old version).
-    async fn sync_repo(&self, state: &mut State, repo_url: &str, index_url: &Url, entries: Vec<Value>) -> Vec<String> {
-        let (wanted, mut problems) = self.wanted_from(index_url, entries).await;
+    /// True when `plugin` already runs the code `manifest` names: code that comes with the
+    /// manifest is compared itself; otherwise the version decides.
+    fn up_to_date(&self, plugin: &StoredPlugin, manifest: &Value) -> bool {
+        let inline = manifest.get("payload").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
+        let stored = std::fs::read_to_string(self.payload_path(plugin)).ok();
+        plugin.version == text_field(manifest, "version")
+            && stored.is_some()
+            && inline.map_or(true, |source| stored.as_deref() == Some(source))
+    }
 
-        // Plugins the index no longer lists go away.
-        let listed: Vec<&str> = wanted.iter().map(|w| w.id.as_str()).collect();
+    /// Downloads what one repository's index asks for: its manifests, and the code of plugins
+    /// that are new or changed. Runs without the registry lock, so a slow site never holds up
+    /// a switch the user flips meanwhile.
+    async fn fetch_repo(&self, repo_url: &str, index_url: &Url, entries: Vec<Value>) -> Fetched {
+        let (wanted, problems, listed) = self.wanted_from(index_url, entries).await;
+        let installed = self.state().plugins;
+        let mut payloads = HashMap::new();
+        for want in &wanted {
+            let current = installed.iter().find(|p| p.id == want.id);
+            if current.map_or(false, |p| p.repo_url != repo_url || self.up_to_date(p, &want.manifest)) {
+                continue;
+            }
+            payloads.insert(want.id.clone(), self.fetch_payload(want).await);
+        }
+        Fetched {
+            wanted,
+            problems,
+            listed,
+            payloads,
+        }
+    }
+
+    /// Brings the plugins of one repository in line with what `fetch_repo` downloaded, in the
+    /// current state. Returns the notes for the repository's `error` (problems that left a
+    /// plugin out or on its old version).
+    async fn sync_repo(&self, state: &mut State, repo_url: &str, fetched: Fetched) -> Vec<String> {
+        let Fetched {
+            wanted,
+            mut problems,
+            listed,
+            mut payloads,
+        } = fetched;
+
+        // Plugins the index no longer lists go away. One that is listed but whose manifest
+        // could not be read this time stays as it is, with the user's switch and settings.
+        let listed: Vec<&str> = listed.iter().map(String::as_str).collect();
         let gone: Vec<StoredPlugin> = state
             .plugins
             .iter()
@@ -1039,6 +1122,11 @@ impl PluginRegistry {
             let _ = std::fs::remove_file(self.payload_path(plugin));
         }
         state.plugins.retain(|p| !(p.repo_url == repo_url && !listed.contains(&p.id.as_str())));
+        for plugin in state.plugins.iter_mut().filter(|p| p.repo_url == repo_url) {
+            if !wanted.iter().any(|w| w.id == plugin.id) {
+                plugin.stale = true;
+            }
+        }
 
         for want in &wanted {
             let existing = state.plugins.iter().position(|p| p.id == want.id);
@@ -1051,20 +1139,12 @@ impl PluginRegistry {
                     continue;
                 }
             }
-            let version = text_field(&want.manifest, "version");
-            let inline = want.manifest.get("payload").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
-            let up_to_date = existing.map_or(false, |at| {
-                let plugin = &state.plugins[at];
-                let stored = std::fs::read_to_string(self.payload_path(plugin)).ok();
-                // Code that comes with the manifest is compared itself; otherwise the version decides.
-                plugin.version == version
-                    && stored.is_some()
-                    && inline.map_or(true, |source| stored.as_deref() == Some(source))
-            });
+            let up_to_date = existing.map_or(false, |at| self.up_to_date(&state.plugins[at], &want.manifest));
             if up_to_date {
                 // Same version: only the description may have changed.
                 let at = existing.unwrap_or_default();
                 let mut plugin = state.plugins[at].clone();
+                plugin.stale = false;
                 let config_before = plugin.user_config.clone();
                 self.describe(&mut plugin, &want.manifest);
                 if plugin.user_config != config_before {
@@ -1085,8 +1165,15 @@ impl PluginRegistry {
                 enabled: true,
                 ..StoredPlugin::default()
             });
-            match self.fetch_payload(want).await {
+            // Downloaded before the lock was taken. Fetched here only when the state changed
+            // meanwhile and nothing was downloaded for it.
+            let payload = match payloads.remove(&want.id) {
+                Some(payload) => payload,
+                None => self.fetch_payload(want).await,
+            };
+            match payload {
                 Ok((source, typescript)) => {
+                    plugin.stale = false;
                     if existing.is_some() {
                         let _ = std::fs::remove_file(self.payload_path(&plugin));
                     }
@@ -1108,6 +1195,9 @@ impl PluginRegistry {
                 Err(reason) if existing.is_some() => {
                     // The installed version keeps working.
                     problems.push(format!("{} could not be updated: {}", want.id, reason));
+                    if let Some(at) = existing {
+                        state.plugins[at].stale = true;
+                    }
                     continue;
                 }
                 Err(reason) => {
@@ -1122,7 +1212,7 @@ impl PluginRegistry {
         }
 
         // Plugins keep the order of the index within their repository.
-        let order: HashMap<&str, usize> = wanted.iter().enumerate().map(|(i, w)| (w.id.as_str(), i)).collect();
+        let order: HashMap<&str, usize> = listed.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         let repo_order: HashMap<String, usize> =
             state.repos.iter().enumerate().map(|(i, r)| (r.url.clone(), i)).collect();
         state.plugins.sort_by_key(|p| {
@@ -1142,23 +1232,29 @@ impl PluginRegistry {
         if link.is_empty() {
             return Err("Enter the link of a plugin repository.".to_string());
         }
-        let _changing = self.inner.changes.lock().await;
-        let mut state = self.state();
-        if state.repos.iter().any(|repo| self.same_repo(&repo.url, &link)) {
-            return Err("This repository has already been added.".to_string());
+        let already = "This repository has already been added.".to_string();
+        if self.state().repos.iter().any(|repo| self.same_repo(&repo.url, &link)) {
+            return Err(already);
         }
+        // Downloads happen before the lock is taken; see `fetch_repo`.
         let Index { url: index_url, entries, name } = self
             .fetch_index(&link)
             .await
             .map_err(|reason| format!("Could not add the repository: {}.", reason))?;
+        let fetched = self.fetch_repo(&link, &index_url, entries).await;
 
+        let _changing = self.inner.changes.lock().await;
+        let mut state = self.state();
+        if state.repos.iter().any(|repo| self.same_repo(&repo.url, &link)) {
+            return Err(already);
+        }
         state.repos.push(StoredRepo {
             url: link.clone(),
             name: self.repo_display_name(&link, name.as_deref()),
             updated_at_ms: now_ms(),
             error: None,
         });
-        let problems = self.sync_repo(&mut state, &link, &index_url, entries).await;
+        let problems = self.sync_repo(&mut state, &link, fetched).await;
         if !state.plugins.iter().any(|p| p.repo_url == link) && problems.is_empty() {
             return Err("Could not add the repository: it lists no streaming plugins.".to_string());
         }
@@ -1201,16 +1297,30 @@ impl PluginRegistry {
 
     /// Downloads every repository's index again and installs new versions. A repository that
     /// cannot be reached keeps its plugins and gets the reason as its `error`.
+    ///
+    /// Everything is downloaded first, without the registry lock; the lock is taken only to
+    /// apply the results to the state as it is then, so a switch flipped or a repository added
+    /// or removed meanwhile is kept.
     pub async fn refresh_repos(&self) -> Vec<PluginRepo> {
-        let _changing = self.inner.changes.lock().await;
-        let mut state = self.state();
-        let links: Vec<String> = state.repos.iter().map(|repo| repo.url.clone()).collect();
+        let links: Vec<String> = self.state().repos.iter().map(|repo| repo.url.clone()).collect();
+        let mut outcomes = Vec::new();
         for link in links {
             let outcome = match self.fetch_index(&link).await {
-                Ok(index) => {
-                    let problems = self.sync_repo(&mut state, &link, &index.url, index.entries).await;
-                    Ok((problems, index.name))
-                }
+                Ok(index) => Ok((self.fetch_repo(&link, &index.url, index.entries).await, index.name)),
+                Err(reason) => Err(reason),
+            };
+            outcomes.push((link, outcome));
+        }
+
+        let _changing = self.inner.changes.lock().await;
+        let mut state = self.state();
+        for (link, outcome) in outcomes {
+            // A repository removed meanwhile stays removed.
+            if !state.repos.iter().any(|repo| repo.url == link) {
+                continue;
+            }
+            let outcome = match outcome {
+                Ok((fetched, name)) => Ok((self.sync_repo(&mut state, &link, fetched).await, name)),
                 Err(reason) => Err(reason),
             };
             if let Some(repo) = state.repos.iter_mut().find(|repo| repo.url == link) {
@@ -1345,7 +1455,7 @@ impl PluginRegistry {
             let Ok(index) = self.fetch_index(&repo.url).await else {
                 continue;
             };
-            let (wanted, _) = self.wanted_from(&index.url, index.entries).await;
+            let (wanted, _, _) = self.wanted_from(&index.url, index.entries).await;
             for want in wanted {
                 let Some(plugin) = state.plugins.iter().find(|p| p.id == want.id && p.repo_url == repo.url) else {
                     continue;

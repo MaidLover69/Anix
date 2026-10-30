@@ -263,6 +263,9 @@ const PluginRow: React.FC<{
           </p>
         </div>
       )}
+      {plugin.stale && !failed && (
+        <p className="mt-2 break-words text-xs text-text-muted select-text">{t('settings.pluginStale')}</p>
+      )}
       {health && health !== 'testing' && health.error && health.status !== 'ok' && (
         <p className="mt-2 break-words text-xs text-text-muted select-text">{t('settings.testResult', { error: health.error })}</p>
       )}

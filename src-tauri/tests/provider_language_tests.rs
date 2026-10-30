@@ -3,7 +3,7 @@
 
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem, SubtitleItem};
-use anix_lib::providers::languages::{LanguagePrefs, Languages};
+use anix_lib::providers::languages::{plan_tiers, LanguagePrefs, Languages, Tier};
 use anix_lib::providers::manager::ProviderManager;
 use anix_lib::providers::AnimeProvider;
 use async_trait::async_trait;
@@ -255,6 +255,44 @@ async fn undeclared_providers_count_as_any_language() {
     let found = play(&manager(&[mystery], prefs(&["hi"], &["hi"], true)), "sub", None).await.unwrap();
     assert_eq!(found.provider.as_deref(), Some("mystery"));
     assert_eq!(found.language, None);
+}
+
+#[test]
+fn empty_or_unknown_language_declarations_count_as_undeclared() {
+    // What a manifest with `lang: "multi"`, or with no `lang` and no `languages`, comes to.
+    assert_eq!(Languages { sub: codes(&["multi"]), dub: codes(&["multi"]) }.declared(), None);
+    assert_eq!(Languages { sub: codes(&["multi"]), dub: Vec::new() }.declared(), None);
+    assert_eq!(Languages::default().declared(), None);
+    // A dub-only site still says what it serves.
+    let russian = Languages { sub: Vec::new(), dub: codes(&["ru"]) };
+    assert_eq!(russian.clone().declared(), Some(russian));
+    let mixed = Languages { sub: codes(&["multi", "en"]), dub: Vec::new() };
+    assert_eq!(mixed.clone().declared(), Some(mixed));
+}
+
+#[test]
+fn undeclared_providers_are_asked_after_the_matching_tiers_even_when_strict() {
+    let english = Some(Languages { sub: codes(&["en"]), dub: codes(&["en"]) });
+    let italian = Some(Languages { sub: codes(&["it"]), dub: Vec::new() });
+    let lineup = vec![
+        (None, true),           // 0 undeclared
+        (english, true),        // 1 English
+        (italian, true),        // 2 Italian
+        (None, false),          // 3 undeclared, cannot answer
+    ];
+    let tier = |language: Option<&str>, members: Vec<usize>| Tier { language: language.map(String::from), members };
+
+    assert_eq!(
+        plan_tiers(&lineup, &Category::Sub, &prefs(&["en"], &["en"], true)),
+        vec![tier(Some("en"), vec![1]), tier(None, vec![0])]
+    );
+    // Nobody declares Hindi: the undeclared one is still asked.
+    assert_eq!(plan_tiers(&lineup, &Category::Sub, &prefs(&["hi"], &[], true)), vec![tier(None, vec![0])]);
+    // Without the strict switch, declared other languages come after it.
+    assert_eq!(
+        plan_tiers(&lineup, &Category::Sub, &prefs(&["en"], &["en"], false)),
+        vec![tier(Some("en"), vec![1]), tier(None, vec![0]), tier(None, vec![2])]
+    );
 }
 
 #[tokio::test]

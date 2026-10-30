@@ -1037,14 +1037,30 @@ fn run_thread(
 /// A plugin's engine, started on first use and started again if its thread ever ends.
 pub struct PluginRuntime {
     spec: EngineSpec,
-    engine: Mutex<Option<Arc<PluginEngine>>>,
+    /// Shared so that a start can run on the blocking pool; held while an engine starts, so
+    /// two callers never start two engines.
+    engine: Arc<Mutex<Option<Arc<PluginEngine>>>>,
+}
+
+/// The engine in `slot`, started (and kept there) when there is none or it stopped. Blocks
+/// for as long as the plugin takes to load.
+fn engine_in(slot: &Mutex<Option<Arc<PluginEngine>>>, spec: &EngineSpec) -> Result<Arc<PluginEngine>, String> {
+    let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(engine) = guard.as_ref() {
+        if engine.is_alive() {
+            return Ok(engine.clone());
+        }
+    }
+    let engine = Arc::new(PluginEngine::start(spec.clone())?);
+    *guard = Some(engine.clone());
+    Ok(engine)
 }
 
 impl PluginRuntime {
     pub fn new(spec: EngineSpec) -> Self {
         Self {
             spec,
-            engine: Mutex::new(None),
+            engine: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1057,16 +1073,28 @@ impl PluginRuntime {
         self.spec.allow_private_network
     }
 
+    /// The engine, started on this thread when needed: up to `LOAD_TIMEOUT`. Async code uses
+    /// `call`, which starts it on the blocking pool instead.
     pub fn engine(&self) -> Result<Arc<PluginEngine>, String> {
-        let mut guard = self.engine.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(engine) = guard.as_ref() {
-            if engine.is_alive() {
-                return Ok(engine.clone());
-            }
+        engine_in(&self.engine, &self.spec)
+    }
+
+    /// The engine when it is running, without starting one or waiting for one that is starting.
+    pub fn running(&self) -> Option<Arc<PluginEngine>> {
+        let guard = self.engine.try_lock().ok()?;
+        guard.as_ref().filter(|engine| engine.is_alive()).cloned()
+    }
+
+    /// `engine` for async code: loading a plugin evaluates its code, which must not hold up
+    /// an async worker thread, so a start runs on the blocking pool.
+    async fn started(&self) -> Result<Arc<PluginEngine>, String> {
+        if let Some(engine) = self.running() {
+            return Ok(engine);
         }
-        let engine = Arc::new(PluginEngine::start(self.spec.clone())?);
-        *guard = Some(engine.clone());
-        Ok(engine)
+        let (slot, spec) = (self.engine.clone(), self.spec.clone());
+        tokio::task::spawn_blocking(move || engine_in(&slot, &spec))
+            .await
+            .map_err(|e| format!("the plugin could not be started: {}", e))?
     }
 
     pub async fn call(
@@ -1076,7 +1104,7 @@ impl PluginRuntime {
         timeout: Duration,
         access: SessionUse,
     ) -> Result<Json, PluginError> {
-        let engine = self.engine().map_err(PluginError::Stopped)?;
+        let engine = self.started().await.map_err(PluginError::Stopped)?;
         engine.call(method, args, timeout, access).await
     }
 
@@ -1091,7 +1119,7 @@ impl PluginRuntime {
         access: SessionUse,
     ) -> Result<Json, PluginError> {
         use crate::providers::common::{with_session_allowance, SESSION_CALL_ALLOWANCE};
-        let engine = self.engine().map_err(PluginError::Stopped)?;
+        let engine = self.started().await.map_err(PluginError::Stopped)?;
         let net = engine.net().clone();
         let call = engine.call(method, args, timeout + SESSION_CALL_ALLOWANCE, access);
         with_session_allowance(call, timeout, SESSION_CALL_ALLOWANCE, |since| net.session_time_since(since))

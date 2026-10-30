@@ -142,6 +142,8 @@ fn hls(url: String) -> StreamItem {
 enum Listing {
     Episodes(Vec<f64>),
     Fail(AppError),
+    /// Never answers within any budget.
+    Hang,
 }
 
 struct MockProvider {
@@ -206,6 +208,10 @@ impl AnimeProvider for MockProvider {
         self.titles_seen.lock().unwrap().extend(query.titles.iter().cloned());
         match &self.listing {
             Listing::Fail(err) => Err(err.clone()),
+            Listing::Hang => {
+                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+                Err(AppError::Other("hung".into()))
+            }
             Listing::Episodes(numbers) => {
                 let list: Vec<EpisodeItem> = numbers
                     .iter()
@@ -560,6 +566,13 @@ async fn dub_requests_only_reach_providers_with_a_dub() {
     assert_eq!(headline(&message), "No installed extension has this episode in dub.");
 }
 
+#[test]
+fn an_episode_listing_has_room_for_an_extensions_search_and_episode_list() {
+    use anix_lib::plugins::provider::{EPISODES_TIMEOUT, SEARCH_TIMEOUT};
+    // The listing runs one search and one findEpisodes call in a row, each up to its own limit.
+    assert!(anix_lib::providers::manager::EPISODES_TIMEOUT >= SEARCH_TIMEOUT + EPISODES_TIMEOUT);
+}
+
 #[tokio::test]
 async fn episode_lists_are_cached_per_provider_and_anime() {
     let host = host_with_good_stream().await;
@@ -634,6 +647,24 @@ async fn an_unreachable_site_is_deprioritised_but_never_locked_out() {
         assert_eq!(listed.len(), 1);
     }
     assert_eq!(flaky.list_calls(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_listing_that_runs_out_of_time_is_skipped_by_the_next_page_opened() {
+    let mut hung = MockProvider::new("hung", Ok(Vec::new()));
+    hung.listing = Listing::Hang;
+    let hung = Arc::new(hung);
+    let up = Arc::new(MockProvider::new("up", Ok(Vec::new())));
+    let manager = manager_of(&[hung.clone(), up.clone()]);
+
+    let listed = manager.get_all_episodes(21, None, Some("One Piece".to_string())).await.unwrap();
+    assert_eq!(listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["up"]);
+    assert_eq!(hung.list_calls(), 1);
+
+    // Another page right after does not wait on the same site again.
+    let listed = manager.get_all_episodes(22, None, Some("Other".to_string())).await.unwrap();
+    assert_eq!(listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["up"]);
+    assert_eq!(hung.list_calls(), 1);
 }
 
 // ---------------------------------------------------------------- in-app browser sessions

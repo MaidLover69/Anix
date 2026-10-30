@@ -420,7 +420,7 @@ impl PluginProvider {
     /// What the plugin's own requests ran into since `since`, when that explains a failure
     /// better than the plugin's words.
     fn network_failure(&self, since: Instant) -> Option<AppError> {
-        self.runtime.engine().ok()?.net().failure_since(since)
+        self.runtime.running()?.net().failure_since(since)
     }
 
     async fn call(
@@ -529,14 +529,13 @@ async fn resolve_server(
     let args = [details, Value::String(server.clone())];
     let failed = |reason: String| {
         runtime
-            .engine()
-            .ok()
+            .running()
             .and_then(|engine| engine.net().failure_since(started))
             .unwrap_or_else(|| AppError::provider(id, reason))
     };
     let waited = || {
         runtime
-            .engine()
+            .running()
             .map_or(Duration::ZERO, |engine| engine.net().session_time_since(started))
     };
     match runtime
@@ -563,7 +562,8 @@ impl AnimeProvider for PluginProvider {
     }
 
     fn languages(&self) -> Option<Languages> {
-        Some(self.languages.clone())
+        // A manifest with no languages, or only "multi", says nothing: undeclared, any language.
+        self.languages.clone().declared()
     }
 
     fn cache_key(&self) -> String {
@@ -584,7 +584,7 @@ impl AnimeProvider for PluginProvider {
 
     fn session_time_since(&self, since: Instant) -> Duration {
         self.runtime
-            .engine()
+            .running()
             .map_or(Duration::ZERO, |engine| engine.net().session_time_since(since))
     }
 

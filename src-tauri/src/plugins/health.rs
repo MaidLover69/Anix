@@ -247,7 +247,7 @@ pub async fn test_plugin(registry: &PluginRegistry, id: &str) -> PluginHealth {
         .await;
     let latency = started.elapsed();
     let outcome = result.map_err(|error| {
-        let net = runtime.engine().ok().and_then(|engine| engine.net().failure_since(started));
+        let net = runtime.running().and_then(|engine| engine.net().failure_since(started));
         net.unwrap_or_else(|| match error {
             PluginError::Timeout => AppError::Provider {
                 provider: "plugin",

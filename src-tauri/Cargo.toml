@@ -64,6 +64,8 @@ gtk = "0.18"
 
 [dev-dependencies]
 futures-util = "0.3"
+# Paused test clock, so budgets of tens of seconds are tested without waiting for them.
+tokio = { version = "1.38", features = ["test-util"] }
 
 [profile.release]
 strip = true

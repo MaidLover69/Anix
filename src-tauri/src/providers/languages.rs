@@ -173,6 +173,14 @@ impl Languages {
         }
     }
 
+    /// `Some(self)` when it names at least one known language, else `None`: a declaration that
+    /// is empty or only says "multi" (or another unknown label) tells nothing, so the provider
+    /// counts as undeclared and is taken to serve any language.
+    pub fn declared(self) -> Option<Self> {
+        let known = |code: &String| LANGUAGES.iter().any(|(known, _, _)| known == code);
+        (self.sub.iter().any(known) || self.dub.iter().any(known)).then_some(self)
+    }
+
     /// A site whose only version is dubbed audio, which it serves as its plain ("sub")
     /// version because it has no separate dub.
     pub fn dub_only(&self, supports_dub: bool) -> bool {
@@ -275,9 +283,10 @@ pub struct Tier {
 /// category at all.
 ///
 /// Each preferred language, most wanted first, gets a tier of the providers serving it that
-/// no earlier tier took; providers without declared languages join the first tier. Providers
-/// in none of the preferred languages form a last tier only when `strict` is off. An empty
-/// result means nothing may be asked.
+/// no earlier tier took. Providers without declared languages may serve any of them, so they
+/// form the next tier, strict or not: after the providers known to match, which are the
+/// likelier answer. Providers in none of the preferred languages form a last tier only when
+/// `strict` is off. An empty result means nothing may be asked.
 pub fn plan_tiers(
     languages: &[(Option<Languages>, bool)],
     category: &Category,
@@ -285,17 +294,13 @@ pub fn plan_tiers(
 ) -> Vec<Tier> {
     let mut taken = vec![false; languages.len()];
     let mut tiers: Vec<Tier> = Vec::new();
-    for (rank, wanted) in prefs.for_category(category).iter().enumerate() {
+    for wanted in prefs.for_category(category) {
         let mut members = Vec::new();
         for (idx, (langs, usable)) in languages.iter().enumerate() {
             if taken[idx] || !usable {
                 continue;
             }
-            let matches = match langs {
-                None => rank == 0,
-                Some(langs) => langs.for_category(category).contains(wanted),
-            };
-            if matches {
+            if langs.as_ref().map_or(false, |langs| langs.for_category(category).contains(wanted)) {
                 taken[idx] = true;
                 members.push(idx);
             }
@@ -311,6 +316,18 @@ pub fn plan_tiers(
         // No preference at all: everything usable, in one race.
         let members: Vec<usize> = (0..languages.len()).filter(|&i| languages[i].1).collect();
         return if members.is_empty() { Vec::new() } else { vec![Tier { language: None, members }] };
+    }
+    let undeclared: Vec<usize> = (0..languages.len())
+        .filter(|&i| languages[i].0.is_none() && languages[i].1)
+        .collect();
+    if !undeclared.is_empty() {
+        for &idx in &undeclared {
+            taken[idx] = true;
+        }
+        tiers.push(Tier {
+            language: None,
+            members: undeclared,
+        });
     }
     if !prefs.strict {
         let others: Vec<usize> = (0..languages.len()).filter(|&i| !taken[i] && languages[i].1).collect();
@@ -465,22 +482,25 @@ mod tests {
         assert_eq!(
             sub,
             vec![
-                Tier { language: Some("es".into()), members: vec![2, 3, 5] },
+                Tier { language: Some("es".into()), members: vec![2, 3] },
                 Tier { language: Some("en".into()), members: vec![1] },
+                Tier { language: None, members: vec![5] },
             ]
         );
 
         let loose = plan_tiers(&lineup, &Category::Sub, &prefs(&["en"], &["en"], false));
-        assert_eq!(loose.len(), 2);
-        assert_eq!(loose[0], Tier { language: Some("en".into()), members: vec![1, 2, 5] });
-        assert_eq!(loose[1], Tier { language: None, members: vec![0, 3, 4] });
+        assert_eq!(loose.len(), 3);
+        assert_eq!(loose[0], Tier { language: Some("en".into()), members: vec![1, 2] });
+        assert_eq!(loose[1], Tier { language: None, members: vec![5] });
+        assert_eq!(loose[2], Tier { language: None, members: vec![0, 3, 4] });
 
         let dub = plan_tiers(&lineup, &Category::Dub, &prefs(&["en"], &["ru", "en"], true));
         assert_eq!(
             dub,
             vec![
-                Tier { language: Some("ru".into()), members: vec![4, 5] },
+                Tier { language: Some("ru".into()), members: vec![4] },
                 Tier { language: Some("en".into()), members: vec![1] },
+                Tier { language: None, members: vec![5] },
             ]
         );
 

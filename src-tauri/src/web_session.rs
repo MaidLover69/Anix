@@ -21,10 +21,10 @@ use once_cell::sync::{Lazy, OnceCell};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::hash_map::RandomState;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::webview::{DownloadEvent, PageLoadEvent};
@@ -102,29 +102,78 @@ pub struct SiteSpec {
     pub origins: &'static [&'static str],
 }
 
-/// Sites made up at run time are kept for the life of the process; this bounds how many.
+/// How many sites made up at run time are kept at once. Past it, the least recently used one
+/// that is not in use gives way.
 const MAX_DYNAMIC_SITES: usize = 256;
 
-static DYNAMIC_SITES: Lazy<Mutex<HashMap<String, &'static SiteSpec>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+struct DynamicSite {
+    site: &'static SiteSpec,
+    /// When it was last asked for, on the `SITE_USES` count.
+    last_used: u64,
+}
+
+static DYNAMIC_SITES: Lazy<Mutex<HashMap<String, DynamicSite>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static SITE_USES: AtomicU64 = AtomicU64::new(0);
+
+/// Which of `(key, last used, in use)` gives way to a new entry: the least recently used one
+/// not in use. `None` when every entry is in use.
+pub fn least_recently_used<K>(entries: impl IntoIterator<Item = (K, u64, bool)>) -> Option<K> {
+    entries
+        .into_iter()
+        .filter(|(_, _, in_use)| !in_use)
+        .min_by_key(|(_, last_used, _)| *last_used)
+        .map(|(key, _, _)| key)
+}
+
+/// A site the user may be verifying, or that waits in the Verify list, is never evicted.
+fn site_in_use(key: &str) -> bool {
+    with_site(key, |state| state.visible || state.busy || state.blocked.is_some()).unwrap_or(false)
+}
+
+/// Drops what is kept for an evicted site: its hidden window and its remembered origin. Its
+/// cookies stay in the webview's storage.
+fn forget_site(site: &'static SiteSpec, origin: &str) {
+    let window = {
+        let mut sites = sites();
+        // http and https of one host share a key; only this spec's own state goes.
+        let owned = sites.get(site.key).map_or(false, |state| std::ptr::eq(state.spec, site));
+        owned.then(|| sites.remove(site.key)).flatten().and_then(|mut state| state.window.take())
+    };
+    if let Some(window) = window {
+        let _ = window.destroy();
+    }
+    if let Some(known) = KNOWN_ORIGINS.get() {
+        known.remove(origin);
+    }
+}
 
 /// The site made of the single origin `origin` (`scheme://host[:port]`), for callers that learn
-/// at run time which site they talk to. Its key and label are the host. The same origin always
-/// gives the same site.
+/// at run time which site they talk to. Its key and label are the host. The same origin gives
+/// the same site for as long as it is kept.
 pub fn site_for_origin(origin: &str) -> Option<&'static SiteSpec> {
     let origin = normalized_origin(origin)?;
-    let mut known = DYNAMIC_SITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(site) = known.get(&origin) {
-        return Some(*site);
-    }
-    if known.len() >= MAX_DYNAMIC_SITES {
-        return None;
-    }
     let url = Url::parse(&origin).ok()?;
     let host = url.host_str()?;
+    let use_count = SITE_USES.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut known = DYNAMIC_SITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(entry) = known.get_mut(&origin) {
+        entry.last_used = use_count;
+        return Some(entry.site);
+    }
+    let mut evicted = None;
+    if known.len() >= MAX_DYNAMIC_SITES {
+        let candidates = known
+            .iter()
+            .map(|(origin, entry)| (origin.clone(), entry.last_used, site_in_use(entry.site.key)));
+        let victim = least_recently_used(candidates)?;
+        evicted = known.remove(&victim).map(|entry| (entry.site, victim));
+    }
     let key = match url.port() {
         Some(port) => format!("{}:{}", host, port),
         None => host.to_string(),
     };
+    // shortcut: an evicted spec stays allocated because callers may still hold it (a few bytes
+    // per eviction); move to Arc<SiteSpec> if evictions ever become frequent.
     let key: &'static str = Box::leak(key.into_boxed_str());
     let origin_text: &'static str = Box::leak(origin.clone().into_boxed_str());
     let origins: &'static [&'static str] = Box::leak(vec![origin_text].into_boxed_slice());
@@ -133,7 +182,11 @@ pub fn site_for_origin(origin: &str) -> Option<&'static SiteSpec> {
         label: key,
         origins,
     }));
-    known.insert(origin, site);
+    known.insert(origin, DynamicSite { site, last_used: use_count });
+    drop(known);
+    if let Some((old, old_origin)) = evicted {
+        forget_site(old, &old_origin);
+    }
     Some(site)
 }
 
@@ -735,21 +788,26 @@ pub fn answered_url(origin: &str, asked_path: &str, reported: &str) -> String {
 /// Origins only: what makes the site answer stays in the webview's own storage.
 pub struct KnownOrigins {
     path: Option<PathBuf>,
-    origins: Mutex<BTreeSet<String>>,
+    /// Oldest first, so a full list gives up the site verified longest ago.
+    origins: Mutex<Vec<String>>,
 }
 
 impl KnownOrigins {
     /// Reads the list kept in `path`; a missing or unreadable file is an empty list.
     pub fn open(path: Option<PathBuf>) -> Self {
-        let origins = path
+        let stored = path
             .as_deref()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|origin| normalized_origin(&origin))
-            .take(MAX_DYNAMIC_SITES)
-            .collect();
+            .unwrap_or_default();
+        let mut origins: Vec<String> = Vec::new();
+        for origin in stored.iter().filter_map(|origin| normalized_origin(origin)) {
+            if !origins.contains(&origin) {
+                origins.push(origin);
+            }
+        }
+        // The newest ones are kept.
+        origins.drain(..origins.len().saturating_sub(MAX_DYNAMIC_SITES));
         Self {
             path,
             origins: Mutex::new(origins),
@@ -757,10 +815,10 @@ impl KnownOrigins {
     }
 
     pub fn contains(&self, origin: &str) -> bool {
-        self.origins.lock().unwrap_or_else(|p| p.into_inner()).contains(origin)
+        self.origins.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|known| known == origin)
     }
 
-    fn save(&self, origins: &BTreeSet<String>) {
+    fn save(&self, origins: &[String]) {
         let Some(path) = &self.path else {
             return;
         };
@@ -781,15 +839,21 @@ impl KnownOrigins {
             return;
         };
         let mut origins = self.origins.lock().unwrap_or_else(|p| p.into_inner());
-        if origins.len() < MAX_DYNAMIC_SITES && origins.insert(origin) {
-            self.save(&origins);
+        if origins.contains(&origin) {
+            return;
         }
+        if origins.len() >= MAX_DYNAMIC_SITES {
+            origins.remove(0);
+        }
+        origins.push(origin);
+        self.save(&origins);
     }
 
     /// Notes that the session of `origin` is refused again.
     pub fn remove(&self, origin: &str) {
         let mut origins = self.origins.lock().unwrap_or_else(|p| p.into_inner());
-        if origins.remove(origin) {
+        if let Some(at) = origins.iter().position(|known| known == origin) {
+            origins.remove(at);
             self.save(&origins);
         }
     }

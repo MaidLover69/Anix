@@ -1370,6 +1370,7 @@
     "other": "{count} प्लगइन"
   },
   "settings.pluginListFailed": "प्लगइन सूची लोड नहीं हो सकी: {error}",
+  "settings.pluginStale": "पिछले रीफ़्रेश में इसका नया संस्करण इंस्टॉल नहीं हो सका, इसलिए इंस्टॉल किया गया संस्करण रखा गया है।",
   "settings.pluginsInstalled": {
     "one": "{count} प्लगइन इंस्टॉल हुआ।",
     "other": "{count} प्लगइन इंस्टॉल हुए।"

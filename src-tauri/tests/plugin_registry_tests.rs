@@ -288,6 +288,9 @@ async fn a_repository_is_added_refreshed_and_removed() {
     // No `languages` in the manifest: its `lang` covers the sub, and the dub it has.
     assert_eq!((fixture.sub_languages.clone(), fixture.dub_languages.clone()), (vec!["en".to_string()], vec!["en".to_string()]));
     assert!(by_id("typed").sub_languages.is_empty() && by_id("typed").dub_languages.is_empty());
+    // Declaring nothing, it is asked for any language.
+    let typed = registry.providers().into_iter().find(|p| p.name() == "typed").unwrap();
+    assert_eq!(typed.languages(), None);
     // A plugin that cannot run is listed with its reason and does not disturb the others.
     let broken = by_id("broken");
     assert_eq!(broken.status, "error");
@@ -1103,4 +1106,200 @@ async fn inline_code_that_changes_under_the_same_version_is_installed() {
     assert_eq!(refreshed[0].name, "Anix extensions", "a list that stops naming itself keeps its name");
     assert_eq!(manager(&registry).provider_names(), ["drive-three"]);
     assert!(!dir.join("payloads/drive-one.js").exists());
+}
+
+const TINY_PLUGIN: &str = "class Provider { getSettings() { return { episodeServers: ['only'], supportsDub: false }; } }";
+
+fn tiny_entry(id: &str) -> serde_json::Value {
+    json!({ "id": id, "name": id, "version": "1.0.0", "type": "onlinestream-provider", "language": "javascript", "payload": TINY_PLUGIN })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_manifest_that_fails_to_download_keeps_the_installed_plugin_and_its_settings() {
+    // "ok", "down" (HTTP 503), "garbled" (not JSON) or "unlisted" (the index drops it).
+    let mode = Arc::new(Mutex::new("ok"));
+    let current = mode.clone();
+    let site = Site::start(move |request: &Req| {
+        let base = format!("http://{}", request.header("host"));
+        let mode = *current.lock().unwrap();
+        match request.route() {
+            "/repo/index.json" if mode == "unlisted" => Resp::json(json!([tiny_entry("keeper")])),
+            "/repo/index.json" => Resp::json(json!([
+                tiny_entry("keeper"),
+                { "id": "community", "name": "Community", "type": "onlinestream-provider", "manifestURI": format!("{}/community/manifest.json", base) }
+            ])),
+            "/community/manifest.json" if mode == "down" => Resp::status(503),
+            "/community/manifest.json" if mode == "garbled" => Resp::html("<html>maintenance</html>"),
+            "/community/manifest.json" => Resp::json(json!({
+                "id": "community", "name": "Community", "version": "1.0.0", "type": "onlinestream-provider",
+                "language": "javascript", "payloadURI": "community.js",
+                "userConfig": { "fields": [{ "name": "mirror", "default": "a" }] }
+            })),
+            "/community/community.js" => Resp::new(200, "text/javascript", TINY_PLUGIN),
+            _ => Resp::status(404),
+        }
+    })
+    .await;
+    let dir = scratch_dir("stale");
+    let registry = open(&dir);
+    let index = site.url("/repo/index.json");
+    registry.add_repo(&index).await.unwrap();
+    let community = || registry.list_plugins().into_iter().find(|p| p.id == "community");
+    assert!(community().unwrap().enabled && !community().unwrap().stale);
+
+    // The user's choices: switched off, with a setting of their own.
+    registry.set_enabled("community", false).await.unwrap();
+    let values = std::collections::HashMap::from([("mirror".to_string(), json!("b"))]);
+    registry.set_plugin_config("community", &values).await.unwrap();
+    let mirror = || registry.plugin_config("community").unwrap().fields[0].value.clone();
+
+    for failing in ["down", "garbled"] {
+        *mode.lock().unwrap() = failing;
+        let repos = registry.refresh_repos().await;
+        let plugin = community().unwrap_or_else(|| panic!("{}: the plugin was uninstalled", failing));
+        assert!(!plugin.enabled, "{}: the switch was reset", failing);
+        assert!(plugin.stale, "{}", failing);
+        assert_eq!(mirror(), "b", "{}: the settings were lost", failing);
+        assert!(dir.join("payloads/community.js").is_file(), "{}", failing);
+        assert!(repos[0].error.as_deref().unwrap_or_default().contains("community"), "{:?}", repos[0].error);
+        assert!(!registry.list_plugins().iter().find(|p| p.id == "keeper").unwrap().stale);
+    }
+
+    // Readable again: no longer stale, the user's choices still there.
+    *mode.lock().unwrap() = "ok";
+    let repos = registry.refresh_repos().await;
+    assert_eq!(repos[0].error, None);
+    let plugin = community().unwrap();
+    assert!(!plugin.enabled && !plugin.stale);
+    assert_eq!(mirror(), "b");
+
+    // Only an index that really no longer lists it removes it.
+    *mode.lock().unwrap() = "unlisted";
+    registry.refresh_repos().await;
+    assert!(community().is_none());
+    assert!(!dir.join("payloads/community.js").exists());
+}
+
+/// A repository server on plain OS threads whose `/repo/index.json` answers only once `slow` is
+/// off. Unlike `Site`, a held answer blocks no async worker, so the test's own clock keeps running.
+fn slow_repo_server(slow: Arc<std::sync::atomic::AtomicBool>) -> (String, Arc<AtomicUsize>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let index_hits = Arc::new(AtomicUsize::new(0));
+    let hits = index_hits.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let (slow, hits) = (slow.clone(), hits.clone());
+            std::thread::spawn(move || {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).map_or(false, |n| n == 1) {
+                    head.push(byte[0]);
+                }
+                let path = String::from_utf8_lossy(&head).split_whitespace().nth(1).unwrap_or_default().to_string();
+                let body = match path.as_str() {
+                    "/repo/index.json" => {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        let started = std::time::Instant::now();
+                        while slow.load(Ordering::SeqCst) && started.elapsed() < std::time::Duration::from_secs(15) {
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
+                        json!([tiny_entry("keeper")]).to_string()
+                    }
+                    "/other/index.json" => json!([tiny_entry("other")]).to_string(),
+                    _ => String::new(),
+                };
+                let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    status,
+                    body.len(),
+                    body
+                );
+            });
+        }
+    });
+    (base, index_hits)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_switch_or_repository_added_during_a_slow_refresh_is_applied_at_once_and_kept() {
+    let slow = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (base, index_hits) = slow_repo_server(slow.clone());
+    let dir = scratch_dir("slow-refresh");
+    let registry = open(&dir);
+    registry.add_repo(&format!("{}/repo/index.json", base)).await.unwrap();
+
+    slow.store(true, Ordering::SeqCst);
+    let asked = index_hits.load(Ordering::SeqCst);
+    let refreshing = tokio::spawn({
+        let registry = registry.clone();
+        async move { registry.refresh_repos().await }
+    });
+    // The refresh is now waiting on the slow site.
+    let waiting_since = std::time::Instant::now();
+    while index_hits.load(Ordering::SeqCst) == asked {
+        assert!(waiting_since.elapsed() < std::time::Duration::from_secs(5), "the refresh never asked the site");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let quick = std::time::Duration::from_secs(3);
+    let toggled = tokio::time::timeout(quick, registry.set_enabled("keeper", false)).await;
+    let added = tokio::time::timeout(quick, registry.add_repo(&format!("{}/other/index.json", base))).await;
+    assert!(!refreshing.is_finished(), "the slow site answered too early for this test");
+    slow.store(false, Ordering::SeqCst);
+    assert!(toggled.is_ok(), "the switch waited for the refresh");
+    toggled.unwrap().unwrap();
+    assert!(added.is_ok(), "adding a repository waited for the refresh");
+    added.unwrap().unwrap();
+
+    refreshing.await.unwrap();
+    let plugins = registry.list_plugins();
+    let keeper = plugins.iter().find(|p| p.id == "keeper").unwrap();
+    assert!(!keeper.enabled, "the refresh undid the user's switch");
+    assert!(plugins.iter().any(|p| p.id == "other"));
+    assert_eq!(registry.list_repos().len(), 2);
+    assert_eq!(manager(&registry).provider_names(), ["other"]);
+}
+
+/// Busy for about three seconds in `getSettings`, within that call's limit.
+const SLOW_START_PLUGIN: &str = "class Provider { getSettings() { const end = Date.now() + 3000; while (Date.now() < end) {} return { episodeServers: ['slow'], supportsDub: false }; } }";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_switch_flipped_while_plugins_start_at_launch_is_applied_at_once_and_kept() {
+    let site = Site::start(|request: &Req| match request.route() {
+        "/repo/index.json" => Resp::json(json!([
+            { "id": "slowpoke", "name": "slowpoke", "version": "1.0.0", "type": "onlinestream-provider", "language": "javascript", "payload": SLOW_START_PLUGIN },
+            tiny_entry("keeper"),
+            tiny_entry("other")
+        ])),
+        _ => Resp::status(404),
+    })
+    .await;
+    let dir = scratch_dir("slow-start");
+    {
+        open(&dir).add_repo(&site.url("/repo/index.json")).await.unwrap();
+    }
+
+    // The next launch starts every plugin, the slow one first.
+    let registry = open(&dir);
+    let starting = tokio::spawn({
+        let registry = registry.clone();
+        async move { registry.load_all().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let toggled = tokio::time::timeout(std::time::Duration::from_millis(1500), registry.set_enabled("keeper", false)).await;
+    assert!(!starting.is_finished(), "the slow plugin started too early for this test");
+    assert!(toggled.is_ok(), "the switch waited for every plugin to start");
+    toggled.unwrap().unwrap();
+
+    starting.await.unwrap();
+    let plugins = registry.list_plugins();
+    let by_id = |id: &str| plugins.iter().find(|p| p.id == id).unwrap().clone();
+    assert!(!by_id("keeper").enabled, "starting the plugins undid the switch");
+    assert_eq!(by_id("slowpoke").status, "ready");
+    assert_eq!(by_id("slowpoke").servers, ["slow"]);
+    assert_eq!(manager(&registry).provider_names(), ["slowpoke", "other"]);
 }

@@ -1314,6 +1314,7 @@
     "other": "{count} 个插件"
   },
   "settings.pluginListFailed": "无法加载插件列表：{error}",
+  "settings.pluginStale": "上次刷新时无法安装其最新版本，因此保留已安装的版本。",
   "settings.pluginsInstalled": {
     "other": "已安装 {count} 个插件。"
   },

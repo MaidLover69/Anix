@@ -1426,6 +1426,7 @@
     "other": "{count} estensioni"
   },
   "settings.pluginListFailed": "Impossibile caricare l'elenco delle estensioni: {error}",
+  "settings.pluginStale": "Non è stato possibile installare la versione più recente all’ultimo aggiornamento, quindi la versione installata viene mantenuta.",
   "settings.pluginsInstalled": {
     "one": "{count} estensione installata.",
     "many": "{count} estensioni installate.",

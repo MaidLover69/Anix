@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.3.2
+
+A stability release: no new features, only fixes for problems that could stop playback, lose data or leave the app stuck.
+
+### Video Player
+- Embedded mpv: Play, Pause and Space work again, the controls show the real state, and watch progress is saved. Subtitles no longer freeze playback while they download; only the subtitle you see is loaded at first, the others when you pick them.
+- Buffering shows a spinner instead of the pause screen, also after a seek. After an episode ends, Play or seeking starts it again.
+- A crash of the page inside the window no longer leaves a blank window: Anix reloads the same screen and says so in the Notification Centre. If the web player crashes in the AppImage, Anix switches to embedded mpv once and tells you. After three crashes in a minute it shows an error instead of looping.
+- Hiding the window to the tray pauses the video.
+
+### History, Lists and Trackers
+- An episode counts as watched in History and Continue watching only after 10 seconds of playback or 2 % of it, whichever comes first. Opening a finished episode again no longer marks it unfinished.
+- History lists every anime you watched, and its tab shows the real count (Home still shows the latest 20).
+- The AniList tab and its edit dialog have the Rewatching status.
+- Tracker updates are no longer dropped while AniList, MyAnimeList or Comick are down or slow; they wait and are sent later, and one stuck update no longer holds back the others.
+- Unmarking an episode removes it from Stats and the watch streak too. An episode number above the series' total no longer marks it completed.
+- Anime first opened from another catalogue while AniList was down keep their history, list status, bells and local files once the AniList entry is known.
+
+### Downloads
+- The download that is running can be removed: it stops, and its unfinished files are deleted (never a finished file).
+- Try again resumes after a network failure instead of starting over, and never starts the same download twice.
+- More video formats are recognised in downloads and local folders (m4v, mov, ts, flv).
+- External players and file openers no longer leave finished processes behind.
+
+### Extensions
+- An extension is no longer uninstalled when one refresh cannot download it: the installed version is kept with its switch and settings, and Settings › Plugins says it is out of date.
+- Extensions that do not declare a language are also asked in strict language mode, after the ones that match your languages.
+- Turning an extension on or off, or adding a repository, applies at once, also right after start-up.
+- Slow extensions are given the time their own limits allow; a site that keeps timing out is skipped for a while.
+- The Verify button keeps working after many sites: the oldest saved session gives way.
+- Security: links an extension returns can no longer reach your local network or this computer (except your own proxy and Anix's local files).
+
+### Catalogue and Errors
+- A title that does not exist says so, instead of "Offline". Offline is shown only when every catalogue is unreachable, and a saved copy is still shown when there is one.
+- Scores are labelled with the site they come from.
+- A link to an episode that does not exist shows a clear message with a link to the anime's page. Links, alerts and notifications open anime from every catalogue.
+- Error messages, play failures, the failed-download notice, file-picker titles and the database error at start-up are translated in all 12 languages (by AI, like the rest of the interface).
+
+### System Integration
+- "Restart now" no longer hides Anix in the tray after an automatic start, and no longer reopens an old link.
+- Clicking an alert sent while Anix was closed opens that anime.
+- With no bells set, the background checker no longer holds up reminders.
+- The AppImage registers `anix://` links once, so "Copy link" links open Anix.
+- An update that is interrupted can no longer leave a broken AppImage.
+
 ## 1.3.1
 
 ### Languages

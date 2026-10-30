@@ -250,25 +250,33 @@ fn remove_stale_subtitle_files(dir: &Path) {
 
 /// Downloads the stream's subtitles to temporary files, in the given order. A subtitle
 /// that cannot be fetched or is not a subtitle file is left out.
-async fn fetch_subtitle_files(subtitles: &[ExternalSubtitle], referer: Option<&str>) -> Vec<std::path::PathBuf> {
+pub async fn fetch_subtitle_files(subtitles: &[ExternalSubtitle], referer: Option<&str>) -> Vec<std::path::PathBuf> {
     let dir = crate::commands::playlists::playlist_dir();
     remove_stale_subtitle_files(&dir);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    let client = crate::clients::http::download_client();
+    // Subtitle links come from extensions: public hosts only.
+    let Ok(client) = crate::clients::net_guard::public_download_client() else {
+        return Vec::new();
+    };
 
     let mut tasks = tokio::task::JoinSet::new();
     for (index, sub) in subtitles.iter().take(MAX_EXTERNAL_SUBTITLES).enumerate() {
         let (client, dir, sub, referer) = (client.clone(), dir.clone(), sub.clone(), referer.map(str::to_string));
         tasks.spawn(async move {
-            let url = validate_media_url(&sub.url).ok()?;
-            let mut request = client.get(&url).timeout(std::time::Duration::from_secs(20));
-            if let Some(r) = referer {
-                request = request.header("Referer", r);
-            }
-            let body = request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
+            let body = if let Some(local) = crate::stream_proxy::local_subtitle_path(&sub.url) {
+                tokio::fs::read(local).await.ok()?.into()
+            } else {
+                let url = validate_media_url(&sub.url).ok()?;
+                crate::clients::net_guard::check_public_url(&url::Url::parse(&url).ok()?).ok()?;
+                let mut request = client.get(&url).timeout(std::time::Duration::from_secs(20));
+                if let Some(r) = referer {
+                    request = request.header("Referer", r);
+                }
+                request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?
+            };
             let format = crate::downloads::detect_subtitle_format(&body)?;
             let path = dir.join(subtitle_file_name(nonce, index, sub.language.as_deref(), format.extension()));
             tokio::fs::write(&path, &body).await.ok()?;

@@ -13,6 +13,7 @@
 //! - episode server: `skip: { introStart, introEnd, outroStart, outroEnd }`, in seconds; a
 //!   window counts when both of its ends are given.
 
+use crate::clients::net_guard;
 use crate::error::AppError;
 use crate::models::{
     AnimeQuery, Category, EpisodeItem, ProviderData, SkipTimes, SourcesResult, StreamItem, SubtitleItem,
@@ -241,7 +242,12 @@ struct ServerSources {
     skip: Option<SkipTimes>,
 }
 
-fn parse_server(value: &Value, server: &str, category: &Category) -> Result<ServerSources, String> {
+/// `allow_private` is the runtime's test allowance; without it, stream and subtitle links on a
+/// private or loopback address are dropped here, since external players and downloads use them
+/// as given.
+// shortcut: only the URL's host as written is checked, so a host name that resolves to a
+// private address still reaches ffmpeg/mpv/VLC; upgrade if those learn to use PublicResolver.
+fn parse_server(value: &Value, server: &str, category: &Category, allow_private: bool) -> Result<ServerSources, String> {
     if !value.is_object() {
         return Err(format!("findEpisodeServer returned no result for {}", server));
     }
@@ -266,6 +272,8 @@ fn parse_server(value: &Value, server: &str, category: &Category) -> Result<Serv
     };
     let (referer, origin) = (header("referer"), header("origin"));
 
+    let private = |url: &str| !allow_private && reqwest::Url::parse(url).map_or(true, |u| net_guard::private_target(&u));
+    let mut refused = false;
     let mut streams: Vec<StreamItem> = Vec::new();
     let mut subtitles: HashMap<String, Vec<SubtitleItem>> = HashMap::new();
     for source in value.get("videoSources").and_then(Value::as_array).into_iter().flatten() {
@@ -274,6 +282,10 @@ fn parse_server(value: &Value, server: &str, category: &Category) -> Result<Serv
         };
         let parsed = reqwest::Url::parse(&url);
         if !parsed.map_or(false, |u| matches!(u.scheme(), "http" | "https")) {
+            continue;
+        }
+        if private(&url) {
+            refused = true;
             continue;
         }
         if streams.iter().any(|known| known.url == url) {
@@ -309,7 +321,7 @@ fn parse_server(value: &Value, server: &str, category: &Category) -> Result<Serv
             let Some(track_url) = track.get("url").and_then(text_of).map(|u| fix_url(&u)) else {
                 continue;
             };
-            if tracks.iter().any(|known| known.url == track_url) {
+            if private(&track_url) || tracks.iter().any(|known| known.url == track_url) {
                 continue;
             }
             tracks.push(SubtitleItem {
@@ -336,6 +348,9 @@ fn parse_server(value: &Value, server: &str, category: &Category) -> Result<Serv
             headers: (!headers.is_empty()).then(|| headers.clone()),
             is_active: streams.is_empty(),
         });
+    }
+    if streams.is_empty() && refused {
+        return Err(format!("private network access denied: {} returned only local or private stream links", server));
     }
     if streams.is_empty() {
         return Err(format!("{} returned no video", server));
@@ -528,7 +543,7 @@ async fn resolve_server(
         .call_allowing_session("findEpisodeServer", &args, SERVER_TIMEOUT, access)
         .await
     {
-        Ok(value) => parse_server(&value, &server, &category).map_err(failed),
+        Ok(value) => parse_server(&value, &server, &category, runtime.allows_private_network()).map_err(failed),
         Err(PluginError::Timeout) if !waited().is_zero() => Err(failed(
             "timed out while the in-app browser was loading the site".to_string(),
         )),
@@ -557,6 +572,10 @@ impl AnimeProvider for PluginProvider {
 
     fn may_use_session(&self) -> bool {
         true
+    }
+
+    fn allows_private_network(&self) -> bool {
+        self.runtime.allows_private_network()
     }
 
     fn verifies_streams(&self) -> bool {
@@ -646,6 +665,7 @@ impl AnimeProvider for PluginProvider {
             .ok_or_else(|| self.error("invalid episode id"))?;
         let servers = servers_for(&self.settings.episode_servers, &category);
 
+        let allow_private = self.runtime.allows_private_network();
         let (events_tx, mut events) = mpsc::unbounded_channel::<ServerEvent>();
         let permits = Arc::new(Semaphore::new(SERVER_CONCURRENCY));
         let mut tasks = JoinSet::new();
@@ -660,7 +680,7 @@ impl AnimeProvider for PluginProvider {
                 let streams = resolved.as_ref().ok().map(|sources| sources.streams.clone());
                 let _ = events_tx.send(ServerEvent::Resolved(index, resolved));
                 if let Some(streams) = streams {
-                    let _ = events_tx.send(ServerEvent::Verified(index, verify_streams_in_order(streams).await));
+                    let _ = events_tx.send(ServerEvent::Verified(index, verify_streams_in_order(streams, allow_private).await));
                 }
             });
         }
@@ -748,5 +768,41 @@ impl AnimeProvider for PluginProvider {
             provider: Some(self.id.to_string()),
             language: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_stream_and_subtitle_links_are_dropped_without_the_allowance() {
+        let answer = json!({
+            "headers": {},
+            "videoSources": [
+                { "url": "http://127.0.0.1:11434/api/x.m3u8", "type": "m3u8" },
+                { "url": "https://192.168.1.1/cgi-bin/x.mp4", "type": "mp4" },
+                { "url": "http://localhost/x.mp4", "type": "mp4" },
+                { "url": "https://cdn.example.org/a.m3u8", "type": "m3u8", "subtitles": [
+                    { "url": "http://192.168.1.1/x.srt", "language": "English" },
+                    { "url": "http://[::1]/x.vtt", "language": "English" },
+                    { "url": "https://cdn.example.org/en.vtt", "language": "English" }
+                ] }
+            ]
+        });
+        let parsed = parse_server(&answer, "s", &Category::Sub, false).unwrap();
+        let urls: Vec<&str> = parsed.streams.iter().map(|s| s.url.as_str()).collect();
+        assert_eq!(urls, ["https://cdn.example.org/a.m3u8"]);
+        let subs: Vec<&str> = parsed.subtitles.values().flatten().map(|s| s.url.as_str()).collect();
+        assert_eq!(subs, ["https://cdn.example.org/en.vtt"]);
+
+        // With the test allowance (plugin_run --allow-local, loopback test sites) all are kept.
+        let allowed = parse_server(&answer, "s", &Category::Sub, true).unwrap();
+        assert_eq!(allowed.streams.len(), 4);
+        assert_eq!(allowed.subtitles.values().flatten().count(), 3);
+
+        let only_private = json!({ "videoSources": [{ "url": "http://10.0.0.2/x.mp4" }] });
+        let reason = parse_server(&only_private, "s", &Category::Sub, false).unwrap_err();
+        assert!(reason.contains("private network access denied"), "{}", reason);
     }
 }

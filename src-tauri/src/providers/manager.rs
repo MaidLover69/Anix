@@ -1,6 +1,7 @@
 use crate::cache::L1Cache;
 use crate::clients::anilist::MediaHint;
 use crate::clients::http::{http_client, no_redirect_client};
+use crate::clients::net_guard::{check_public_url, public_http_client, public_no_redirect_client};
 use crate::error::AppError;
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
@@ -185,7 +186,18 @@ async fn media_refusal(response: &mut reqwest::Response) -> Option<String> {
         .then(|| format!("{} answered with a web page instead of a video", host))
 }
 
-async fn fetch_playlist(client: &Client, url: &Url, stream: &StreamItem) -> Result<String, String> {
+/// Refuses a URL with a private host unless the provider was given the test allowance. A
+/// literal IP never reaches the resolver filter, so every URL is checked before it is sent.
+fn guard(url: &Url, allow_private: bool) -> Result<(), String> {
+    if allow_private {
+        Ok(())
+    } else {
+        check_public_url(url)
+    }
+}
+
+async fn fetch_playlist(client: &Client, url: &Url, stream: &StreamItem, allow_private: bool) -> Result<String, String> {
+    guard(url, allow_private)?;
     let request = apply_stream_headers(client.get(url.clone()), stream).timeout(VERIFY_REQUEST_TIMEOUT);
     let mut response = request.send().await.map_err(transport_reason)?;
     let host = host_of(&response);
@@ -224,20 +236,21 @@ fn head_of_text(text: &str) -> &str {
     &text[..end]
 }
 
-async fn check_hls(stream: &StreamItem, url: Url) -> Result<(), String> {
-    let client = http_client().map_err(|e| e.reason())?;
+async fn check_hls(stream: &StreamItem, url: Url, allow_private: bool) -> Result<(), String> {
+    let client = if allow_private { http_client() } else { public_http_client() }.map_err(|e| e.reason())?;
 
-    let playlist = fetch_playlist(&client, &url, stream).await?;
+    let playlist = fetch_playlist(&client, &url, stream, allow_private).await?;
     let first = first_playlist_uri(&playlist).ok_or("empty playlist")?;
     let mut target = url.join(first).map_err(|_| "playlist entry is not a URL")?;
 
     let is_master = playlist.contains("#EXT-X-STREAM-INF") || target.path().ends_with(".m3u8");
     if is_master {
-        let media_playlist = fetch_playlist(&client, &target, stream).await?;
+        let media_playlist = fetch_playlist(&client, &target, stream, allow_private).await?;
         let segment = first_playlist_uri(&media_playlist).ok_or("empty media playlist")?;
         target = target.join(segment).map_err(|_| "segment entry is not a URL")?;
     }
 
+    guard(&target, allow_private)?;
     let request = apply_stream_headers(client.get(target).header(RANGE, "bytes=0-2047"), stream)
         .timeout(VERIFY_REQUEST_TIMEOUT);
     let mut response = request.send().await.map_err(transport_reason)?;
@@ -247,11 +260,13 @@ async fn check_hls(stream: &StreamItem, url: Url) -> Result<(), String> {
     }
 }
 
-async fn check_file(stream: &StreamItem, url: Url) -> Result<(), String> {
+async fn check_file(stream: &StreamItem, url: Url, allow_private: bool) -> Result<(), String> {
     // Redirects are followed by hand so the stream's own headers go out on every hop.
-    let client = no_redirect_client().map_err(|e| e.reason())?;
+    let client = if allow_private { no_redirect_client() } else { public_no_redirect_client() }
+        .map_err(|e| e.reason())?;
     let mut current = url;
     for _ in 0..6 {
+        guard(&current, allow_private)?;
         let request = apply_stream_headers(client.get(current.clone()).header(RANGE, "bytes=0-2047"), stream)
             .timeout(VERIFY_REQUEST_TIMEOUT);
         let mut response = request.send().await.map_err(transport_reason)?;
@@ -273,7 +288,7 @@ async fn check_file(stream: &StreamItem, url: Url) -> Result<(), String> {
     Err("too many redirects".to_string())
 }
 
-async fn check_stream(stream: &StreamItem) -> Result<(), String> {
+async fn check_stream(stream: &StreamItem, allow_private: bool) -> Result<(), String> {
     let url = Url::parse(&stream.url).map_err(|_| "invalid stream URL".to_string())?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err("unsupported URL scheme".to_string());
@@ -285,9 +300,9 @@ async fn check_stream(stream: &StreamItem) -> Result<(), String> {
         let mut pauses = RESET_RETRY_PAUSES.iter();
         loop {
             let result = if is_file {
-                check_file(stream, url.clone()).await
+                check_file(stream, url.clone(), allow_private).await
             } else {
-                check_hls(stream, url.clone()).await
+                check_hls(stream, url.clone(), allow_private).await
             };
             match (&result, pauses.next()) {
                 (Err(reason), Some(pause)) if is_connection_reset(reason) => tokio::time::sleep(*pause).await,
@@ -302,15 +317,17 @@ async fn check_stream(stream: &StreamItem) -> Result<(), String> {
 }
 
 /// True when the stream's playlist and first segment (or the file's first bytes) can be fetched
-/// with the headers the stream asks for.
-pub async fn verify_stream_segment(stream: &StreamItem) -> bool {
-    check_stream(stream).await.is_ok()
+/// with the headers the stream asks for. Streams come from extensions, so private and loopback
+/// hosts are refused unless `allow_private` is set (tests and the dev runner only).
+pub async fn verify_stream_segment(stream: &StreamItem, allow_private: bool) -> bool {
+    check_stream(stream, allow_private).await.is_ok()
 }
 
 /// Checks the streams concurrently and returns as soon as one is confirmed playable: that
 /// stream first, then the others in their original order as unverified fallbacks. When none
-/// passes, the error is the reason the first-choice stream failed.
-pub async fn verify_streams(streams: Vec<StreamItem>) -> Result<Vec<StreamItem>, String> {
+/// passes, the error is the reason the first-choice stream failed. `allow_private` as in
+/// `verify_stream_segment`.
+pub async fn verify_streams(streams: Vec<StreamItem>, allow_private: bool) -> Result<Vec<StreamItem>, String> {
     if streams.is_empty() {
         return Err("no streams".to_string());
     }
@@ -323,7 +340,7 @@ pub async fn verify_streams(streams: Vec<StreamItem>) -> Result<Vec<StreamItem>,
     let mut checks = JoinSet::new();
     for &idx in &order {
         let shared = shared.clone();
-        checks.spawn(async move { (idx, check_stream(&shared[idx]).await) });
+        checks.spawn(async move { (idx, check_stream(&shared[idx], allow_private).await) });
     }
 
     let mut winner: Option<usize> = None;
@@ -366,7 +383,7 @@ pub async fn verify_streams(streams: Vec<StreamItem>) -> Result<Vec<StreamItem>,
 
 /// Like `verify_streams`, but the caller's order is a preference: all streams are checked at
 /// once and the earliest one that passes is put first, even when a later one answered sooner.
-pub async fn verify_streams_in_order(streams: Vec<StreamItem>) -> Result<Vec<StreamItem>, String> {
+pub async fn verify_streams_in_order(streams: Vec<StreamItem>, allow_private: bool) -> Result<Vec<StreamItem>, String> {
     if streams.is_empty() {
         return Err("no streams".to_string());
     }
@@ -374,7 +391,7 @@ pub async fn verify_streams_in_order(streams: Vec<StreamItem>) -> Result<Vec<Str
     let checks: Vec<AbortOnDrop<Result<(), String>>> = (0..shared.len().min(MAX_VERIFIED_STREAMS))
         .map(|idx| {
             let shared = shared.clone();
-            AbortOnDrop(tokio::spawn(async move { check_stream(&shared[idx]).await }))
+            AbortOnDrop(tokio::spawn(async move { check_stream(&shared[idx], allow_private).await }))
         })
         .collect();
 
@@ -849,7 +866,7 @@ impl Inner {
         }
 
         if !provider.verifies_streams() {
-            sources.streams = verify_streams(sources.streams)
+            sources.streams = verify_streams(sources.streams, provider.allows_private_network())
                 .await
                 .map_err(|reason| AppError::provider(name, format!("stream check failed: {}", reason)))?;
         }

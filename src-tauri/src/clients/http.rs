@@ -388,7 +388,7 @@ impl Resolve for DohResolver {
     }
 }
 
-fn base_builder() -> ClientBuilder {
+pub(crate) fn base_builder() -> ClientBuilder {
     Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
@@ -397,7 +397,7 @@ fn base_builder() -> ClientBuilder {
         .dns_resolver(Arc::new(DohResolver))
 }
 
-fn build_error(e: reqwest::Error) -> AppError {
+pub(crate) fn build_error(e: reqwest::Error) -> AppError {
     AppError::Other(format!("Could not initialise the HTTP client: {}", e))
 }
 

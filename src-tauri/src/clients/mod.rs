@@ -8,6 +8,7 @@ pub mod imdb;
 pub mod jikan;
 pub mod konoha;
 pub mod mal;
+pub mod net_guard;
 
 pub use anilist::*;
 pub use animethemes::*;

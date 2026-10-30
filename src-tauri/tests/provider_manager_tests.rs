@@ -183,6 +183,10 @@ impl MockProvider {
 
 #[async_trait]
 impl AnimeProvider for MockProvider {
+    fn allows_private_network(&self) -> bool {
+        true // its test streams are served on loopback
+    }
+
     fn name(&self) -> &'static str {
         self.name
     }
@@ -314,7 +318,7 @@ async fn hls_with_root_relative_and_query_urls_verifies() {
     ])
     .await;
 
-    assert!(verify_stream_segment(&hls(host.url("/a/b/master.m3u8?token=x/y"))).await);
+    assert!(verify_stream_segment(&hls(host.url("/a/b/master.m3u8?token=x/y")), true).await);
     assert_eq!(
         host.requests(),
         vec!["/a/b/master.m3u8?token=x/y", "/proxy/variant.m3u8?id=7", "/proxy/seg0.ts"]
@@ -331,11 +335,11 @@ async fn media_playlist_without_master_verifies_and_dead_segments_fail() {
     ])
     .await;
 
-    assert!(verify_stream_segment(&hls(host.url("/live/index.m3u8"))).await);
-    assert!(!verify_stream_segment(&hls(host.url("/dead/index.m3u8"))).await, "segment is a 404");
-    assert!(!verify_stream_segment(&hls(host.url("/embed/page"))).await, "HTML is not a playlist");
-    assert!(!verify_stream_segment(&hls(host.url("/missing.m3u8"))).await);
-    assert!(!verify_stream_segment(&hls("ftp://example/x.m3u8".to_string())).await);
+    assert!(verify_stream_segment(&hls(host.url("/live/index.m3u8")), true).await);
+    assert!(!verify_stream_segment(&hls(host.url("/dead/index.m3u8")), true).await, "segment is a 404");
+    assert!(!verify_stream_segment(&hls(host.url("/embed/page")), true).await, "HTML is not a playlist");
+    assert!(!verify_stream_segment(&hls(host.url("/missing.m3u8")), true).await);
+    assert!(!verify_stream_segment(&hls("ftp://example/x.m3u8".to_string()), true).await);
 }
 
 #[tokio::test]
@@ -360,7 +364,7 @@ async fn mp4_check_follows_relative_redirects_with_one_referer() {
     stream.headers = Some(custom);
     stream.origin = Some("https://origin.example".to_string());
 
-    assert!(verify_stream_segment(&stream).await);
+    assert!(verify_stream_segment(&stream, true).await);
     assert_eq!(host.requests(), vec!["/play/1/video.mp4", "/files/real.mp4", "/files/final.mp4"]);
 
     let headers = host.headers_for("/files/final.mp4");
@@ -377,12 +381,12 @@ async fn verification_puts_the_working_stream_first_and_keeps_the_rest() {
     let working = hls(host.url("/hls/master.m3u8"));
     let other = hls(host.url("/also-gone.m3u8"));
 
-    let ordered = verify_streams(vec![broken.clone(), working.clone(), other.clone()]).await.unwrap();
+    let ordered = verify_streams(vec![broken.clone(), working.clone(), other.clone()], true).await.unwrap();
     assert_eq!(ordered, vec![working, broken.clone(), other.clone()]);
 
-    let reason = verify_streams(vec![broken, other]).await.unwrap_err();
+    let reason = verify_streams(vec![broken, other], true).await.unwrap_err();
     assert!(reason.starts_with("HTTP 404"), "unexpected reason: {}", reason);
-    assert_eq!(verify_streams(Vec::new()).await.unwrap_err(), "no streams");
+    assert_eq!(verify_streams(Vec::new(), true).await.unwrap_err(), "no streams");
 }
 
 fn file(url: String) -> StreamItem {
@@ -414,11 +418,11 @@ async fn a_stream_host_that_answers_with_its_anti_bot_page_is_named_as_such() {
         hls(host.url("/half/index.m3u8")),
         file(host.url("/soft/video.mp4")),
     ] {
-        let reason = verify_streams(vec![stream.clone()]).await.unwrap_err();
+        let reason = verify_streams(vec![stream.clone()], true).await.unwrap_err();
         assert_eq!(reason, "127.0.0.1 answered with its anti-bot check", "{}", stream.url);
     }
     // An ordinary refusal keeps its status.
-    let reason = verify_streams(vec![file(host.url("/nowhere.mp4"))]).await.unwrap_err();
+    let reason = verify_streams(vec![file(host.url("/nowhere.mp4"))], true).await.unwrap_err();
     assert_eq!(reason, "HTTP 404 from 127.0.0.1");
 }
 
@@ -447,17 +451,17 @@ async fn a_web_page_is_not_accepted_as_a_video() {
     .await;
 
     for path in ["/page/video.mp4", "/mislabelled/video.mp4"] {
-        let reason = verify_streams(vec![file(host.url(path))]).await.unwrap_err();
+        let reason = verify_streams(vec![file(host.url(path))], true).await.unwrap_err();
         assert_eq!(reason, "127.0.0.1 answered with a web page instead of a video", "{}", path);
     }
-    let reason = verify_streams(vec![hls(host.url("/page/index.m3u8"))]).await.unwrap_err();
+    let reason = verify_streams(vec![hls(host.url("/page/index.m3u8"))], true).await.unwrap_err();
     assert_eq!(reason, "127.0.0.1 answered with a web page instead of a video");
-    let reason = verify_streams(vec![hls(host.url("/embed.m3u8"))]).await.unwrap_err();
+    let reason = verify_streams(vec![hls(host.url("/embed.m3u8"))], true).await.unwrap_err();
     assert_eq!(reason, "127.0.0.1 answered with a web page instead of a playlist");
 
-    assert!(verify_stream_segment(&file(host.url("/real/video.mp4"))).await);
+    assert!(verify_stream_segment(&file(host.url("/real/video.mp4")), true).await);
     // Media sent under a text type is still media.
-    assert!(verify_stream_segment(&hls(host.url("/odd/index.m3u8"))).await);
+    assert!(verify_stream_segment(&hls(host.url("/odd/index.m3u8")), true).await);
 }
 
 // ---------------------------------------------------------------- racing and reporting
@@ -669,6 +673,10 @@ impl GuardedProvider {
 
 #[async_trait]
 impl AnimeProvider for GuardedProvider {
+    fn allows_private_network(&self) -> bool {
+        true // its test streams are served on loopback
+    }
+
     fn name(&self) -> &'static str {
         "guarded"
     }

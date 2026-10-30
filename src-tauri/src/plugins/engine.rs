@@ -1052,6 +1052,11 @@ impl PluginRuntime {
         &self.spec.id
     }
 
+    /// True when this plugin may reach loopback and private addresses (tests, the dev runner).
+    pub fn allows_private_network(&self) -> bool {
+        self.spec.allow_private_network
+    }
+
     pub fn engine(&self) -> Result<Arc<PluginEngine>, String> {
         let mut guard = self.engine.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(engine) = guard.as_ref() {

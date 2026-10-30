@@ -134,7 +134,7 @@ Notes:
 
 ### Stream proxy (`stream_proxy.rs`)
 - Binds `127.0.0.1` on a random port. Every path starts with a 128-bit random token, and a wrong token gets 403. It is never an open proxy.
-- Only `GET`/`HEAD`/`OPTIONS`. Remote targets must be absolute `http(s)` URLs with a host.
+- Only `GET`/`HEAD`/`OPTIONS`. Remote targets must be absolute `http(s)` URLs with a host, on a public address (`clients/net_guard.rs`, see Extensions › Network). Tests with loopback upstreams use `start_allowing_private_upstream()`.
 - Local files are served **only** by a registered 32-hex key (`local_media::playable_path`), never by path.
 - The embedded player loads only stream-proxy URLs. Keep these limits when you add endpoints, and add a test in `stream_proxy_tests.rs`.
 
@@ -172,7 +172,8 @@ Notes:
 - Manifest fields: `id` (`[A-Za-z0-9_-]`, ≤ 64), `name`, `version`, `author`, `description`, `type`, `language` (`javascript` or `typescript`, transpiled with oxc), `lang`, optional `languages {sub?, dub?}` (ISO 639-1), `icon` (`https://` or `data:image/`), `payload` or `payloadURI`, `userConfig`, `changelog`.
 - Repositories: an https JSON list of manifests, `{name, plugins}`, or one manifest. Limits: 2 MB each for index, manifest and payload, and at most 200 plugins. `file://` repos are allowed only with `ANIX_DEV_PLUGIN_REPOS=1`.
 - **Sandbox** (`plugins/engine.rs`): one QuickJS runtime per plugin on its own thread, with memory/stack limits and an interrupt. No module loader, file system or process access. Load ≤ 10 s, timers ≤ 60 s, `$sleep` ≤ 2 s.
-- **Network** (`plugins/net.rs`): through the shared clients (DoH). Timeout 15 s by default, 30 s max. Responses ≤ 16 MB, requests ≤ 4 MB. **Private and loopback targets are denied** by host name and by resolved address. Do not add a way around that, except `plugin_run --allow-local` for local tests.
+- **Network** (`plugins/net.rs`): through the shared clients (DoH). Timeout 15 s by default, 30 s max. Responses ≤ 16 MB, requests ≤ 4 MB. **Private and loopback targets are denied** (`clients/net_guard.rs`): by the URL's host, by a resolver that drops private DNS answers before connecting, and on every redirect hop. The same guard covers the stream and subtitle links extensions return (stream checks in `providers/manager.rs`, the stream proxy's upstream, subtitles fetched for external players). `plugins/provider.rs` also drops stream and subtitle links whose host is written as a private address or `localhost`, so they never reach downloads or external players. Do not add a way around that, except `plugin_run --allow-local` and the test allowances (`allow_private_network`, `AnimeProvider::allows_private_network`).
+  - Known limits: requests made through the in-app browser session (`self.session.fetch` in `net.rs`) are checked only by the URL's host before sending; WebKit resolves names and follows redirects itself. ffmpeg, mpv and VLC resolve stream host names themselves, so a host name that resolves to a private address is not caught for downloads and external players. A proxy the user set in `HTTP(S)_PROXY`/`ALL_PROXY` is resolved without the filter (`net_guard::proxy_hosts`), so a local proxy given by name keeps working.
 - Globals live in `plugins/prelude.js` (`fetch`, `LoadDoc`, `CryptoJS`, `$store`, `$anix`, …). A new global needs a test in `plugin_engine_tests.rs`.
 - Try an extension in the real runtime:
   ```sh

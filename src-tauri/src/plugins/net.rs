@@ -3,6 +3,9 @@
 //! second attempt when a site answers with its anti-bot page.
 
 use crate::clients::http::{http_client, no_redirect_client};
+use crate::clients::net_guard::{
+    is_private_address, private_target, public_http_client, public_no_redirect_client,
+};
 use crate::error::AppError;
 use crate::providers::common::{
     declared_charset, note_plain_blocked, path_and_query, plain_blocked_recently, session_headers,
@@ -17,7 +20,6 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, LOCATION};
 use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -167,42 +169,6 @@ fn status_text(status: u16) -> String {
     }
 }
 
-fn is_private_address(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
-        }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_private_address(IpAddr::V4(v4)),
-            None => {
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (v6.segments()[0] & 0xfe00) == 0xfc00
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-            }
-        },
-    }
-}
-
-fn private_target(url: &Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(name)) => {
-            let name = name.trim_end_matches('.').to_ascii_lowercase();
-            name == "localhost" || name.ends_with(".localhost")
-        }
-        Some(url::Host::Ipv4(ip)) => is_private_address(IpAddr::V4(ip)),
-        Some(url::Host::Ipv6(ip)) => is_private_address(IpAddr::V6(ip)),
-        None => true,
-    }
-}
-
 impl NetContext {
     pub fn new(plugin_id: &str, session: Arc<dyn SiteSession>, allow_private: bool) -> Self {
         Self {
@@ -336,10 +302,13 @@ impl NetContext {
         redirect: &str,
         timeout: Duration,
     ) -> Result<WireResponse, String> {
-        let client = if redirect == "follow" {
-            http_client()
-        } else {
-            no_redirect_client()
+        // The public clients refuse private addresses before connecting: in DNS answers and on
+        // every redirect hop.
+        let client = match (redirect == "follow", self.allow_private) {
+            (true, true) => http_client(),
+            (false, true) => no_redirect_client(),
+            (true, false) => public_http_client(),
+            (false, false) => public_no_redirect_client(),
         }
         .map_err(|e| e.reason())?;
 
@@ -381,6 +350,7 @@ impl NetContext {
             error.reason()
         })?;
 
+        // Kept as a second line behind the resolver filter.
         if !self.allow_private {
             if let Some(remote) = response.remote_addr() {
                 if is_private_address(remote.ip()) {

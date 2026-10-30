@@ -269,6 +269,18 @@ async fn fetch_refuses_other_schemes_and_private_addresses() {
         let answer = run(&strict, "refused", json!(url)).await.unwrap();
         assert!(answer.as_str().unwrap().contains("private network access denied"), "{}: {}", url, answer);
     }
+    // A name that resolves to loopback (`localhost4` in /etc/hosts) is refused before the
+    // connection is made, so the site never sees the request.
+    let hosts = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    let alias = hosts.lines().find_map(|line| {
+        let mut fields = line.split('#').next()?.split_whitespace();
+        (fields.next()? == "127.0.0.1").then(|| fields.find(|n| !n.contains('.') && *n != "localhost"))?
+    });
+    if let Some(alias) = alias {
+        let url = format!("http://{}:{}/echo", alias, site.addr.port());
+        let answer = run(&strict, "refused", json!(url)).await.unwrap();
+        assert!(answer.as_str().unwrap().contains("private network access denied"), "{}: {}", url, answer);
+    }
     assert_eq!(site.count("/echo"), 0);
 }
 

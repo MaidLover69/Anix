@@ -26,6 +26,13 @@ const MAX_SUBTITLE_BYTES: usize = 16 * 1024 * 1024;
 
 static BASE_URL: OnceCell<String> = OnceCell::new();
 
+/// What the proxy may fetch upstream. Upstream URLs come from extensions, so private and
+/// loopback hosts are refused unless `allow_private` is set (tests only).
+#[derive(Clone, Copy)]
+struct Upstream {
+    allow_private: bool,
+}
+
 static URI_ATTRIBUTE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"URI="([^"]*)""#).expect("Failed to compile URI attribute regex"));
 
@@ -375,8 +382,16 @@ async fn fetch_upstream(
     params: &UpstreamParams,
     range: Option<&str>,
     head: bool,
+    upstream: Upstream,
 ) -> Result<reqwest::Response, String> {
-    let client = crate::clients::http::download_client();
+    let client = if upstream.allow_private {
+        crate::clients::http::download_client()
+    } else {
+        // A literal IP never reaches the resolver filter, so the URL is checked first; host
+        // names and redirect hops are checked by the public client.
+        crate::clients::net_guard::check_public_url(target).map_err(|e| format!("Upstream request refused: {}", e))?;
+        crate::clients::net_guard::public_download_client().map_err(|e| e.reason())?
+    };
     let mut request = if head {
         client.head(target.clone())
     } else {
@@ -411,7 +426,7 @@ fn request_header(request: &Request, name: &'static str) -> Option<String> {
         .map(|h| h.value.as_str().to_string())
 }
 
-fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_base: &str) {
+fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_base: &str, upstream: Upstream) {
     let head = *request.method() == Method::Head;
     let range = request_header(&request, "Range");
 
@@ -420,6 +435,7 @@ fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_bas
         &params,
         range.as_deref(),
         head,
+        upstream,
     ));
     let response = match upstream {
         Ok(response) => response,
@@ -534,9 +550,9 @@ fn handle_proxy(request: Request, target: Url, params: UpstreamParams, proxy_bas
     let _ = request.respond(sized(Response::new(StatusCode(status), headers, reader, length, None)));
 }
 
-fn handle_subtitle(request: Request, target: Url, params: UpstreamParams) {
+fn handle_subtitle(request: Request, target: Url, params: UpstreamParams, upstream: Upstream) {
     let result = tauri::async_runtime::block_on(async {
-        let response = fetch_upstream(&target, &params, None, false).await?;
+        let response = fetch_upstream(&target, &params, None, false, upstream).await?;
         if !response.status().is_success() {
             return Err(format!("Upstream answered HTTP {}", response.status().as_u16()));
         }
@@ -655,7 +671,7 @@ fn route_local(request: Request, endpoint: &str) -> Option<Request> {
     }
 }
 
-fn handle_request(request: Request, token: &str, proxy_base: &str) {
+fn handle_request(request: Request, token: &str, proxy_base: &str, upstream: Upstream) {
     if *request.method() == Method::Options {
         let _ = request.respond(Response::new(
             StatusCode(204),
@@ -713,14 +729,24 @@ fn handle_request(request: Request, token: &str, proxy_base: &str) {
     }
 
     match endpoint {
-        "proxy" => handle_proxy(request, target, params, proxy_base),
-        "subtitle" => handle_subtitle(request, target, params),
+        "proxy" => handle_proxy(request, target, params, proxy_base, upstream),
+        "subtitle" => handle_subtitle(request, target, params, upstream),
         _ => respond_text(request, 404, "Not found"),
     }
 }
 
 /// Starts the proxy on a random loopback port. Safe to call more than once.
 pub fn start() -> Result<String, String> {
+    start_with(Upstream { allow_private: false })
+}
+
+/// `start` for tests whose upstream servers run on loopback. The first start in a process
+/// decides; the app itself only calls `start`.
+pub fn start_allowing_private_upstream() -> Result<String, String> {
+    start_with(Upstream { allow_private: true })
+}
+
+fn start_with(upstream: Upstream) -> Result<String, String> {
     BASE_URL
         .get_or_try_init(|| {
             let server = Server::http("127.0.0.1:0")
@@ -742,7 +768,7 @@ pub fn start() -> Result<String, String> {
                     .name(format!("stream-proxy-{}", index))
                     .spawn(move || {
                         while let Ok(request) = server.recv() {
-                            handle_request(request, &token, &base);
+                            handle_request(request, &token, &base, upstream);
                         }
                     })
                     .map_err(|e| format!("Failed to start stream proxy worker: {}", e))?;
@@ -752,6 +778,13 @@ pub fn start() -> Result<String, String> {
             Ok(base)
         })
         .cloned()
+}
+
+/// The sidecar file behind one of this proxy's own `<base>/localsub/<key>` links, so the
+/// external players get a "Your files" subtitle without a loopback fetch (which the guard refuses).
+pub fn local_subtitle_path(url: &str) -> Option<std::path::PathBuf> {
+    let key = url.strip_prefix(BASE_URL.get()?.as_str())?.strip_prefix("/localsub/")?;
+    crate::local_media::playable_path(crate::local_media::PlayableKind::Subtitle, key.split(['?', '#']).next()?)
 }
 
 #[tauri::command]

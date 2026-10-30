@@ -55,6 +55,12 @@ pub trait AnimeProvider: Send + Sync {
         std::time::Duration::ZERO
     }
 
+    /// Lets this provider's streams be checked on loopback and private addresses. Only test
+    /// providers and extensions loaded with the dev allowance (`plugin_run --allow-local`) say yes.
+    fn allows_private_network(&self) -> bool {
+        false
+    }
+
     /// True when `get_sources` only returns streams whose first entry it has already checked
     /// for playability, so the manager does not check them a second time.
     fn verifies_streams(&self) -> bool {

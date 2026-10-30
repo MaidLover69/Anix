@@ -97,3 +97,74 @@ fn system_language_follows_gettext_order() {
     assert_eq!(pick(&[("LANGUAGE", "fr")]), "en", "LANGUAGE needs a locale to apply");
     assert_eq!(pick(&[("LC_MESSAGES", "ru_RU.UTF-8"), ("LANG", "de_DE.UTF-8")]), "ru");
 }
+
+/// Keys for the play-failure headline, the failed-download notice, the file pickers and the
+/// fatal database dialog.
+const SHOWN_BY_COMMANDS: [&str; 21] = [
+    "play_verify",
+    "play_removed",
+    "play_unreadable_host",
+    "play_too_slow",
+    "play_unreachable",
+    "play_not_listed",
+    "play_not_listed_dub",
+    "play_other",
+    "play_no_language",
+    "play_unknown_provider",
+    "download_failed",
+    "db_open_failed",
+    "picker_download_folder",
+    "picker_episode_files",
+    "picker_episode_folder",
+    "picker_video",
+    "picker_save_backup",
+    "picker_restore_backup",
+    "picker_backup_files",
+    "picker_save_report",
+    "picker_text_files",
+];
+
+#[test]
+fn every_language_has_the_texts_commands_show() {
+    for lang in i18n::LANGUAGES {
+        for key in SHOWN_BY_COMMANDS {
+            let text = i18n::text(lang, key);
+            assert_ne!(text, key, "{lang} {key}");
+            assert!(!text.trim().is_empty(), "{lang} {key}");
+            // "Video" and "Text" are the same word in some languages.
+            if lang != "en" && !["picker_video", "picker_text_files"].contains(&key) {
+                assert_ne!(text, i18n::text("en", key), "{lang} {key} is still English");
+            }
+            // A placeholder in English must be kept by every translation.
+            for name in ["{hosts}", "{wanted}", "{title}", "{episode}", "{name}"] {
+                assert_eq!(i18n::text("en", key).contains(name), text.contains(name), "{lang} {key} {name}");
+            }
+        }
+    }
+}
+
+#[test]
+fn play_failure_headline_follows_the_interface_language() {
+    use anix_lib::providers::manager::{explain_failure, explain_failure_in, FailureKind};
+    assert_eq!(
+        explain_failure(&FailureKind::NotListed, &Category::Sub),
+        "No installed extension has this episode.",
+        "the English text other code and logs see is unchanged"
+    );
+    assert_eq!(explain_failure_in("en", &FailureKind::NotListed, &Category::Dub), "No installed extension has this episode in dub.");
+    assert_eq!(explain_failure_in("fr", &FailureKind::Removed, &Category::Sub), "Le site a supprimé cette vidéo.");
+    let hosts = explain_failure_in("ja", &FailureKind::UnreadableHost("waaw.ac".into()), &Category::Sub);
+    assert!(hosts.contains("waaw.ac") && !hosts.contains("{hosts}"), "{hosts}");
+}
+
+#[test]
+fn failed_download_title_is_translated() {
+    assert_eq!(
+        i18n::fill("en", "download_failed", &[("title", "Frieren"), ("episode", "3")]),
+        "Download failed: Frieren, episode 3"
+    );
+    assert_eq!(
+        i18n::fill("de", "download_failed", &[("title", "Frieren"), ("episode", "3")]),
+        "Download fehlgeschlagen: Frieren, Folge 3"
+    );
+}

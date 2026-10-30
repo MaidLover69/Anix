@@ -2,6 +2,9 @@
 //! and lock hand-off, the hardware report's parsing and
 //! tips, the tray's "Airing next" list, and the plugin health and directory helpers.
 
+mod english_ui;
+use english_ui::english_ui;
+
 use anix_lib::db;
 use anix_lib::error::AppError;
 use anix_lib::models::AiringEntry;
@@ -390,6 +393,7 @@ fn airing_next_lists_future_episodes_of_belled_anime_soonest_first() {
 
 #[test]
 fn airing_next_labels_are_short() {
+    english_ui();
     let long = tray::Upcoming {
         media_id: 1,
         title: "A".repeat(80),

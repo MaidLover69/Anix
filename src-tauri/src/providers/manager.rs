@@ -516,20 +516,24 @@ pub fn main_failure(failures: &[(String, String)]) -> FailureKind {
     kinds.into_iter().min_by_key(|kind| rank(kind)).unwrap_or(FailureKind::Other)
 }
 
-/// The failure in plain words, as the first line of the message the player shows.
+/// The failure in plain words, in English (logs, tests); see [`explain_failure_in`].
 pub fn explain_failure(kind: &FailureKind, category: &Category) -> String {
-    match kind {
-        FailureKind::Verification => "The site asks you to pass its check first. Press Verify, then the episode is tried again.".to_string(),
-        FailureKind::Removed => "The site removed this video.".to_string(),
-        FailureKind::UnreadableHost(hosts) => format!("This episode is only on video hosts the extensions can't read ({}).", hosts),
-        FailureKind::TooSlow => "The sites are too slow to answer right now. Try again in a moment.".to_string(),
-        FailureKind::Unreachable => {
-            "The sites could not be reached. Your network may block them; DNS over HTTPS in Settings › Network can help.".to_string()
-        }
-        FailureKind::NotListed if *category == Category::Dub => "No installed extension has this episode in dub.".to_string(),
-        FailureKind::NotListed => "No installed extension has this episode.".to_string(),
-        FailureKind::Other => "The extensions answered, but none gave a stream that plays.".to_string(),
-    }
+    explain_failure_in("en", kind, category)
+}
+
+/// The failure in plain words in `lang`, as the first line of the message the player shows.
+pub fn explain_failure_in(lang: &str, kind: &FailureKind, category: &Category) -> String {
+    let key = match kind {
+        FailureKind::Verification => "play_verify",
+        FailureKind::Removed => "play_removed",
+        FailureKind::UnreadableHost(hosts) => return crate::i18n::fill(lang, "play_unreadable_host", &[("hosts", hosts)]),
+        FailureKind::TooSlow => "play_too_slow",
+        FailureKind::Unreachable => "play_unreachable",
+        FailureKind::NotListed if *category == Category::Dub => "play_not_listed_dub",
+        FailureKind::NotListed => "play_not_listed",
+        FailureKind::Other => "play_other",
+    };
+    crate::i18n::text(lang, key).to_string()
 }
 
 /// When a stream or listing was last asked for, or a video piece went through the stream
@@ -653,10 +657,11 @@ fn shape_listing(provider: &dyn AnimeProvider, mut data: ProviderData, prefs: Op
 }
 
 fn no_language_error(prefs: &LanguagePrefs, category: &Category) -> AppError {
-    AppError::SourcesUnavailable(format!(
-        "No enabled plugin offers {}. Choose other languages, or allow plugins in other languages, in Settings › Sources.",
-        prefs.describe(category)
-    ))
+    let lang = crate::i18n::current();
+    let languages = crate::i18n::language_list(lang, prefs.for_category(category));
+    let wanted_key = if *category == Category::Dub { "wanted_dub" } else { "wanted_sub" };
+    let wanted = crate::i18n::fill(lang, wanted_key, &[("languages", &languages)]);
+    AppError::SourcesUnavailable(crate::i18n::fill(lang, "play_no_language", &[("wanted", &wanted)]))
 }
 
 /// What a lookup fails with when there is no provider at all.
@@ -1218,10 +1223,10 @@ impl ProviderManager {
                     .position(|p| p.name() == wanted)
                     .or_else(|| lineup.iter().position(|p| p.name().eq_ignore_ascii_case(wanted)))
                     .ok_or_else(|| {
-                        AppError::SourcesUnavailable(format!(
-                            "No source found. Unknown provider '{}'",
-                            wanted
-                        ))
+                        // Like the main failure: plain words in the interface language first,
+                        // the English reason under it for Details.
+                        let plain = crate::i18n::fill(crate::i18n::current(), "play_unknown_provider", &[("name", wanted)]);
+                        AppError::SourcesUnavailable(format!("{}\nNo source found. Unknown provider '{}'", plain, wanted))
                     })?;
                 vec![Tier { language: None, members: vec![idx] }]
             }
@@ -1306,22 +1311,25 @@ impl ProviderManager {
             .into_iter()
             .map(|f| (f.name.to_string(), f.reason))
             .collect();
-        // First line: the reason in plain words; the rest is the list per provider, for Details.
-        let plain = explain_failure(&main_failure(&listed), &category);
-        let mut message = format!("{}\nNo source found. {}", plain, summarize_failures(&listed));
+        // First line: the reason in plain words, in the interface language; the rest is the
+        // list per provider, for Details (and the log, which stays English).
+        let kind = main_failure(&listed);
+        let mut details = format!("No source found. {}", summarize_failures(&listed));
         if let (None, Some(prefs), true) = (preferred, &prefs, left_out) {
-            message.push_str(&format!(
+            details.push_str(&format!(
                 ". Only plugins with {} were asked; Settings › Sources can allow other languages.",
                 prefs.describe(&category)
             ));
         }
         tracing::warn!(
-            "no source for anime {} episode {} ({}): {}",
+            "no source for anime {} episode {} ({}): {}\n{}",
             anilist_id,
             fmt_ep(episode_number),
             category.as_str(),
-            message
+            explain_failure(&kind, &category),
+            details
         );
-        Err(AppError::SourcesUnavailable(message))
+        let plain = explain_failure_in(crate::i18n::current(), &kind, &category);
+        Err(AppError::SourcesUnavailable(format!("{}\n{}", plain, details)))
     }
 }

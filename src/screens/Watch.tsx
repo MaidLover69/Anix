@@ -12,7 +12,7 @@ import { VideoPlayer } from '../components/player/VideoPlayer';
 import { useEmbeddedMpvStatus } from '../hooks/useEmbeddedMpv';
 import { noPluginsDetail, noPluginsTitle } from '../components/NoPluginsNotice';
 import { sameEpisode } from '../components/player/format';
-import { errorMessage } from '../components/ui/ErrorState';
+import { errorMessage, localizeError, rawErrorMessage } from '../components/ui/ErrorState';
 import { useAnimeDetails } from '../hooks/useAniList';
 import { useFullscreen } from '../hooks/useFullscreen';
 import { useMiniPlayerSession } from '../hooks/useMiniPlayer';
@@ -597,13 +597,15 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (!localRequested && sourcesQuery.isError) {
-    // The reason in plain words; the list per server only under Details.
-    const failure = splitPlayFailure(errorMessage(sourcesQuery.error, t('watch.noStreamFallback')));
+    // The reason in plain words; the list per server only under Details. A reason with that
+    // list comes in the interface language already, and its English list must not decide the
+    // error code (a "timed out" there would swap the whole message for a network one).
+    const failure = splitPlayFailure(rawErrorMessage(sourcesQuery.error, t('watch.noStreamFallback')));
     status = (
       <PlayerStatus
         kind="error"
         title={t('watch.noStreamFound', { number: episodeNumber })}
-        detail={failure.reason}
+        detail={failure.details ? failure.reason : localizeError(failure.reason)}
         moreDetail={failure.details}
         actions={sourceErrorActions}
       />

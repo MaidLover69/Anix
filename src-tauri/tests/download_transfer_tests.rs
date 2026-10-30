@@ -4,6 +4,9 @@
 //! settings or download folder, and nothing outside the loopback interface. The tests that
 //! need ffmpeg print a note and pass when it is not installed.
 
+mod english_ui;
+
+use english_ui::english_ui;
 use anix_lib::db;
 use anix_lib::downloads::{self, work_file_path, work_tag, DownloadOutcome, DownloadSource, PART_SUFFIX, RESUME_ROLES};
 use anix_lib::models::{DownloadRecord, SubtitleItem};
@@ -866,6 +869,7 @@ async fn an_hls_download_resumes_at_the_first_segment_it_does_not_have() {
 
 #[tokio::test]
 async fn a_failed_download_is_posted_to_the_notification_centre() {
+    english_ui();
     let (base, _) = serve(|_| Response::status(403)).await;
     let tmp = TempDir::new("notice");
     let rec = record("notice");

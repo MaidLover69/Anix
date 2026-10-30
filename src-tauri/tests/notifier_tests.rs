@@ -1,6 +1,9 @@
 //! Release notifications: the planning rules, the notifier driven with a fake schedule and a
 //! fake display, its tables, and the AniList request against a loopback server.
 
+mod english_ui;
+use english_ui::english_ui;
+
 use anix_lib::notifier;
 use anix_lib::db;
 use anix_lib::error::AppError;
@@ -798,6 +801,7 @@ impl anix_lib::release_check::ReleaseProbe for SubOnly {
 
 #[tokio::test]
 async fn alerts_are_kept_in_the_notification_centre() {
+    english_ui();
     use anix_lib::notices;
     let pool = memory_db().await;
     let schedule = FakeSchedule::default();
@@ -1280,6 +1284,7 @@ async fn checking_notifier(pool: &SqlitePool, probe: &Arc<FakeProbe>) -> Notifie
 
 #[tokio::test]
 async fn a_stand_in_bell_is_announced_once_an_extension_has_each_track() {
+    english_ui();
     let pool = memory_db().await;
     let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: true };
     let display = FakeDisplay::default();
@@ -1324,6 +1329,7 @@ async fn a_stand_in_bell_is_announced_once_an_extension_has_each_track() {
 
 #[tokio::test]
 async fn an_estimated_episode_no_source_has_gets_only_the_final_note() {
+    english_ui();
     let pool = memory_db().await;
     let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: true };
     let display = FakeDisplay::default();
@@ -1348,6 +1354,7 @@ async fn an_estimated_episode_no_source_has_gets_only_the_final_note() {
 
 #[tokio::test]
 async fn an_anilist_air_time_is_still_announced_and_then_the_release() {
+    english_ui();
     let pool = memory_db().await;
     let schedule = MarkedSchedule { inner: FakeSchedule::default(), estimated: false };
     let display = FakeDisplay::default();

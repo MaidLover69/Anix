@@ -51,3 +51,24 @@ export function errorCode(message: string): string {
   const detail = networkDetail(inner);
   return detail ? `${domain(inner)}-${detail}` : 'APP-ERR';
 }
+
+/**
+ * The `errors.*` catalog keys that can explain a message, most specific first: its code, the
+ * code's HTTP status class (`CAT-403` → `CAT-4xx`), then its area's general key (`CAT-ERR`).
+ * Status codes are open-ended, so a class key covers the ones without a text of their own.
+ * None for a message without an error prefix: that is a sentence a command wrote for the user,
+ * or one a screen already translated, and the general APP-ERR line would hide what it says.
+ * `generic` false also leaves out APP-ERR for "Other error: …": that line only says "unexpected
+ * problem", so it may stand in only where the raw message stays visible (ErrorState's Details).
+ */
+export function errorKeys(message: string, generic = true): string[] {
+  const code = errorCode(message);
+  if (code === 'APP-ERR' && (!generic || !message.trim().startsWith('Other error: '))) return [];
+  const cut = code.indexOf('-');
+  const area = code.slice(0, cut);
+  const detail = code.slice(cut + 1);
+  const keys = [code];
+  if (/^\d{3}$/.test(detail)) keys.push(`${area}-${detail[0]}xx`);
+  keys.push(`${area}-ERR`);
+  return [...new Set(keys)].map((key) => `errors.${key}`);
+}

@@ -3,10 +3,12 @@
 //   node --experimental-strip-types scripts/i18n-test.mjs
 import assert from 'node:assert/strict';
 import {
-  catalogProblems, htmlLang, interpolate, intlLocale, isRtl, resolveLanguage, translate,
+  APP_LANGUAGES, catalogProblems, htmlLang, interpolate, intlLocale, isRtl, resolveLanguage, translate,
 } from '../src/i18n/core.ts';
 import { isNewerVersion, needsSetup, shouldPromptUpdate } from '../src/lib/version.ts';
 import { withChoice } from '../src/lib/languageChoice.ts';
+import { errorCode, errorKeys } from '../src/lib/errorCodes.ts';
+import fs from 'node:fs';
 
 const en = {
   'a.hello': 'Hello, {name}!',
@@ -83,5 +85,39 @@ assert.deepEqual(withChoice(['en', 'es', 'fr'], 1, ''), ['en', 'fr'], 'an emptie
 assert.deepEqual(withChoice(['en', 'es'], 0, ''), ['en', 'es'], 'the first choice is never emptied');
 assert.deepEqual(withChoice(['en', 'es', 'fr', 'it', 'de'], 2, 'it'), ['en', 'es', 'it', 'de'], 'older entries past the slots stay');
 assert.deepEqual(withChoice(['en', 'es', 'fr', 'it'], 2, 'ja'), ['en', 'es', 'ja', 'it']);
+
+// Error codes: every code errorCode can give has a translated text in every catalog, found
+// through errorKeys (the code, its HTTP status class, then its area's general key).
+const catalogs = Object.fromEntries(
+  APP_LANGUAGES.map(({ code }) => [code, JSON.parse(fs.readFileSync(new URL(`../src/i18n/locales/${code}.json`, import.meta.url), 'utf8'))])
+);
+const prefixes = ['Network error: ', 'Connection failed: ', 'Parse error: ', 'Provider error: site — ', 'Other error: ', ''];
+const subjects = ['AniList ', 'cdn.example '];
+const problems = ['timed out', 'dns lookup failed', 'tls handshake', 'refused', 'is paused after failing a moment ago'];
+for (let status = 100; status < 600; status++) problems.push(`HTTP ${status}`);
+const messages = [
+  "Blocked by the site's anti-bot check", 'site needs verification', 'No sources found',
+  'Rate limited — retry after 5s', 'Auth required', 'Database error: disk full', 'Something a command wrote',
+];
+for (const prefix of prefixes) for (const subject of subjects) for (const problem of problems) messages.push(prefix + subject + problem);
+const codes = new Set(messages.map(errorCode));
+for (const code of ['CAT-403', 'CAT-ERR', 'CAT-PARSE', 'APP-ERR', 'NET-PARSE', 'SRC-ERR', 'SRC-502']) assert.ok(codes.has(code), code);
+for (const message of messages) {
+  if (errorCode(message) === 'APP-ERR' && !message.startsWith('Other error: ')) continue;
+  const key = errorKeys(message).find((k) => k in catalogs.en);
+  assert.ok(key, `no errors.* key for ${errorCode(message)} (${message})`);
+  for (const [language, catalog] of Object.entries(catalogs)) assert.ok(key in catalog, `${language} lacks ${key}`);
+}
+assert.deepEqual(errorKeys('Network error: AniList HTTP 403: disabled'), ['errors.CAT-403', 'errors.CAT-4xx', 'errors.CAT-ERR']);
+assert.deepEqual(errorKeys('Other error: MyAnimeList cannot find this anime'), ['errors.APP-ERR']);
+assert.deepEqual(errorKeys('Something a command wrote'), [], 'a sentence written for the user stays as it is');
+assert.deepEqual(errorKeys('Le texte déjà traduit'), [], 'text a screen already translated stays');
+// A toast or inline line has no Details, so the generic "unexpected problem" must not replace
+// the reason there (errorMessage); only ErrorState, which shows the raw text too, may use it.
+const bell = 'Other error: Turn on the bell for this anime first';
+assert.deepEqual(errorKeys(bell, false), [], 'without Details the reason stays');
+const shownKey = errorKeys(bell, false).find((k) => k in catalogs.en);
+assert.ok((shownKey ? catalogs.fr[shownKey] : bell).includes('Turn on the bell'), 'fr toast keeps the reason');
+assert.deepEqual(errorKeys('Network error: AniList HTTP 403: disabled', false), ['errors.CAT-403', 'errors.CAT-4xx', 'errors.CAT-ERR']);
 
 console.log('i18n tests passed');

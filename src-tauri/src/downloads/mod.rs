@@ -1964,10 +1964,10 @@ where
             {
                 error!("Download {} failed and its row could not be updated: {}", id, e);
             }
-            let title = format!(
-                "Download failed: {}, episode {}",
-                record.series_title,
-                record.episode_num
+            let title = crate::i18n::fill(
+                crate::i18n::current(),
+                "download_failed",
+                &[("title", &record.series_title), ("episode", &record.episode_num.to_string())],
             );
             if let Err(e) = crate::notices::push(pool, crate::notices::DOWNLOAD, &title, &message, Some("/downloads")).await {
                 warn!("Could not add a notice for failed download {}: {}", id, e);

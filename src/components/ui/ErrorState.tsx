@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { Button } from './Button';
 import { Mascot, type MascotMood } from './Mascot';
 import { usePlayful } from '../../hooks/useSettings';
-import { errorCode } from '../../lib/errorCodes';
+import { errorCode, errorKeys } from '../../lib/errorCodes';
 import { isKey, language, t } from '../../i18n';
 
 export { errorCode };
@@ -23,12 +23,14 @@ export function rawErrorMessage(error: unknown, fallback?: string): string {
 
 /**
  * A backend message in the interface language: the backend writes English, so a message whose
- * error code (`lib/errorCodes.ts`) has a translation is shown as that; others stay as written.
+ * error code (`lib/errorCodes.ts`) has a translation (`errorKeys`) is shown as that; others
+ * stay as written. `generic` allows the "unexpected problem" line, for ErrorState only: its
+ * Details keep the raw message, which toasts and inline text do not have.
  */
-export function localizeError(message: string): string {
+export function localizeError(message: string, generic = false): string {
   if (language() === 'en') return message;
-  const key = `errors.${errorCode(message)}`;
-  return isKey(key) ? t(key) : message;
+  const key = errorKeys(message, generic).find(isKey);
+  return key ? t(key) : message;
 }
 
 /** The message to show for a rejected call, in the interface language where Anix knows it. */
@@ -71,7 +73,7 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
   const retryLabel = retryLabelProp ?? t('common.tryAgain');
   // The code and the copied details use the backend's own words, for bug reports.
   const raw = message ?? (error !== undefined && error !== null ? rawErrorMessage(error) : undefined);
-  const text = raw !== undefined ? localizeError(raw) : undefined;
+  const text = raw !== undefined ? localizeError(raw, true) : undefined;
   const code = raw ? errorCode(raw) : null;
   const technical = [code && `Code: ${code}`, title && `Screen: ${title}`, raw && `Message: ${raw}`, details]
     .filter(Boolean)

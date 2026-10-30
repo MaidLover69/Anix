@@ -38,15 +38,16 @@ pub async fn get_local_media(
 pub async fn pick_local_media(app: AppHandle, files: bool) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dialog = app.dialog().file();
+        let lang = crate::i18n::current();
         let picked = if files {
             dialog
-                .set_title("Choose episode files")
-                .add_filter("Video", &local_media::VIDEO_EXTENSIONS)
+                .set_title(crate::i18n::text(lang, "picker_episode_files"))
+                .add_filter(crate::i18n::text(lang, "picker_video"), &local_media::VIDEO_EXTENSIONS)
                 .blocking_pick_files()
                 .unwrap_or_default()
         } else {
             dialog
-                .set_title("Choose the folder with the episodes")
+                .set_title(crate::i18n::text(lang, "picker_episode_folder"))
                 .blocking_pick_folder()
                 .into_iter()
                 .collect()

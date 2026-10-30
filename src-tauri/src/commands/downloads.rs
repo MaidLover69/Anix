@@ -128,7 +128,8 @@ pub async fn get_download_directory() -> Result<String, String> {
 pub async fn pick_download_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = app.dialog().file().set_title("Choose the download folder");
+        let title = crate::i18n::text(crate::i18n::current(), "picker_download_folder");
+        let mut dialog = app.dialog().file().set_title(title);
         if let Ok(current) = downloads::get_download_dir() {
             dialog = dialog.set_directory(current);
         }

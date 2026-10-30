@@ -27,8 +27,15 @@ const rowName = (record: DownloadRecord) =>
 
 const sizeOrZero = (bytes: number) => formatBytes(bytes) || t('downloads.zeroSize');
 
+/** The stored quality: the words Anix saves ("best", "auto") in the interface language, a
+ * resolution or a site's own label as it is. */
+const qualityLabel = (quality: string) => {
+  const word = quality.trim().toLowerCase();
+  return word === 'best' ? t('bulkDownloadDialog.best') : word === 'auto' ? t('common.auto') : quality;
+};
+
 const details = (record: DownloadRecord) =>
-  [episodeLabel(record.episode_num), record.quality, downloadLanguageLabel(record)].join(' · ');
+  [episodeLabel(record.episode_num), qualityLabel(record.quality), downloadLanguageLabel(record)].join(' · ');
 
 /** A poster with a progress ring over it while the episode is queued or downloading. */
 const PosterWithRing: React.FC<{ record: DownloadRecord; size?: 'sm' | 'lg' }> = ({ record, size = 'sm' }) => {

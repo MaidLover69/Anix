@@ -66,7 +66,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/src/web_session.rs` | In-app webview sessions for the user's site verification |
 | `src-tauri/src/db.rs` | Schema and migrations; app and config folders |
 | `src-tauri/src/error.rs` | `AppError` and stable error codes (mirrored in `src/lib/errorCodes.ts`) |
-| `src-tauri/src/i18n.rs` | Backend-shown text (notifications, tray, reminders) |
+| `src-tauri/src/i18n.rs` | Backend-shown text (notifications, tray, reminders, file pickers, play-failure headline, fatal dialogs) |
 | `src-tauri/tests/` | Integration tests, `*_support/` helpers, `fixtures/` |
 | `src-tauri/examples/plugin_run.rs` | CLI to run one extension in the real runtime |
 | `src-tauri/resources/` | Anime4K shaders, hardware-decoding self-test clip |
@@ -164,7 +164,8 @@ Notes:
 - **Every user-visible string goes through `t('key', vars)`** (or `tn` for text that has elements inside) from `src/i18n`. That includes `aria-label`, `title` and `placeholder`. Add the key to `locales/en.json`, which is the source and fallback. Other catalogs may lag behind.
 - Plurals are objects keyed by `Intl` plural category. Use `{name}` placeholders. Never build sentences out of pieces.
 - Never call `t()` at module load. Changing the language re-mounts the app.
-- Backend-shown text (notifications, tray, reminders) goes in `src-tauri/src/i18n.rs` for all 12 languages. Log lines stay in English.
+- Backend-shown text (notifications, tray, reminders, file-picker titles, the play-failure headline, native dialogs) goes in `src-tauri/src/i18n.rs` for all 12 languages. Log lines stay in English, and so do strings other code matches on.
+- Backend error messages are translated in the UI by their error code: `errorKeys` in `src/lib/errorCodes.ts` tries `errors.<code>`, then the HTTP class (`errors.CAT-4xx`), then the area (`errors.CAT-ERR`). Every code needs a text through that chain (checked by `i18n:test`).
 - Run `npm run i18n:check` and `npm run i18n:test` before you finish.
 
 ## Extensions
@@ -199,6 +200,7 @@ New logic needs a test in the same change.
   - No live network. Use loopback servers on `127.0.0.1` and in-process fakes. A test that needs the network must be `#[ignore]`.
   - Name tests as sentences describing the behaviour (`loads_only_from_the_stream_proxy`).
   - Cover the refusal paths for anything at a trust boundary (proxy, plugin network, file paths, deep links, external players).
+  - A test that checks backend text in English calls `english_ui()` (`tests/english_ui/mod.rs`) first. Otherwise the text follows the machine's locale and settings, and the test reads the real `~/.config/anix`.
 - **TypeScript:** there is no test runner. Keep logic in pure functions in `src/lib/` or `src/i18n/core.ts`, and add `node:assert/strict` cases to `scripts/i18n-test.mjs` (or a similar node script).
 - **DB:** schema changes need a case in `db_tests.rs` that opens an older layout and checks that no rows are lost.
 

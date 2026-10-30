@@ -29,9 +29,9 @@ pub async fn export_backup(
     let picked = tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
-            .set_title("Save backup")
+            .set_title(crate::i18n::text(crate::i18n::current(), "picker_save_backup"))
             .set_file_name(&name)
-            .add_filter("Anix backup", &["gz", "json"])
+            .add_filter(crate::i18n::text(crate::i18n::current(), "picker_backup_files"), &["gz", "json"])
             .blocking_save_file()
             .and_then(|p| p.into_path().ok())
     })
@@ -61,8 +61,8 @@ pub async fn import_backup(
     let picked = tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
-            .set_title("Restore a backup")
-            .add_filter("Anix backup", &["gz", "json"])
+            .set_title(crate::i18n::text(crate::i18n::current(), "picker_restore_backup"))
+            .add_filter(crate::i18n::text(crate::i18n::current(), "picker_backup_files"), &["gz", "json"])
             .blocking_pick_file()
             .and_then(|p| p.into_path().ok())
     })

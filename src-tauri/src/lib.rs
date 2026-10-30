@@ -129,11 +129,10 @@ pub fn run() {
                 Err(e) => {
                     tracing::error!("Failed to initialize database: {}", e);
                     let handle = app.handle().clone();
+                    // i18n reads settings.json and the locale, not the database, so this works.
+                    let text = crate::i18n::text(crate::i18n::current(), "db_open_failed");
                     app.dialog()
-                        .message(format!(
-                            "Anix could not open its database and has to close.\n\n{}",
-                            e
-                        ))
+                        .message(format!("{}\n\n{}", text, e))
                         .title("Anix")
                         .kind(MessageDialogKind::Error)
                         .show(move |_| handle.exit(1));

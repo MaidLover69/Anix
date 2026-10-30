@@ -1,6 +1,9 @@
 //! Provider choice by language: tiers of preferred languages, the strict switch, dub-only
 //! sites and episode lists, with in-process providers. No network is involved.
 
+mod english_ui;
+
+use english_ui::english_ui;
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem, SubtitleItem};
 use anix_lib::providers::languages::{plan_tiers, LanguagePrefs, Languages, Tier};
@@ -185,6 +188,7 @@ async fn languages_are_tried_in_preference_order() {
 
 #[tokio::test]
 async fn strict_preferences_refuse_other_languages() {
+    english_ui();
     let italian = Arc::new(site("animeworld", &["it"], &[]));
     let strict = manager(&[italian.clone()], prefs(&["hi"], &["en"], true));
     let refused = message(play(&strict, "sub", None).await);
@@ -227,6 +231,7 @@ async fn a_provider_asked_for_by_name_is_always_asked() {
 
 #[tokio::test]
 async fn dub_only_sites_serve_dubs_in_their_language() {
+    english_ui();
     let russian = Arc::new(site("aniliberty", &[], &["ru"]).without_dub());
     let english = Arc::new(site("hianime", &["en"], &["en"]));
     let sites = [english.clone(), russian.clone()];

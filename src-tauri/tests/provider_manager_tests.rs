@@ -1,6 +1,9 @@
 //! Provider manager behaviour, exercised with in-process providers and a loopback HTTP server
 //! that plays the part of a stream host. No outside network is involved.
 
+mod english_ui;
+
+use english_ui::english_ui;
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use anix_lib::clients::anilist::MediaHint;
@@ -497,6 +500,7 @@ async fn first_verified_provider_wins_regardless_of_position() {
 
 #[tokio::test]
 async fn preferred_provider_is_the_only_one_tried() {
+    english_ui();
     let host = host_with_good_stream().await;
     let good = vec![hls(host.url("/hls/master.m3u8"))];
     let first = Arc::new(MockProvider::new("first", Ok(good.clone())));
@@ -507,12 +511,15 @@ async fn preferred_provider_is_the_only_one_tried() {
     assert_eq!(result.provider.as_deref(), Some("second"));
     assert_eq!(first.list_calls() + first.source_calls(), 0, "the other provider must stay untouched");
 
+    // A server that is gone: a plain first line the player can translate, the raw reason under it.
     let message = failure_message(sources(&manager, 1.0, "sub", Some("nope")).await);
-    assert!(message.contains("Unknown provider 'nope'"), "{}", message);
+    assert_eq!(headline(&message), "The server “nope” is no longer available. Choose another server.");
+    assert!(details(&message).contains("Unknown provider 'nope'"), "{}", message);
 }
 
 #[tokio::test]
 async fn every_failure_is_reported_with_its_reason() {
+    english_ui();
     let host = host_with_good_stream().await;
     let unplayable = Arc::new(MockProvider::new("unplayable", Ok(vec![hls(host.url("/gone.m3u8"))])));
     let blocked = Arc::new(MockProvider::new("blocked", Err(AppError::CaptchaRequired)));
@@ -548,6 +555,7 @@ async fn every_failure_is_reported_with_its_reason() {
 
 #[tokio::test]
 async fn dub_requests_only_reach_providers_with_a_dub() {
+    english_ui();
     let host = host_with_good_stream().await;
     let good = vec![hls(host.url("/hls/master.m3u8"))];
     let sub_only = Arc::new(MockProvider::new("sub-only", Ok(good.clone())));
@@ -878,6 +886,7 @@ fn the_reason_shown_is_the_one_the_user_can_act_on() {
 
 #[tokio::test]
 async fn a_removed_video_is_named_in_the_first_line() {
+    english_ui();
     let gone = Arc::new(MockProvider::new("gone", Err(AppError::Network("HTTP 404 from cdn.example".into()))));
     let manager = manager_of(&[gone]);
     let message = failure_message(sources(&manager, 1.0, "sub", None).await);

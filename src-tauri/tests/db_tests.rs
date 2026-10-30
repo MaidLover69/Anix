@@ -623,6 +623,20 @@ async fn continue_watching_is_limited_to_twenty_anime() {
     assert_eq!(list[19].anilist_id, 6);
 }
 
+#[tokio::test]
+async fn library_history_lists_every_anime_in_the_same_order() {
+    let pool = memory_db().await;
+    for id in 1..=25 {
+        db::update_watch_progress(&pool, &history(id, 1.0, 60_000, 1_440_000, id as i64)).await.unwrap();
+    }
+    let all = db::get_watch_history(&pool).await.unwrap();
+    assert_eq!(all.len(), 25, "Library › History is not capped at the Home rail's 20");
+    assert_eq!(all[0].anilist_id, 25);
+    assert_eq!(all[24].anilist_id, 1);
+    let rail = db::get_continue_watching(&pool).await.unwrap();
+    assert_eq!(rail[..], all[..20], "the Home rail is the first 20 of the same list");
+}
+
 // ---------------------------------------------------------------------------------------
 // Watchlist, notifications, caches
 // ---------------------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { MediaListEntry, Viewer } from '../../types';
 import { EditListEntryModal } from './EditListEntryModal';
 import { mediaFromListRow } from './format';
-import { LIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
+import { ANILIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
 import { PosterGrid, PosterGridSkeleton, ShowMore } from './PosterGrid';
 import { t } from '../../i18n';
 
@@ -25,7 +25,7 @@ export const AniListTab: React.FC = () => {
   const viewerQuery = useAniListViewer(connected);
   const viewer = viewerQuery.data ?? null;
 
-  const [status, setStatus] = useState<string>(LIST_STATUS_OPTIONS[0].value);
+  const [status, setStatus] = useState<string>(ANILIST_STATUS_OPTIONS[0].value);
   const entriesQuery = useAniListLibrary(connected && viewer !== null, status);
 
   if (accountsQuery.isLoading) {
@@ -90,14 +90,14 @@ export const AniListTab: React.FC = () => {
   }
 
   const statusLabel =
-    LIST_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? t('aniListTab.thisList');
+    ANILIST_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? t('aniListTab.thisList');
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <SegmentedControl
           aria-label={t('aniListTab.listLabel')}
-          options={LIST_STATUS_OPTIONS}
+          options={ANILIST_STATUS_OPTIONS}
           value={status}
           onChange={setStatus}
         />

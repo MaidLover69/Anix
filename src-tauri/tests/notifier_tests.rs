@@ -1373,3 +1373,80 @@ fn a_click_on_a_stand_in_anime_opens_it() {
     // Anime known only by a stand-in (negative) id while AniList is down.
     assert_eq!(notifier::click_for(-300_000_099, &NotificationResponse::Default), Click::OpenAnime(-300_000_099));
 }
+
+// ---------------------------------------------------------------------------------------
+// The checking loop and its gate
+// ---------------------------------------------------------------------------------------
+
+/// A gate like the background process's: it may always check, and lets go of its lock after a
+/// step with no bells.
+#[derive(Clone, Default)]
+struct CountingGate {
+    idles: Arc<Mutex<usize>>,
+}
+
+impl notifier::CheckGate for CountingGate {
+    fn may_check(&mut self) -> bool {
+        true
+    }
+
+    fn idle(&mut self) -> bool {
+        *self.idles.lock().unwrap() += 1;
+        true
+    }
+}
+
+#[tokio::test]
+async fn drive_reads_the_state_again_after_letting_go_of_the_lock() {
+    // drive() reads the settings and prunes cached covers: keep it away from the real folders.
+    let home = std::env::temp_dir().join(format!("anix-drive-test-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("HOME", &home);
+    for (var, sub) in [("XDG_CONFIG_HOME", ".config"), ("XDG_CACHE_HOME", ".cache"), ("XDG_DATA_HOME", ".local/share")] {
+        std::env::set_var(var, home.join(sub));
+    }
+
+    let pool = memory_db().await;
+    let schedule = FakeSchedule::default();
+    let display = FakeDisplay::default();
+    let probe = Arc::new(FakeProbe::default());
+    *probe.sub.lock().unwrap() = hit("en");
+    let gate = CountingGate::default();
+    let idles = gate.idles.clone();
+
+    let script = async {
+        // The first step finds no bells and lets go of the lock.
+        while *idles.lock().unwrap() == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        // Meanwhile the app runs: the user sets a bell for an episode that already aired while
+        // release notifications were off, then quits.
+        let now = db::current_unix_timestamp();
+        let air = now - 20 * 60;
+        set_bell(&pool, SHOW_A, true, air - HOUR).await;
+        schedule.set(vec![airing(SHOW_A, 7, air)]);
+        db::set_notifier_state(&pool, "silenced_until", now - 60).await.unwrap();
+        notifier::replan();
+
+        let mut seen = None;
+        for _ in 0..250 {
+            seen = recorded(&pool, SHOW_A, 7).await;
+            if seen.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        (seen, air)
+    };
+    let (seen, air) = tokio::select! {
+        _ = notifier::drive(&pool, &schedule, probe.clone(), &display, gate) => unreachable!("drive runs for good"),
+        result = script => result,
+    };
+
+    assert!(*idles.lock().unwrap() >= 1, "a step with no bells lets go of the lock");
+    assert_eq!(seen, Some((false, air)), "the episode aired while silenced, as the app recorded");
+    assert!(display.shown().is_empty());
+    assert_eq!(probe.searches(Category::Sub), 0);
+    let _ = std::fs::remove_dir_all(&home);
+}

@@ -6,7 +6,7 @@ import { useSaveAniListEntry } from '../../hooks/useAniList';
 import { useAccountStatus } from '../../hooks/useAccounts';
 import { useUIStore } from '../../stores/uiStore';
 import type { MediaListEntry } from '../../types';
-import { LIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
+import { ANILIST_STATUS_OPTIONS } from '../../hooks/useLibrary';
 import { INPUT_CLASS, LABEL_CLASS } from './format';
 import { t } from '../../i18n';
 
@@ -30,7 +30,7 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
   const queryClient = useQueryClient();
 
   const total = entry.total_episodes !== null && entry.total_episodes > 0 ? entry.total_episodes : null;
-  const [status, setStatus] = useState<string>(entry.status ?? LIST_STATUS_OPTIONS[0].value);
+  const [status, setStatus] = useState<string>(entry.status ?? ANILIST_STATUS_OPTIONS[0].value);
   const [progress, setProgress] = useState(String(clampProgress(entry.progress, total)));
   const [error, setError] = useState<string | null>(null);
 
@@ -114,7 +114,7 @@ export const EditListEntryModal: React.FC<EditListEntryModalProps> = ({ entry, o
             className="w-full"
             value={status}
             onChange={handleStatusChange}
-            options={LIST_STATUS_OPTIONS}
+            options={ANILIST_STATUS_OPTIONS}
             disabled={pending}
           />
         </div>

@@ -1047,7 +1047,26 @@ pub fn extension_probe(plugins: crate::plugins::registry::PluginRegistry) -> Arc
     ))
 }
 
-/// Runs the notifier and the release checks for good. `may_check` is asked before every
+/// Decides, for [`drive`], whether this process does the checking. A plain `|| true` closure
+/// is a gate that always may; `--background` uses its lock hand-off.
+pub trait CheckGate {
+    /// Asked before every step. While it says no, another process is checking.
+    fn may_check(&mut self) -> bool;
+    /// After a step that found nothing to watch (no bells), before the long sleep. A gate that
+    /// holds the shared checker lock lets go of it here, so the app is not held up, and returns
+    /// true: another process may then change the state, so [`drive`] reads it again.
+    fn idle(&mut self) -> bool {
+        false
+    }
+}
+
+impl<F: FnMut() -> bool> CheckGate for F {
+    fn may_check(&mut self) -> bool {
+        self()
+    }
+}
+
+/// Runs the notifier and the release checks for good. The gate is asked before every
 /// step: while it says no, nothing is checked (another process is checking), and the state is
 /// read again from the database when it says yes again.
 pub async fn drive(
@@ -1055,7 +1074,7 @@ pub async fn drive(
     source: &dyn ScheduleSource,
     probe: Arc<dyn release_check::ReleaseProbe>,
     sink: &dyn NotificationSink,
-    mut may_check: impl FnMut() -> bool,
+    mut gate: impl CheckGate,
 ) {
     let load = || async {
         let mut logged = false;
@@ -1084,8 +1103,9 @@ pub async fn drive(
     }
 
     let mut standing_by = false;
+    let mut released = false;
     loop {
-        if !may_check() {
+        if !gate.may_check() {
             if !standing_by {
                 info!("Release notifications stand by: Anix is open and does the checking");
                 standing_by = true;
@@ -1093,8 +1113,12 @@ pub async fn drive(
             tokio::time::sleep(Duration::from_secs(WATCH_TICK_S as u64)).await;
             continue;
         }
-        if standing_by {
-            info!("Release notifications take over again");
+        if standing_by || released {
+            if standing_by {
+                info!("Release notifications take over again");
+            }
+            // While the lock was free the app may have run and changed what is silenced or
+            // already announced.
             notifier = load().await;
             standing_by = false;
         }
@@ -1108,8 +1132,14 @@ pub async fn drive(
         let outcome = notifier
             .step(pool, source, sink, release_notifications_enabled(&settings), db::current_unix_timestamp())
             .await;
+        released = !outcome.watching && gate.idle();
 
-        let sleep_s = sleep_seconds(outcome, db::current_unix_timestamp());
+        let mut sleep_s = sleep_seconds(outcome, db::current_unix_timestamp());
+        if released {
+            // A bell (and its reminder) set in the app while the lock is free only wakes the
+            // app's own notifier, so look again soon rather than after the long sleep.
+            sleep_s = sleep_s.min(WATCH_TICK_S as u64);
+        }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(sleep_s)) => {}
             _ = BELLS_CHANGED.notified() => {

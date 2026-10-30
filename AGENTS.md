@@ -105,6 +105,7 @@ Notes:
 - Debug-only switches: `ANIX_CATALOGUE_DOWN=anilist,myanimelist,…` simulates catalogue outages, and `ANIX_TEST_NOTIFICATION=1` shows a sample notification.
 - `ANIX_PLAYER_ENGINE=web` or `--web-player` forces the web player. `--background` runs the release checks with no window.
 - The only deep link is `anix://anime/<id>` (negative ids allowed), parsed by `parseDeepLink` in `src/lib/routes.ts`.
+  An AppImage registers the `anix://`/`anilili://` handler itself on start (`system/url_handler.rs`: one hidden `.desktop` file in `$XDG_DATA_HOME/applications`, rewritten only when the AppImage it names is gone). Tests pass a temp data folder and never run `xdg-mime`.
 
 ## Release build (overview)
 

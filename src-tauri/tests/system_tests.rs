@@ -579,6 +579,31 @@ async fn exactly_one_process_owns_the_checking() {
     assert!(handoff.holds_checker());
 }
 
+#[tokio::test]
+async fn an_idle_background_checker_does_not_hold_up_the_app() {
+    let dir = TempDir::new("idle-handoff");
+
+    // The background process checked, found no bells, and goes into its long sleep.
+    let mut handoff = background::Handoff::new(&dir.0);
+    assert!(handoff.may_check());
+    assert!(handoff.idle(), "it held the checker lock");
+    assert!(!handoff.holds_checker(), "nothing to check: the checker lock is let go of");
+
+    // The app starts during that sleep and takes over at once, not after the sleep.
+    let held = tokio::time::timeout(
+        Duration::from_millis(500),
+        background::claim_in(&dir.0, Duration::from_millis(20)),
+    )
+    .await
+    .expect("the app's notifier is not stalled by an idle background process");
+    assert_eq!(held.len(), 2);
+
+    // When the background process wakes, it stands by.
+    assert!(!handoff.may_check());
+    drop(held);
+    assert!(handoff.may_check(), "with the app gone, it checks again");
+}
+
 // ---- web page crash recovery ------------------------------------------------------------
 
 use anix_lib::system::page_crash::{allow_reload, route_from_url, RELOADS_PER_MINUTE};
@@ -604,4 +629,119 @@ fn the_route_to_reopen_comes_from_the_hash_route_of_the_page() {
     assert_eq!(route_from_url("tauri://localhost/"), None);
     assert_eq!(route_from_url("tauri://localhost/#//evil.example"), None);
     assert_eq!(route_from_url("not a url"), None);
+}
+
+// ---------------------------------------------------------------------------------------
+// Restart arguments
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn a_restart_drops_the_minimised_background_and_link_arguments_but_keeps_other_flags() {
+    use std::ffi::OsString;
+    let args: Vec<OsString> = [
+        "/opt/Anix.AppImage",
+        "--minimized",
+        "--web-player",
+        "anix://anime/123",
+        "ANILILI://anime/-300000099",
+        "--background",
+        "--verbose",
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
+    let kept: Vec<OsString> = ["/opt/Anix.AppImage", "--web-player", "--verbose"].iter().map(OsString::from).collect();
+    assert_eq!(anix_lib::system::restart_args(&args), kept);
+}
+
+#[test]
+fn a_restart_keeps_the_program_name_even_when_it_looks_like_a_flag() {
+    use std::ffi::OsString;
+    let args = vec![OsString::from("--minimized")];
+    assert_eq!(anix_lib::system::restart_args(&args), args, "argv[0] is the program, never filtered");
+    assert!(anix_lib::system::restart_args(&[]).is_empty());
+}
+
+// ---------------------------------------------------------------------------------------
+// Clicks on alerts from the background process
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn a_background_alert_click_starts_the_app_on_its_anime() {
+    use anix_lib::notifier::Click;
+    assert_eq!(background::launch_args(Click::Nothing), None, "a dismissed alert starts nothing");
+    assert_eq!(background::launch_args(Click::Focus), Some(vec![]), "no anime: just start or raise the app");
+    assert_eq!(background::launch_args(Click::OpenAnime(21)), Some(vec!["anix://anime/21".to_string()]));
+    assert_eq!(
+        background::launch_args(Click::OpenAnime(-300000099)),
+        Some(vec!["anix://anime/-300000099".to_string()]),
+        "stand-in ids are anime too"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// anix:// handler for the AppImage
+// ---------------------------------------------------------------------------------------
+
+use anix_lib::system::url_handler;
+
+#[test]
+fn the_link_handler_entry_opens_both_schemes_with_the_appimage() {
+    let entry = url_handler::handler_entry(Path::new("/home/x/Apps/Anix 1.3.AppImage")).unwrap();
+    assert!(entry.starts_with("[Desktop Entry]\n"));
+    assert!(entry.contains("\nExec=\"/home/x/Apps/Anix 1.3.AppImage\" %u\n"), "{entry}");
+    assert!(entry.contains("\nMimeType=x-scheme-handler/anix;x-scheme-handler/anilili;\n"));
+    assert!(entry.contains("\nNoDisplay=true\n"));
+    assert!(entry.contains("\nX-Anix-AppImage=/home/x/Apps/Anix 1.3.AppImage\n"));
+    // A line break in the path would add keys of its own to the file.
+    assert!(url_handler::handler_entry(Path::new("/tmp/a\nExec=evil")).is_none());
+    // A path that is not UTF-8 would be recorded mangled, never match, and be rewritten on
+    // every start.
+    use std::os::unix::ffi::OsStrExt;
+    let not_utf8 = Path::new(std::ffi::OsStr::from_bytes(b"/apps/Anix-\xff.AppImage"));
+    assert!(url_handler::handler_entry(not_utf8).is_none());
+}
+
+#[test]
+fn the_link_handler_is_written_once_and_again_only_when_its_appimage_is_gone() {
+    let ours = url_handler::handler_entry(Path::new("/apps/Anix.AppImage")).unwrap();
+    let exists = |p: &Path| p == Path::new("/apps/Anix.AppImage");
+    assert!(url_handler::needs_writing(None, exists), "first run");
+    assert!(!url_handler::needs_writing(Some(&ours), exists), "ours, still pointing at a real file");
+    assert!(url_handler::needs_writing(Some(&ours), |_| false), "ours, but the AppImage was moved or deleted");
+    let hand_made = "[Desktop Entry]\nType=Application\nExec=/opt/other %u\nMimeType=x-scheme-handler/anix;\n";
+    assert!(!url_handler::needs_writing(Some(hand_made), |_| false), "a file Anix did not write is never touched");
+}
+
+#[test]
+fn registering_the_link_handler_writes_into_the_data_home_once() {
+    let data_home = TempDir::new("url-handler");
+    let appimage = data_home.0.join("Anix.AppImage");
+    std::fs::write(&appimage, b"").unwrap();
+
+    assert!(url_handler::register(&data_home.0, &appimage).unwrap(), "written on the first run");
+    let path = url_handler::handler_path(&data_home.0);
+    assert_eq!(path, data_home.0.join("applications").join(url_handler::FILE_NAME));
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(written, url_handler::handler_entry(&appimage).unwrap());
+    assert!(!url_handler::register(&data_home.0, &appimage).unwrap(), "left alone on later runs");
+
+    // The AppImage moved: the next run points the handler at the new place.
+    let moved = data_home.0.join("Anix-moved.AppImage");
+    std::fs::rename(&appimage, &moved).unwrap();
+    assert!(url_handler::register(&data_home.0, &moved).unwrap());
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Anix-moved.AppImage"));
+
+    // A hand-made file of the same name stays as it is.
+    std::fs::write(&path, "[Desktop Entry]\nExec=/opt/mine %u\n").unwrap();
+    std::fs::remove_file(&moved).unwrap();
+    assert!(!url_handler::register(&data_home.0, &appimage).unwrap());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[Desktop Entry]\nExec=/opt/mine %u\n");
+    let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().collect();
+    assert_eq!(leftovers.len(), 1, "no temp files left behind");
+
+    // So does one that cannot be read as text.
+    std::fs::write(&path, b"[Desktop Entry]\nName=\xff\n").unwrap();
+    assert!(!url_handler::register(&data_home.0, &appimage).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), b"[Desktop Entry]\nName=\xff\n");
 }

@@ -1655,6 +1655,7 @@
   "useLibrary.notOnList": "リストにありません",
   "useLibrary.onHold": "一時停止中",
   "useLibrary.planToWatch": "視聴予定",
+  "useLibrary.rewatching": "再視聴中",
   "useLibrary.watching": "視聴中",
   "useLocalMedia.yourFiles": "自分のファイル",
   "useLocalScan.enterFolder": "スキャンするフォルダーを入力してください。",

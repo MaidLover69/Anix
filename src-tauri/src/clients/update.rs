@@ -246,15 +246,27 @@ pub fn install_verified(downloaded: &Path, target: &Path, sha256: &str) -> Resul
     if let Err(e) = std::fs::set_permissions(downloaded, std::fs::Permissions::from_mode(mode & 0o7777)) {
         return fail(format!("The update could not be made executable: {}", e));
     }
+    // Synced after the chmod, so a crash after the rename cannot leave a whole AppImage that
+    // no longer runs.
+    if let Err(e) = std::fs::File::open(downloaded).and_then(|f| f.sync_all()) {
+        return fail(format!("Could not save the update: {}", e));
+    }
     let backup = backup_path(target);
     let _ = std::fs::remove_file(&backup);
     if std::fs::hard_link(target, &backup).is_err() {
-        if let Err(e) = std::fs::copy(target, &backup) {
+        // A copied backup is synced like the update, so a crash cannot leave both truncated.
+        let copied = std::fs::copy(target, &backup).and_then(|_| std::fs::File::open(&backup)?.sync_all());
+        if let Err(e) = copied {
             return fail(format!("The current version could not be backed up, so nothing was changed: {}", e));
         }
     }
     if let Err(e) = std::fs::rename(downloaded, target) {
         return fail(format!("The update could not replace {}: {}", target.display(), e));
+    }
+    // Makes the rename and the backup's name durable too. The update is already in place, so
+    // a failure here is only logged.
+    if let Some(Err(e)) = target.parent().map(|dir| std::fs::File::open(dir).and_then(|dir| dir.sync_all())) {
+        tracing::warn!("The folder of the updated AppImage could not be synced: {}", e);
     }
     Ok(backup)
 }
@@ -306,6 +318,11 @@ pub async fn download_and_install(
             }
         }
         tokio::io::AsyncWriteExt::flush(&mut file)
+            .await
+            .map_err(|e| format!("Could not save the update: {}", e))?;
+        // On disk before it is renamed over the AppImage: after a crash or power loss the
+        // rename must never leave a truncated file at the AppImage's path.
+        file.sync_all()
             .await
             .map_err(|e| format!("Could not save the update: {}", e))?;
         Ok(())

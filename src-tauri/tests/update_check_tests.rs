@@ -285,4 +285,5 @@ async fn the_update_is_downloaded_next_to_the_appimage_and_checked_before_it_rep
     assert_eq!(std::fs::read(backup_path(&install.target())).unwrap(), b"old version");
     assert_eq!(seen.last().copied(), Some(1.0));
     assert!(Path::new(&install.0).join("Anix.AppImage.bak").exists());
+    assert_eq!(install.names(), vec!["Anix.AppImage", "Anix.AppImage.bak"], "the partial download is gone");
 }

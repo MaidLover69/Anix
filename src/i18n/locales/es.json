@@ -1805,6 +1805,7 @@
   "useLibrary.notOnList": "No está en tu lista",
   "useLibrary.onHold": "En pausa",
   "useLibrary.planToWatch": "Pendiente",
+  "useLibrary.rewatching": "Volviendo a ver",
   "useLibrary.watching": "Viendo",
   "useLocalMedia.yourFiles": "Tus archivos",
   "useLocalScan.enterFolder": "Escribe la carpeta que quieres analizar.",

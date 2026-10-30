@@ -1,6 +1,6 @@
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useWatchlist, useContinueWatching } from '../hooks/useLibrary';
+import { useWatchlist, useWatchHistory } from '../hooks/useLibrary';
 import { useAllDownloads } from '../hooks/useDownloads';
 import { usePlaylists } from '../hooks/usePlaylists';
 import { useLocalScan } from '../hooks/useLocalScan';
@@ -33,7 +33,7 @@ export const Library: React.FC = () => {
   };
 
   const watchlistQuery = useWatchlist();
-  const historyQuery = useContinueWatching();
+  const historyQuery = useWatchHistory();
   const playlistsQuery = usePlaylists();
   const downloadsQuery = useAllDownloads({ watch: activeTab === 'downloads' });
   // Kept here so a scan and its results survive switching tabs.

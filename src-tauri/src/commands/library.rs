@@ -25,6 +25,14 @@ pub async fn get_episode_progress(
         .map_err(|e| e.to_string())
 }
 
+/// Library › History: every anime watched, not just the Home rail's 20.
+#[tauri::command]
+pub async fn get_watch_history(state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
+    db::get_watch_history(&state.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn get_continue_watching(
     state: State<'_, AppState>,

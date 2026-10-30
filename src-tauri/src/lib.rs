@@ -110,6 +110,7 @@ pub fn run() {
                     notices::init(app.handle().clone());
                     notifier::start(app.handle().clone());
                     system::apply(app.handle(), system::SystemSettings::read());
+                    system::url_handler::register_for_appimage();
                     let args: Vec<String> = std::env::args().collect();
                     system::tray::hide_if_started_minimised(app.handle(), &args);
                     let pool = app.state::<AppState>().pool.clone();
@@ -178,6 +179,7 @@ pub fn run() {
             commands::get_watched_episodes,
             commands::get_episode_progress,
             commands::get_continue_watching,
+            commands::get_watch_history,
             commands::update_watch_progress,
             commands::add_to_watchlist,
             commands::remove_from_watchlist,
@@ -283,9 +285,10 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 embedded_mpv::on_exit();
+                system::restart_if_asked(app);
             }
         });
 }

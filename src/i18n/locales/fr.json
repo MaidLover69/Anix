@@ -1805,6 +1805,7 @@
   "useLibrary.notOnList": "Pas dans votre liste",
   "useLibrary.onHold": "En pause",
   "useLibrary.planToWatch": "À voir",
+  "useLibrary.rewatching": "En revisionnage",
   "useLibrary.watching": "En cours",
   "useLocalMedia.yourFiles": "Vos fichiers",
   "useLocalScan.enterFolder": "Indiquez le dossier à analyser.",

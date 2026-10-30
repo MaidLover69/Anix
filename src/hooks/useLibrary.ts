@@ -66,6 +66,17 @@ export function useContinueWatching() {
   });
 }
 
+/**
+ * Library › History: every watched anime (the Home rail stops at 20). The key sits under
+ * `continueWatching` so every save that refreshes the rail refreshes this list too.
+ */
+export function useWatchHistory() {
+  return useQuery<HistoryEntry[]>({
+    queryKey: ['continueWatching', 'all'],
+    queryFn: () => invoke<HistoryEntry[]>('get_watch_history'),
+  });
+}
+
 export function useToggleWatchlist() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -202,6 +213,16 @@ export const LIST_STATUS_OPTIONS: { value: ListStatusValue; label: string }[] = 
   { value: 'COMPLETED', get label() { return t('useLibrary.completed'); } },
   { value: 'PAUSED', get label() { return t('useLibrary.onHold'); } },
   { value: 'DROPPED', get label() { return t('useLibrary.dropped'); } },
+];
+
+/**
+ * The AniList tab's lists: the watchlist's statuses plus Rewatching (REPEATING), which AniList
+ * filters separately from Watching. The watchlist keeps five; a rewatch is "Watching" there.
+ */
+export const ANILIST_STATUS_OPTIONS: { value: string; label: string }[] = [
+  LIST_STATUS_OPTIONS[0],
+  { value: 'REPEATING', get label() { return t('useLibrary.rewatching'); } },
+  ...LIST_STATUS_OPTIONS.slice(1),
 ];
 
 export function listStatusLabel(status: string | null | undefined): string {

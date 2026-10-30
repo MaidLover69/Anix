@@ -8,6 +8,8 @@ import { isHistoryEntryFinished, watchPath } from '../../hooks/watchProgress';
 import { usePlayful } from '../../hooks/useSettings';
 import { categoryLabel, episodeLabel, watchedPercent } from './format';
 import { CoverThumb } from './CoverThumb';
+import { ShowMore } from './PosterGrid';
+import { useProgressiveList } from '../../hooks/useProgressiveList';
 import { t } from '../../i18n';
 
 interface HistoryTabProps {
@@ -17,6 +19,9 @@ interface HistoryTabProps {
 export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
   const playful = usePlayful();
   const navigate = useNavigate();
+  const history = query.data ?? [];
+  // The whole history can be long; render it in steps like the other Library lists.
+  const list = useProgressiveList(history);
   if (query.isLoading) {
     return (
       <div className="flex justify-center py-20">
@@ -34,8 +39,6 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
       />
     );
   }
-
-  const history = query.data ?? [];
 
   if (history.length === 0) {
     return (
@@ -60,55 +63,64 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
   }
 
   return (
-    <ul className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-      {history.map((entry) => {
-        const percent = watchedPercent(entry.position_ms, entry.duration_ms);
-        const episode = `${episodeLabel(entry.episode_number)} · ${categoryLabel(entry.category)}`;
-        // A finished episode goes to the anime page, which knows the next released episode.
-        const finished = isHistoryEntryFinished(entry);
+    <>
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+        {list.visible.map((entry) => {
+          const percent = watchedPercent(entry.position_ms, entry.duration_ms);
+          const episode = `${episodeLabel(entry.episode_number)} · ${categoryLabel(entry.category)}`;
+          // A finished episode goes to the anime page, which knows the next released episode.
+          const finished = isHistoryEntryFinished(entry);
 
-        return (
-          <li
-            key={`${entry.anilist_id}-${entry.episode_number}`}
-            className="[content-visibility:auto] [contain-intrinsic-size:auto_190px]"
-          >
-            <Link
-              to={
-                finished
-                  ? `/detail/${entry.anilist_id}`
-                  : watchPath(entry.anilist_id, entry.episode_number, entry.category, entry.provider?.trim())
-              }
-              aria-label={
-                finished
-                  ? t('historyTab.finishedLabel', { title: entry.title, episode })
-                  : t('historyTab.continueLabel', { title: entry.title, episode })
-              }
-              className="flex flex-col gap-2 p-2 rounded-lg ui-card bg-bg-card hover:bg-bg-elevated transition-colors focus-visible:-outline-offset-2"
+          return (
+            <li
+              key={`${entry.anilist_id}-${entry.episode_number}`}
+              className="[content-visibility:auto] [contain-intrinsic-size:auto_190px]"
             >
-              <div className="relative w-full aspect-video rounded-md overflow-hidden bg-bg-elevated">
-                <CoverThumb src={entry.cover} className="w-full h-full" />
-                {percent !== null && (
-                  <div className="absolute bottom-0 start-0 end-0 h-1 bg-white/20">
-                    <div className="h-full bg-accent-500" style={{ width: `${percent}%` }} />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-0.5 px-1 pb-1 min-w-0">
-                <span className="text-[13px] font-medium text-text-primary truncate" title={entry.title}>
-                  {entry.title}
-                </span>
-                <span className="flex items-center justify-between gap-2 text-xs text-text-muted">
-                  <span className="truncate">{episode}</span>
+              <Link
+                to={
+                  finished
+                    ? `/detail/${entry.anilist_id}`
+                    : watchPath(entry.anilist_id, entry.episode_number, entry.category, entry.provider?.trim())
+                }
+                aria-label={
+                  finished
+                    ? t('historyTab.finishedLabel', { title: entry.title, episode })
+                    : t('historyTab.continueLabel', { title: entry.title, episode })
+                }
+                className="flex flex-col gap-2 p-2 rounded-lg ui-card bg-bg-card hover:bg-bg-elevated transition-colors focus-visible:-outline-offset-2"
+              >
+                <div className="relative w-full aspect-video rounded-md overflow-hidden bg-bg-elevated">
+                  <CoverThumb src={entry.cover} className="w-full h-full" />
                   {percent !== null && (
-                    <span className="flex-shrink-0 tabular-nums">{t('historyTab.watchedPercent', { percent })}</span>
+                    <div className="absolute bottom-0 start-0 end-0 h-1 bg-white/20">
+                      <div className="h-full bg-accent-500" style={{ width: `${percent}%` }} />
+                    </div>
                   )}
-                </span>
-              </div>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+                </div>
+
+                <div className="flex flex-col gap-0.5 px-1 pb-1 min-w-0">
+                  <span className="text-[13px] font-medium text-text-primary truncate" title={entry.title}>
+                    {entry.title}
+                  </span>
+                  <span className="flex items-center justify-between gap-2 text-xs text-text-muted">
+                    <span className="truncate">{episode}</span>
+                    {percent !== null && (
+                      <span className="flex-shrink-0 tabular-nums">{t('historyTab.watchedPercent', { percent })}</span>
+                    )}
+                  </span>
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      {list.hasMore && (
+        <ShowMore
+          sentinelRef={list.sentinelRef}
+          onClick={list.showMore}
+          remaining={history.length - list.visible.length}
+        />
+      )}
+    </>
   );
 };

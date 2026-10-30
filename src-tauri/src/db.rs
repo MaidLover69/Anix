@@ -668,8 +668,19 @@ fn map_history_row(r: SqliteRow) -> HistoryEntry {
 /// The entry is the anime's most recently played episode. If that episode is already
 /// finished and a later episode of the same anime has been started but not finished, the
 /// later one is returned instead; a finished episode is only listed when nothing later is
-/// in progress.
+/// in progress. Capped at 20 for the Home rail; Library › History uses [`get_watch_history`].
 pub async fn get_continue_watching(pool: &SqlitePool) -> Result<Vec<HistoryEntry>, AppError> {
+    history_entries(pool, 20).await
+}
+
+/// Every anime in the watch history, in the same order and with the same pick as
+/// [`get_continue_watching`], with no cap.
+pub async fn get_watch_history(pool: &SqlitePool) -> Result<Vec<HistoryEntry>, AppError> {
+    // SQLite reads a negative LIMIT as "no limit".
+    history_entries(pool, -1).await
+}
+
+async fn history_entries(pool: &SqlitePool, limit: i64) -> Result<Vec<HistoryEntry>, AppError> {
     let sql = format!(
         r#"
         WITH ranked AS (
@@ -705,13 +716,13 @@ pub async fn get_continue_watching(pool: &SqlitePool) -> Result<Vec<HistoryEntry
         FROM pick p
         JOIN watch_history h
           ON h.anilist_id = p.anilist_id AND h.episode_number = p.episode_number
-        ORDER BY p.last_played DESC
-        LIMIT 20
+        ORDER BY p.last_played DESC, p.anilist_id DESC
+        LIMIT ?1
         "#,
         t = WATCHED_THRESHOLD_PERCENT
     );
 
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(&sql).bind(limit).fetch_all(pool).await?;
     Ok(rows.into_iter().map(map_history_row).collect())
 }
 

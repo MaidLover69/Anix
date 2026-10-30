@@ -781,7 +781,8 @@ fn post_switched_back_notice() {
 
 fn restart() -> ! {
     let app = APP.get().expect("the app handle is set in setup");
-    app.restart()
+    // Without --minimized and launch links, so the restarted window shows (see system::restart).
+    crate::system::restart(app)
 }
 
 fn start(app: &AppHandle) -> Result<(), String> {

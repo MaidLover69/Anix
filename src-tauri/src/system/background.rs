@@ -9,8 +9,11 @@
 //!
 //! Before every step the background process looks at the app's lock. While the app runs, it
 //! lets go of the checker lock and stands by, and the app takes over; when the app quits, the
-//! background process takes the checker lock again. Hits and final notes are also recorded
-//! with updates that succeed only once, so even an overlap never alerts twice.
+//! background process takes the checker lock again. With no bells it also lets go of the
+//! checker lock between checks (then 30 seconds apart, reading its state again each
+//! time), so an app started meanwhile takes over at once. Hits and
+//! final notes are also recorded with updates that succeed only once, so even an overlap never
+//! alerts twice.
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -77,6 +80,29 @@ impl Handoff {
 
     pub fn holds_checker(&self) -> bool {
         self.checker.is_some()
+    }
+
+    /// No bells: the app must not wait for the next step, so the lock is let go of until
+    /// [`Handoff::may_check`] takes it again. True when it was held.
+    pub fn idle(&mut self) -> bool {
+        self.checker.take().is_some()
+    }
+}
+
+/// The background process's gate. Its `may_check` also reads the settings file, so tests use
+/// the inherent [`Handoff`] methods (which take precedence) on temp folders.
+impl crate::notifier::CheckGate for Handoff {
+    fn may_check(&mut self) -> bool {
+        // Switched off in Settings while running: nothing should check from here on.
+        if !super::SystemSettings::read().background_alerts {
+            tracing::info!("Alerts while Anix is closed are switched off; the background process exits");
+            std::process::exit(0);
+        }
+        Handoff::may_check(self)
+    }
+
+    fn idle(&mut self) -> bool {
+        Handoff::idle(self)
     }
 }
 
@@ -171,35 +197,42 @@ pub fn run() -> i32 {
             crate::notifier::cover_dir(),
             on_click,
         );
-        let mut handoff = Handoff::new(&dir);
         crate::notifier::drive(
             &state.pool,
             &*state.catalogue,
             crate::notifier::extension_probe(state.plugins.clone()),
             &sink,
-            move || {
-                // Switched off in Settings while running: nothing should check from here on.
-                if !super::SystemSettings::read().background_alerts {
-                    tracing::info!("Alerts while Anix is closed are switched off; the background process exits");
-                    std::process::exit(0);
-                }
-                handoff.may_check()
-            },
+            Handoff::new(&dir),
         )
         .await;
         0
     })
 }
 
-/// A click on an alert from the background process starts the app (or brings it forward).
-fn open_app(click: crate::notifier::Click) {
-    if click == crate::notifier::Click::Nothing {
-        return;
+/// The arguments the app is started with for a click on a background alert, or `None` for no
+/// start. An anime goes as its `anix://` link: a fresh app opens it at start, and a running one
+/// gets it from the single-instance hand-off, both through the deep-link plugin.
+pub fn launch_args(click: crate::notifier::Click) -> Option<Vec<String>> {
+    use crate::notifier::Click;
+    match click {
+        Click::Nothing => None,
+        Click::Focus => Some(Vec::new()),
+        Click::OpenAnime(id) => Some(vec![format!("anix://anime/{}", id)]),
     }
+}
+
+/// A click on an alert from the background process starts the app (or brings it forward) on
+/// the alert's anime.
+fn open_app(click: crate::notifier::Click) {
+    let Some(args) = launch_args(click) else {
+        return;
+    };
     let Some(exec) = super::autostart::current_exec_target() else {
         return;
     };
-    if let Err(e) = spawn_reaped(std::process::Command::new(&exec)) {
+    let mut cmd = std::process::Command::new(&exec);
+    cmd.args(args);
+    if let Err(e) = spawn_reaped(cmd) {
         tracing::warn!("Could not start Anix from an alert: {}", e);
     }
 }

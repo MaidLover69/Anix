@@ -67,7 +67,8 @@
           "webkit2gtk4.1",
           "gstreamer1-plugins-base",
           "gstreamer1-plugins-good",
-          "gstreamer1-plugins-bad-free"
+          "gstreamer1-plugins-bad-free",
+          "xdg-utils"
         ]
       },
       "deb": {
@@ -81,7 +82,8 @@
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
           "gstreamer1.0-plugins-bad",
-          "gstreamer1.0-libav"
+          "gstreamer1.0-libav",
+          "xdg-utils"
         ]
       },
       "appimage": {

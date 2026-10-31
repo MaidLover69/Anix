@@ -1,10 +1,10 @@
-name: Release AppImage
+name: Release AppImage, DEB and RPM
 
-# Builds the release AppImage on Ubuntu 22.04. An AppImage runs only on systems whose glibc is at
+# Builds the release AppImage, DEB and RPM on Ubuntu 22.04. An AppImage runs only on systems whose glibc is at
 # least as new as the build system's, so this old base (glibc 2.35) makes it run on Ubuntu 22.04,
 # Linux Mint 21, Debian 12, Fedora 36 and everything newer, Arch and CachyOS included.
-# The file is kept as a workflow artifact for 30 days. Pushing a version tag (v1.3.1) also publishes
-# it as a GitHub release, with that version's CHANGELOG.md section as the notes.
+# The files are kept as workflow artifacts for 30 days. Pushing a version tag (v1.3.2) also publishes
+# them as a GitHub release, with that version's CHANGELOG.md section as the notes.
 on:
   push:
     branches: [main]
@@ -14,6 +14,7 @@ on:
       - src-tauri/Cargo.toml
       - src-tauri/tauri.conf.json
       - scripts/build-appimage.sh
+      - scripts/build-packages.sh
       - scripts/build-libmpv-lgpl.sh
       - .github/workflows/release.yml
   workflow_dispatch:
@@ -132,9 +133,119 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  packages:
+    name: DEB and RPM (built on Ubuntu 22.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    timeout-minutes: 120
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ANIX_CHECK_USER: ''
+    steps:
+      - name: Install build packages
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git rsync file xdg-utils \
+            build-essential pkg-config cpio rpm2cpio \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build the DEB and RPM
+        env:
+          ANIX_COMICK_CLIENT_ID: ${{ secrets.ANIX_COMICK_CLIENT_ID }}
+        run: bash scripts/build-packages.sh 2>&1 | tee packages-build.log
+
+      - name: Collect the packages and their checksums
+        run: |
+          mkdir -p dist
+          cp "$GITHUB_WORKSPACE"/../release/*.deb "$GITHUB_WORKSPACE"/../release/*.rpm dist/
+          (cd dist && sha256sum *.deb *.rpm > SHA256SUMS-packages && cat SHA256SUMS-packages)
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: anix-packages
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload the build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-build-log
+          path: packages-build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Fresh systems without build packages, so a dependency the package forgot shows up.
+  deb-check:
+    name: Install the DEB on ${{ matrix.base }}
+    needs: packages
+    runs-on: ubuntu-latest
+    container: ${{ matrix.base }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ['ubuntu:22.04', 'debian:12']
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
+      - name: Install it
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq ./dist/*.deb
+          test -x /usr/bin/anix
+          grep -q 'x-scheme-handler/anix' /usr/share/applications/*.desktop
+          ! ldd /usr/bin/anix | grep 'not found'
+
+  rpm-check:
+    name: Install the RPM on Fedora
+    needs: packages
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    timeout-minutes: 20
+    steps:
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
+      # The RPM's dependencies (named for Fedora in tauri.conf.json) must all resolve.
+      - name: Install it
+        run: |
+          dnf install -y -q dist/*.rpm
+          test -x /usr/bin/anix
+          grep -q 'x-scheme-handler/anix' /usr/share/applications/*.desktop
+          ! ldd /usr/bin/anix | grep 'not found'
+
   publish:
     name: Publish the GitHub release
-    needs: appimage
+    needs: [appimage, packages, deb-check, rpm-check]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -149,11 +260,18 @@ jobs:
           name: anix-appimage
           path: dist
 
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
       - name: Write the release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
           awk -v v="$version" '$0 == "## " v {f=1; next} /^## /{if (f) exit} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
+          cat dist/SHA256SUMS-packages >> dist/SHA256SUMS && rm dist/SHA256SUMS-packages
           printf '\n### SHA-256\n```\n%s\n```\n' "$(cat dist/SHA256SUMS)" >> notes.md
 
       - name: Publish
@@ -163,4 +281,6 @@ jobs:
           body_path: notes.md
           files: |
             dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
             dist/SHA256SUMS

@@ -19,6 +19,8 @@ work="${ANIX_BUILD_DIR:-$HOME/.cache/anix-build}"
 site="${ANIX_SITE_URL:-https://anix-linux.vercel.app}"
 
 case "$work" in *" "*) echo "ANIX_BUILD_DIR must not contain spaces: $work" >&2; exit 1 ;; esac
+# Absolute, since the build runs from inside it.
+mkdir -p "$work" && work="$(cd "$work" && pwd)"
 
 plugins_src=""
 for dir in /usr/lib64/gstreamer-1.0 "/usr/lib/$(uname -m)-linux-gnu/gstreamer-1.0"; do

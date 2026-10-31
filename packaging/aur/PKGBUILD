@@ -1,0 +1,46 @@
+# Maintainer: MaidLover69 <325035566+MaidLover69@users.noreply.github.com>
+#
+# Repackages the release DEB built by .github/workflows/release.yml. Like the DEB and RPM it uses
+# the system's WebKitGTK and GStreamer and starts with the web player; the embedded mpv player
+# needs the AppImage, whose libmpv is an LGPL build. Data lives in the same folders as every
+# other Anix build (~/.config/anix, ~/.local/share/anix), so switching to it moves nothing.
+#
+# At each release: set pkgver, reset pkgrel to 1, run `updpkgsums` and
+# `makepkg --printsrcinfo > .SRCINFO`, then test with `makepkg -si`.
+pkgname=anix-bin
+pkgver=1.3.2
+pkgrel=1
+pkgdesc='Anime catalogue, tracker, library and player'
+arch=('x86_64')
+url='https://anix-linux.vercel.app'
+license=('MIT')
+depends=(
+  'webkit2gtk-4.1'
+  'gtk3'
+  'libayatana-appindicator'
+  'librsvg'
+  'openssl'
+  'gst-plugins-base'
+  'gst-plugins-good'
+  'gst-plugins-bad'
+  'gst-libav'
+  'xdg-utils'
+)
+optdepends=(
+  'mpv: open episodes in mpv'
+  'vlc: open episodes in VLC'
+  'ffmpeg: download episodes that are streamed in parts (HLS)'
+)
+provides=('anix')
+conflicts=('anix')
+options=('!strip' '!debug')
+source=("https://github.com/MaidLover69/Anix/releases/download/v${pkgver}/Anix_${pkgver}_amd64.deb"
+        "LICENSE-${pkgver}::https://raw.githubusercontent.com/MaidLover69/Anix/v${pkgver}/LICENSE")
+# Filled in by updpkgsums once the release files exist.
+sha256sums=('SKIP'
+            'SKIP')
+
+package() {
+  bsdtar -xf data.tar.* -C "$pkgdir"
+  install -Dm644 "LICENSE-${pkgver}" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1616,6 +1616,7 @@
   "systemSection.savingReport": "レポートを保存中",
   "systemSection.softwareDecoders": "ソフトウェアデコーダー（libav）",
   "systemSection.startWithDesktop": "デスクトップセッションと同時に起動（トレイに最小化）",
+  "systemSection.notInFlatpak": "Flatpak 版ではまだ使えません。",
   "systemSection.title": "システム",
   "systemSection.trayHint": "ウィンドウを閉じると Anix はトレイに隠れ、新着通知は引き続き届きます。",
   "systemSection.trayNoHost": "現在デスクトップにトレイが表示されていないため（GNOME では AppIndicator 拡張機能をインストールしてください）、ウィンドウを閉じると終了します。",

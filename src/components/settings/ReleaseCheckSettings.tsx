@@ -4,6 +4,7 @@ import { Switch } from '../ui/Switch';
 import { errorMessage } from '../ui/ErrorState';
 import { Row } from './SettingsLayout';
 import { DEFAULT_SETTINGS, useSaveSettings, useSettings } from '../../hooks/useSettings';
+import { useDesktopStatus } from '../../hooks/useSystem';
 import { useUIStore } from '../../stores/uiStore';
 import { t } from '../../i18n';
 import type { AppSettings } from '../../types';
@@ -17,6 +18,7 @@ const hourOptions = () =>
 /** Settings › Notifications: how long releases are looked for, and alerts while the app is closed. */
 export const ReleaseCheckSettings: React.FC = () => {
   const { data: settings } = useSettings();
+  const flatpak = useDesktopStatus().data?.flatpak === true;
   const save = useSaveSettings();
   const showToast = useUIStore((s) => s.showToast);
 
@@ -49,14 +51,14 @@ export const ReleaseCheckSettings: React.FC = () => {
       </Row>
       <Row
         label={t('releaseCheckSettings.alertsClosed')}
-        hint={t('releaseCheckSettings.alertsClosedHint')}
+        hint={flatpak ? t('systemSection.notInFlatpak') : t('releaseCheckSettings.alertsClosedHint')}
       >
         {({ labelId, hintId }) => (
           <Switch
             aria-labelledby={labelId}
             aria-describedby={hintId}
-            checked={settings?.background_alerts ?? false}
-            disabled={off && !settings?.background_alerts}
+            checked={(settings?.background_alerts ?? false) && !flatpak}
+            disabled={flatpak || (off && !settings?.background_alerts)}
             onChange={(checked) => update({ background_alerts: checked })}
           />
         )}

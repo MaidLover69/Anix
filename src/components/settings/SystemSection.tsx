@@ -195,8 +195,9 @@ export const SystemSection: React.FC = () => {
       : !status.tray_host && trayOn
         ? t('systemSection.trayNoHost')
         : t('systemSection.trayHint');
-  const autostartHint =
-    status?.autostart_installed && status.autostart_path
+  const autostartHint = status?.flatpak
+    ? t('systemSection.notInFlatpak')
+    : status?.autostart_installed && status.autostart_path
       ? t('systemSection.autostartHintPath', { path: status.autostart_path })
       : t('systemSection.autostartHint');
 
@@ -218,8 +219,8 @@ export const SystemSection: React.FC = () => {
           <Switch
             aria-labelledby={labelId}
             aria-describedby={hintId}
-            checked={(settings?.start_with_desktop ?? false) && trayOn}
-            disabled={!settings || !trayOn}
+            checked={(settings?.start_with_desktop ?? false) && trayOn && !status?.flatpak}
+            disabled={!settings || !trayOn || status?.flatpak === true}
             onChange={(checked) => update({ start_with_desktop: checked })}
           />
         )}

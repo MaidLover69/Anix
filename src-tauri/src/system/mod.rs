@@ -144,10 +144,19 @@ impl SystemSettings {
     }
 }
 
+/// True inside a Flatpak sandbox. There the autostart entry and the systemd timer would land in
+/// the sandbox's own folders and never run, so both stay off (the Flatpak is a preview).
+pub fn is_flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
 /// Applies the settings: creates or removes the tray icon and writes or removes the
 /// autostart entry. The entry is only written while the tray is on, since it starts hidden.
 pub fn apply(app: &tauri::AppHandle, settings: SystemSettings) {
     tray::set_enabled(app, settings.minimize_to_tray);
+    if is_flatpak() {
+        return;
+    }
     let Some(config_home) = dirs::config_dir() else {
         return;
     };
@@ -177,6 +186,8 @@ pub struct DesktopStatus {
     pub autostart_path: Option<String>,
     /// What the autostart entry starts.
     pub exec_target: Option<String>,
+    /// Running as a Flatpak: start-at-login and alerts while closed are not available.
+    pub flatpak: bool,
 }
 
 pub fn desktop_status(app: &tauri::AppHandle) -> DesktopStatus {
@@ -190,5 +201,6 @@ pub fn desktop_status(app: &tauri::AppHandle) -> DesktopStatus {
             .as_deref()
             .map(|dir| autostart::entry_path(dir).to_string_lossy().into_owned()),
         exec_target: autostart::current_exec_target().map(|p| p.to_string_lossy().into_owned()),
+        flatpak: is_flatpak(),
     }
 }

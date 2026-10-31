@@ -1760,6 +1760,7 @@
   "systemSection.savingReport": "Enregistrement du rapport",
   "systemSection.softwareDecoders": "Décodeurs logiciels (libav)",
   "systemSection.startWithDesktop": "Démarrer avec la session de bureau (réduit dans la zone de notification)",
+  "systemSection.notInFlatpak": "Pas encore disponible dans le Flatpak.",
   "systemSection.title": "Système",
   "systemSection.trayHint": "Fermer la fenêtre masque Anix dans la zone de notification ; les notifications de sortie continuent d’arriver.",
   "systemSection.trayNoHost": "Votre bureau n’affiche aucune zone de notification pour le moment (sur GNOME, installez l’extension AppIndicator), fermer la fenêtre quitte donc toujours l’application.",

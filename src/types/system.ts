@@ -15,6 +15,8 @@ export interface DesktopStatus {
   autostart_installed: boolean;
   autostart_path: string | null;
   exec_target: string | null;
+  /** Running as a Flatpak: start-at-login and alerts while closed are not available. */
+  flatpak: boolean;
 }
 
 export interface VaInfo {

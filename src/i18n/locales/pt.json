@@ -1760,6 +1760,7 @@
   "systemSection.savingReport": "Salvando o relatório",
   "systemSection.softwareDecoders": "Decodificadores por software (libav)",
   "systemSection.startWithDesktop": "Iniciar com a sessão da área de trabalho (minimizado na bandeja)",
+  "systemSection.notInFlatpak": "Ainda não disponível no Flatpak.",
   "systemSection.title": "Sistema",
   "systemSection.trayHint": "Fechar a janela esconde o Anix na bandeja; as notificações de lançamento continuam chegando.",
   "systemSection.trayNoHost": "Sua área de trabalho não mostra uma bandeja agora (no GNOME, instale a extensão AppIndicator), então fechar a janela ainda encerra o app.",

@@ -1688,6 +1688,7 @@
   "systemSection.savingReport": "Bericht wird gespeichert",
   "systemSection.softwareDecoders": "Software-Decoder (libav)",
   "systemSection.startWithDesktop": "Mit der Desktop-Sitzung starten (im Tray minimiert)",
+  "systemSection.notInFlatpak": "Im Flatpak noch nicht verfügbar.",
   "systemSection.title": "System",
   "systemSection.trayHint": "Beim Schließen des Fensters wird Anix im Tray versteckt; Benachrichtigungen zu neuen Folgen kommen weiterhin.",
   "systemSection.trayNoHost": "Dein Desktop zeigt gerade keinen Tray (unter GNOME installiere die AppIndicator-Erweiterung), daher beendet das Schließen des Fensters die App weiterhin.",

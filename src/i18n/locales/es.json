@@ -1760,6 +1760,7 @@
   "systemSection.savingReport": "Guardando el informe",
   "systemSection.softwareDecoders": "Decodificadores por software (libav)",
   "systemSection.startWithDesktop": "Iniciar con la sesión de escritorio (minimizado en la bandeja)",
+  "systemSection.notInFlatpak": "Aún no está disponible en el Flatpak.",
   "systemSection.title": "Sistema",
   "systemSection.trayHint": "Al cerrar la ventana, Anix se oculta en la bandeja; los avisos de estreno siguen llegando.",
   "systemSection.trayNoHost": "Tu escritorio no muestra ninguna bandeja ahora mismo (en GNOME, instala la extensión AppIndicator), así que cerrar la ventana sigue cerrando la aplicación.",

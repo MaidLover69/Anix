@@ -36,7 +36,7 @@ pub struct UpdateInstallSupport {
 
 /// How this copy of Anix was installed.
 pub fn install_kind() -> &'static str {
-    if std::path::Path::new("/.flatpak-info").exists() {
+    if crate::system::is_flatpak() {
         "flatpak"
     } else if std::env::var_os("APPIMAGE").is_some_and(|p| !p.is_empty()) {
         "appimage"

@@ -1688,6 +1688,7 @@
   "systemSection.savingReport": "रिपोर्ट सेव हो रही है",
   "systemSection.softwareDecoders": "सॉफ़्टवेयर डिकोडर (libav)",
   "systemSection.startWithDesktop": "डेस्कटॉप सेशन के साथ शुरू करें (ट्रे में छोटा करके)",
+  "systemSection.notInFlatpak": "Flatpak में अभी उपलब्ध नहीं है।",
   "systemSection.title": "सिस्टम",
   "systemSection.trayHint": "विंडो बंद करने पर Anix ट्रे में छिप जाता है; रिलीज़ सूचनाएँ आती रहती हैं।",
   "systemSection.trayNoHost": "आपका डेस्कटॉप अभी कोई ट्रे नहीं दिखा रहा (GNOME पर AppIndicator एक्सटेंशन इंस्टॉल करें), इसलिए विंडो बंद करने पर ऐप अब भी बंद हो जाता है।",

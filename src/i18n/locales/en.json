@@ -1688,6 +1688,7 @@
   "systemSection.savingReport": "Saving the report",
   "systemSection.softwareDecoders": "Software decoders (libav)",
   "systemSection.startWithDesktop": "Start with the desktop session (minimised to tray)",
+  "systemSection.notInFlatpak": "Not available in the Flatpak yet.",
   "systemSection.title": "System",
   "systemSection.trayHint": "Closing the window hides Anix in the tray; release notifications keep coming.",
   "systemSection.trayNoHost": "Your desktop shows no tray right now (on GNOME, install the AppIndicator extension), so closing the window still quits.",

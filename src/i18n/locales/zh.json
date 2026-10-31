@@ -1616,6 +1616,7 @@
   "systemSection.savingReport": "正在保存报告",
   "systemSection.softwareDecoders": "软件解码器（libav）",
   "systemSection.startWithDesktop": "随桌面会话启动（最小化到托盘）",
+  "systemSection.notInFlatpak": "Flatpak 版暂不支持。",
   "systemSection.title": "系统",
   "systemSection.trayHint": "关闭窗口会将 Anix 隐藏到托盘；更新提醒会继续推送。",
   "systemSection.trayNoHost": "你的桌面当前没有显示托盘（在 GNOME 上请安装 AppIndicator 扩展），因此关闭窗口仍会退出程序。",

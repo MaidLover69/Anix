@@ -1832,6 +1832,7 @@
   "systemSection.savingReport": "Сохранение отчёта",
   "systemSection.softwareDecoders": "Программные декодеры (libav)",
   "systemSection.startWithDesktop": "Запускать вместе с сеансом рабочего стола (свёрнуто в трей)",
+  "systemSection.notInFlatpak": "Пока недоступно во Flatpak.",
   "systemSection.title": "Система",
   "systemSection.trayHint": "При закрытии окна Anix прячется в трей; уведомления о выходе продолжают приходить.",
   "systemSection.trayNoHost": "Сейчас ваш рабочий стол не показывает трей (в GNOME установите расширение AppIndicator), поэтому закрытие окна всё равно завершает работу.",

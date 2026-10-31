@@ -1760,6 +1760,7 @@
   "systemSection.savingReport": "Salvataggio del report",
   "systemSection.softwareDecoders": "Decoder software (libav)",
   "systemSection.startWithDesktop": "Avvia con la sessione desktop (ridotto nell'area di notifica)",
+  "systemSection.notInFlatpak": "Non ancora disponibile nel Flatpak.",
   "systemSection.title": "Sistema",
   "systemSection.trayHint": "Chiudendo la finestra, Anix si nasconde nell'area di notifica; le notifiche delle uscite continuano ad arrivare.",
   "systemSection.trayNoHost": "Al momento il tuo desktop non mostra un'area di notifica (su GNOME installa l'estensione AppIndicator), quindi chiudere la finestra chiude comunque l'app.",

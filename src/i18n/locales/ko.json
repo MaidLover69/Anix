@@ -1616,6 +1616,7 @@
   "systemSection.savingReport": "보고서 저장 중",
   "systemSection.softwareDecoders": "소프트웨어 디코더 (libav)",
   "systemSection.startWithDesktop": "데스크톱 세션과 함께 시작 (트레이로 최소화)",
+  "systemSection.notInFlatpak": "Flatpak 버전에서는 아직 사용할 수 없습니다.",
   "systemSection.title": "시스템",
   "systemSection.trayHint": "창을 닫으면 Anix가 트레이에 숨어요. 방영 알림은 계속 와요.",
   "systemSection.trayNoHost": "지금 데스크톱에 트레이가 없어요 (GNOME에서는 AppIndicator 확장을 설치하세요). 그래서 창을 닫으면 종료돼요.",

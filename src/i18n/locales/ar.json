@@ -1976,6 +1976,7 @@
   "systemSection.savingReport": "جارٍ حفظ التقرير",
   "systemSection.softwareDecoders": "مفككات الترميز البرمجية (libav)",
   "systemSection.startWithDesktop": "ابدأ مع جلسة سطح المكتب (مصغّرًا في علبة النظام)",
+  "systemSection.notInFlatpak": "غير متاح في نسخة Flatpak بعد.",
   "systemSection.title": "النظام",
   "systemSection.trayHint": "إغلاق النافذة يُخفي Anix في علبة النظام؛ وتستمر إشعارات الإصدار في الوصول.",
   "systemSection.trayNoHost": "سطح المكتب لا يعرض علبة نظام حاليًا (على GNOME، ثبّت امتداد AppIndicator)، لذا يؤدي إغلاق النافذة إلى الخروج.",

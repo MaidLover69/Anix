@@ -16,6 +16,7 @@ on:
       - scripts/build-appimage.sh
       - scripts/build-packages.sh
       - scripts/build-libmpv-lgpl.sh
+      - scripts/smoke-appimage.py
       - .github/workflows/release.yml
   workflow_dispatch:
 
@@ -243,9 +244,68 @@ jobs:
           grep -q 'x-scheme-handler/anix' /usr/share/applications/*.desktop
           ! ldd /usr/bin/anix | grep 'not found'
 
+  # The built AppImage on clean systems under X (Xvfb + a window manager), with real clicks and keys.
+  # Only Ubuntu 22.04's WebKitWebDriver matches the WebKit the AppImage bundles, so only there does it
+  # also play a local clip through the stream proxy and check fullscreen (scripts/smoke-appimage.py).
+  smoke:
+    name: Smoke the AppImage on ${{ matrix.base }}
+    needs: appimage
+    runs-on: ubuntu-latest
+    container: ${{ matrix.base }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'fedora:latest', 'archlinux:latest']
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install a display, a window manager and xdotool (no libfuse2)
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends xvfb xdotool openbox dbus-x11 imagemagick python3 binutils ca-certificates
+            if [ "${{ matrix.base }}" = ubuntu:22.04 ]; then apt-get install -y -qq --no-install-recommends webkit2gtk-driver ffmpeg; fi
+          elif command -v dnf >/dev/null; then
+            dnf install -y -q xorg-x11-server-Xvfb xdotool openbox dbus-x11 ImageMagick python3 binutils
+          else
+            pacman -Syu --noconfirm --quiet xorg-server-xvfb xdotool openbox dbus imagemagick python binutils
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-appimage
+          path: dist
+
+      - name: Run the smoke test
+        run: |
+          chmod +x dist/*.AppImage
+          extra=""
+          if command -v WebKitWebDriver >/dev/null || [ -x /usr/bin/WebKitWebDriver ]; then
+            ffmpeg -loglevel error -f lavfi -i testsrc=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 \
+              -t 60 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest clip.mp4
+            extra="--webdriver --clip $PWD/clip.mp4"
+          fi
+          Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & export DISPLAY=:99; sleep 2
+          openbox & sleep 2
+          dbus-run-session -- python3 scripts/smoke-appimage.py dist/*.AppImage smoke-out $extra
+
+      - name: Upload the smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ strategy.job-index }}
+          path: smoke-out/
+          retention-days: 14
+          if-no-files-found: ignore
+
   publish:
     name: Publish the GitHub release
-    needs: [appimage, packages, deb-check, rpm-check]
+    needs: [appimage, packages, deb-check, rpm-check, smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

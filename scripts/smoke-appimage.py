@@ -90,6 +90,15 @@ def click_center(win):
     sh("xdotool", "mousemove", "--window", win, str(w // 2), str(h // 2), "click", "1")
 
 
+def step(name, fn):
+    """One WebDriver step; a hang or error is recorded under its name instead of ending the run."""
+    try:
+        return fn()
+    except Exception as e:
+        fail(f"{name}: {type(e).__name__}: {e}")
+        return None
+
+
 def shot(name):
     if shutil.which("import"):
         subprocess.run(["import", "-window", "root", os.path.join(OUT, name)], env=ENV, timeout=20, check=False)
@@ -111,7 +120,7 @@ class Driver:
             return json.loads(r.read() or b"{}").get("value")
 
     def run(self, js, *args):
-        return self.call("POST", f"/session/{self.sid}/execute/sync", {"script": js, "args": list(args)})
+        return self.call("POST", f"/session/{self.sid}/execute/sync", {"script": js, "args": list(args)}, timeout=20)
 
     def invoke(self, cmd, args=None):
         js = "const done=arguments[arguments.length-1]; window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1]||{}).then(v=>done({ok:v}), e=>done({err:String(e)}))"
@@ -183,8 +192,13 @@ try:
         else:
             time.sleep(15)
             # Real input while playing: fullscreen on and off with the key, a click on the video.
+            # The page logs the keys it gets, so a missing fullscreen tells "key never arrived" from "key ignored".
+            driver.run("window.__keys=[]; addEventListener('keydown', e => window.__keys.push([e.key, document.activeElement && document.activeElement.tagName]), true)")
+            res["focused_window_before_f"] = sh("xdotool", "getactivewindow")
             key(win, "f")
             time.sleep(3)
+            res["keys_seen"] = step("keys after f", lambda: driver.run("return window.__keys"))
+            res["fullscreen_element"] = step("fullscreen element", lambda: driver.run("return document.fullscreenElement ? document.fullscreenElement.tagName : null"))
             res["fullscreen_size"] = geometry(win)
             res["screen_size"] = screen()
             if res["fullscreen_size"] != res["screen_size"]:
@@ -193,12 +207,14 @@ try:
             key(win, "f")
             time.sleep(2)
             res["after_second_f"] = geometry(win)
+            shot("after-second-f.png")
             click_center(win)
             time.sleep(2)
-            res["paused_by_click"] = driver.run("const v=document.querySelector('video'); return v ? v.paused : null")
+            shot("after-click.png")
+            res["paused_by_click"] = step("paused after click", lambda: driver.run("const v=document.querySelector('video'); return v ? v.paused : null"))
             click_center(win)
             time.sleep(15)
-            res["position_after_play_s"] = driver.run(SEEK)
+            res["position_after_play_s"] = step("position after play", lambda: driver.run(SEEK))
             if not isinstance(res["position_after_play_s"], (int, float)) or res["position_after_play_s"] < 25:
                 fail(f"playback did not reach 25 s: {res['position_after_play_s']}")
             shot("playing.png")

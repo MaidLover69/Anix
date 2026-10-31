@@ -18,8 +18,17 @@ jobs:
   test-and-verify:
     name: Build & Test
     runs-on: ubuntu-22.04
+    # About 40 test programs each link the whole app; with full debug info they filled the runner's disk.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: 0
 
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:

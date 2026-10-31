@@ -328,7 +328,8 @@ jobs:
               packaging/aur/PKGBUILD > "$work/PKGBUILD"
           cat "$work/PKGBUILD" | sed -n '/^source=/,/^package/p'
           chown -R builder "$work"
-          su builder -c "cd $work && makepkg --noconfirm"
+          # Built without the dependencies installed (package() only unpacks); pacman -U pulls them in.
+          su builder -c "cd $work && makepkg --noconfirm --nodeps"
           pacman -U --noconfirm "$work"/anix-bin-*.pkg.tar.*
           test -x /usr/bin/anix
           ! ldd /usr/bin/anix | grep 'not found'

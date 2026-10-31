@@ -162,6 +162,7 @@ const BulkDownloadForm: React.FC<BulkDownloadFormProps> = ({ media, onClose }) =
     saved: skippedEpisodes,
     filler,
     skipFiller,
+    limit: totalEpisodes ? undefined : MAX_BATCH_WITHOUT_COUNT,
   });
   const count = episodes.length;
   const inRange = pick === 'range' && from !== null && to !== null ? Math.abs(to - from) + 1 : count;

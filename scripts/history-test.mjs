@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Tests for when a player visit counts as watch history (10 s of real playback or 2 %).
+// Tests for when a player visit counts as watch history (10 s of real playback or 2 %), and which
+// episodes the download dialog queues.
 //   node --experimental-strip-types scripts/history-test.mjs
 import assert from 'node:assert/strict';
+import { register } from 'node:module';
 import { hasPlayedEnough, playedStep } from '../src/hooks/watchProgress.ts';
 
 const EPISODE = 24 * 60;
@@ -49,5 +51,55 @@ assert.equal(playedStep(NaN, 1), 0);
   }
   assert.equal(hasPlayedEnough(played, EPISODE), true);
 }
+
+// Which episodes the download dialog queues (src/lib/downloadPicks.ts). Its `./languages` import
+// pulls in React and the locale files, so it is stubbed; the picks never use it.
+register(
+  'data:text/javascript,' +
+    encodeURIComponent(
+      `export async function resolve(s, c, next) {
+        return s === './languages'
+          ? { url: 'data:text/javascript,export const sourceLabel=()=>"";export const versionLabel=()=>"";', shortCircuit: true }
+          : next(s, c);
+      }`
+    )
+);
+const { nextUnwatched, pickEpisodes, storageState } = await import('../src/lib/downloadPicks.ts');
+const pick = (input) =>
+  pickEpisodes({ pick: 'range', total: 12, from: 1, to: 12, watched: [], saved: [], filler: [], skipFiller: false, ...input });
+
+// A range is inclusive, and a reversed one counts the same episodes.
+assert.deepEqual(pick({ from: 3, to: 5 }), [3, 4, 5]);
+assert.deepEqual(pick({ from: 12, to: 3 }), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+assert.deepEqual(pick({ from: null }), [], 'half-typed range');
+// Filler is left out only when asked; saved or queued episodes are always left out.
+assert.deepEqual(pick({ from: 1, to: 6, filler: [2, 3], saved: [3, 5] }), [1, 2, 4, 6]);
+assert.deepEqual(pick({ from: 1, to: 6, filler: [2, 3], saved: [3, 5], skipFiller: true }), [1, 4, 6]);
+// "Unwatched" walks the known total, and has nothing to walk without one.
+assert.deepEqual(pick({ pick: 'unwatched', total: 5, watched: [1, 2, 4], saved: [5] }), [3]);
+assert.deepEqual(pick({ pick: 'unwatched', total: null }), []);
+// The limit keeps one extra pick, so the caller can tell the batch is over it.
+assert.deepEqual(pick({ from: 1, to: 12, limit: 3 }), [1, 2, 3, 4]);
+assert.deepEqual(pick({ from: 1, to: 12, limit: 3, saved: [2] }), [1, 3, 4, 5]);
+// A huge "to" with no known total stops at the limit instead of building a billion-entry list.
+{
+  const started = performance.now();
+  const picked = pick({ total: null, from: 1, to: 999_999_999, limit: 100 });
+  assert.equal(picked.length, 101);
+  assert.equal(picked.at(-1), 101);
+  assert.ok(performance.now() - started < 1000, 'huge range finishes fast');
+}
+
+// "From episode N" is the one after the last watched, if there is one.
+assert.equal(nextUnwatched([], 12), null);
+assert.equal(nextUnwatched([1, 2, 3.5], 12), 4);
+assert.equal(nextUnwatched([12], 12), null, 'all watched');
+assert.equal(nextUnwatched([40], null), 41);
+
+// Free space: more than free is full, less than the headroom left is tight.
+assert.equal(storageState(11, 10, 2), 'full');
+assert.equal(storageState(10, 10, 2), 'tight');
+assert.equal(storageState(9, 10, 2), 'tight');
+assert.equal(storageState(8, 10, 2), 'ok');
 
 console.log('history tests passed');

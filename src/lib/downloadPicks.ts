@@ -18,22 +18,30 @@ export interface PickInput {
   saved: number[];
   filler: number[];
   skipFiller: boolean;
+  /** Stop after `limit + 1` picks, enough to tell the batch is over the limit. */
+  limit?: number;
 }
 
 const has = (list: number[], episode: number) => list.some((n) => Math.abs(n - episode) < 0.01);
 
 /** The episode numbers to queue, in order. */
 export function pickEpisodes(input: PickInput): number[] {
-  let episodes: number[] = [];
-  if (input.pick === 'unwatched') {
-    for (let n = 1; n <= (input.total ?? 0); n++) if (!has(input.watched, n)) episodes.push(n);
-  } else if (input.from !== null && input.to !== null) {
-    const start = Math.max(1, Math.min(input.from, input.to));
-    const end = Math.max(input.from, input.to);
-    for (let n = start; n <= end; n++) episodes.push(n);
+  let start = 1;
+  let end = input.total ?? 0;
+  if (input.pick === 'range') {
+    if (input.from === null || input.to === null) return [];
+    start = Math.max(1, Math.min(input.from, input.to));
+    end = Math.max(input.from, input.to);
   }
-  if (input.skipFiller) episodes = episodes.filter((n) => !has(input.filler, n));
-  return episodes.filter((n) => !has(input.saved, n));
+  const limit = input.limit ?? Infinity;
+  const episodes: number[] = [];
+  // Without a known total `end` is whatever was typed, so the loop stops at the limit instead.
+  for (let n = start; n <= end && episodes.length <= limit; n++) {
+    if (input.pick === 'unwatched' && has(input.watched, n)) continue;
+    if (input.skipFiller && has(input.filler, n)) continue;
+    if (!has(input.saved, n)) episodes.push(n);
+  }
+  return episodes;
 }
 
 /** "From episode N": the episode after the last one watched, or null when there is none. */

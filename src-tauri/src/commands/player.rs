@@ -122,6 +122,9 @@ pub fn open_external(url: String) -> Result<(), String> {
 /// Maps the player setting to a fixed binary name. The caller's string never becomes the
 /// program that is executed; `builtin` has no external binary, so it falls back to mpv.
 pub fn resolve_player_bin(player: Option<&str>) -> Result<&'static str, String> {
+    if crate::system::is_flatpak() {
+        return Err("mpv and VLC cannot be started from the Flatpak yet. Play it in Anix instead.".to_string());
+    }
     match player.map(|p| p.to_lowercase()).as_deref() {
         None | Some("") | Some("mpv") | Some("builtin") => Ok("mpv"),
         Some("vlc") => Ok("vlc"),

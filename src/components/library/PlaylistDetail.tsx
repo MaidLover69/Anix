@@ -11,6 +11,7 @@ import {
 } from '../../hooks/usePlaylists';
 import { newQueuedDownload, useQueueDownloads } from '../../hooks/useDownloads';
 import { useSettings } from '../../hooks/useSettings';
+import { useDesktopStatus } from '../../hooks/useSystem';
 import { usePreferredProvider } from '../../hooks/usePlugins';
 import { distinctEpisodeTitle, watchPath } from '../../hooks/watchProgress';
 import { usePlayerStore } from '../../stores/playerStore';
@@ -49,6 +50,8 @@ function itemName(item: CustomPlaylistItem): string {
 
 export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack, onDeleted }) => {
   const navigate = useNavigate();
+  // The Flatpak cannot start mpv or VLC on the host.
+  const flatpak = useDesktopStatus().data?.flatpak === true;
   const { data: settings } = useSettings();
   // A stored preference that is not an enabled plugin behaves as Auto.
   const preferredProvider = usePreferredProvider(settings?.preferred_provider);
@@ -301,8 +304,8 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
           <Play className="w-4 h-4 fill-current" aria-hidden="true" />
           <span>{t('common.play')}</span>
         </Button>
-        {externalButton('mpv')}
-        {externalButton('vlc')}
+        {!flatpak && externalButton('mpv')}
+        {!flatpak && externalButton('vlc')}
         {resolving && (
           <Button variant="ghost" onClick={handleCancelResolve} disabled={resolving.cancelling}>
             {resolving.cancelling ? t('playlistDetail.cancelling') : t('common.cancel')}

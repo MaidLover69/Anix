@@ -18,6 +18,7 @@ import { PluginConfigDialog } from '../components/settings/PluginConfigDialog';
 import { ServerOrder } from '../components/settings/ServerOrder';
 import { usePluginHealth, usePluginUpdates, PLUGIN_UPDATES_KEY, type HealthState } from '../hooks/usePluginHealth';
 import { useTheme } from '../hooks/useTheme';
+import { useDesktopStatus } from '../hooks/useSystem';
 import { useSiteVerification } from '../hooks/useSiteVerification';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
@@ -654,6 +655,7 @@ export const Settings: React.FC = () => {
 
   const accountsQuery = useAccountStatus();
   const { theme, setTheme } = useTheme();
+  const flatpak = useDesktopStatus().data?.flatpak === true;
 
   if (settingsQuery.isLoading) {
     return (
@@ -799,13 +801,14 @@ export const Settings: React.FC = () => {
           </Row>
           <Row
             label={t('settings.externalPlayer')}
-            hint={t('settings.externalPlayerHint')}
+            hint={flatpak ? t('systemSection.notInFlatpak') : t('settings.externalPlayerHint')}
           >
             {({ labelId, hintId }) => (
               <CustomSelect
                 aria-labelledby={labelId}
                 aria-describedby={hintId}
                 className="w-52"
+                disabled={flatpak}
                 value={externalPlayer}
                 onChange={(value) => {
                   if (isOneOf(value, PLAYER_OPTIONS)) updateSetting('external_player', value);

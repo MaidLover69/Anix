@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { scrollBehavior } from '../lib/motion';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { AnimeCard } from './AnimeCard';
@@ -66,7 +67,7 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
     el.scrollBy({
       left: direction === 'left' ? -distance : distance,
       // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      behavior: scrollBehavior(),
     });
   };
 

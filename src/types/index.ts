@@ -482,6 +482,8 @@ export interface AppSettings {
   use_system_accent: boolean;
   /** Mascot, kaomoji, friendlier wording and the completed stamp. */
   playful_touches: boolean;
+  /** Settings › Appearance › Fewer effects: no glow, no blur, motion as with reduced motion (weak graphics, old WebKit). */
+  fewer_effects?: boolean;
   /** Hours after an air time during which extensions are asked whether the episode is out. */
   release_check_hours: number;
   /** "Alerts while Anix is closed": a windowless `--background` process is started at login. */

@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { scrollBehavior } from '../lib/motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShimmerImage } from './ShimmerImage';
 import { Button } from './ui/Button';
@@ -53,7 +54,7 @@ export const CharacterRail: React.FC<CharacterRailProps> = ({ characters = [], u
     scrollRef.current?.scrollBy({
       left: direction === 'left' ? -672 : 672,
       // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      behavior: scrollBehavior(),
     });
   };
 

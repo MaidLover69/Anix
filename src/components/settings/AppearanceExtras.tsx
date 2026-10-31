@@ -298,6 +298,20 @@ export const AppearanceExtras: React.FC<{
           />
         )}
       </Row>
+      <Row
+        label={t('appearanceExtras.fewerEffects')}
+        hint={t('appearanceExtras.fewerEffectsHint')}
+        keywords={t('appearanceExtras.fewerEffectsKeywords')}
+      >
+        {({ labelId, hintId }) => (
+          <Switch
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            checked={settings.fewer_effects === true}
+            onChange={(checked) => onChange('fewer_effects', checked)}
+          />
+        )}
+      </Row>
     </>
   );
 };

@@ -4,7 +4,8 @@ import { Play, Info, ChevronLeft, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './ui/Button';
 import { AmbientGlow } from './AmbientGlow';
-import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useReducedMotion } from '../hooks/useMediaQuery';
+import { useWindowActive } from '../hooks/useWindowActive';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
 import { t, type TKey } from '../i18n';
@@ -49,17 +50,19 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<number>>(() => new Set());
-  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const reduceMotion = useReducedMotion();
+  // Nobody watches a rotation in a hidden or background window; each slide change costs a repaint.
+  const windowActive = useWindowActive();
 
   const count = items.length;
   const currentIndex = count > 0 ? index % count : 0;
 
   // Restarts whenever the slide changes, so a manual jump gets a full interval too.
   useEffect(() => {
-    if (count <= 1 || paused || reduceMotion) return;
+    if (count <= 1 || paused || reduceMotion || !windowActive) return;
     const timer = window.setTimeout(() => setIndex((i) => (i + 1) % count), SLIDE_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [currentIndex, count, paused, reduceMotion]);
+  }, [currentIndex, count, paused, reduceMotion, windowActive]);
 
   const current = items[currentIndex];
   if (!current) return null;

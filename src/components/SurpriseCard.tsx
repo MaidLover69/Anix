@@ -8,7 +8,7 @@ import { Spinner } from './ui/Spinner';
 import { ShimmerImage } from './ShimmerImage';
 import { errorMessage } from './ui/ErrorState';
 import { mediaFormatLabel } from './library/format';
-import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useReducedMotion } from '../hooks/useMediaQuery';
 import { t } from '../i18n';
 import type { Media } from '../types';
 
@@ -29,7 +29,7 @@ function plainText(html: string | null): string {
 
 const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }) => {
   const navigate = useNavigate();
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const reducedMotion = useReducedMotion();
   const [pick, setPick] = useState<Media | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [dx, setDx] = useState(0);

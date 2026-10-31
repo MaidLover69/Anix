@@ -19,8 +19,8 @@ interface AmbientGlowProps {
 }
 
 /**
- * A soft radial glow in a title's cover colour. A colour change cross-fades (the theme CSS
- * transitions it, except under reduced motion); without a colour the last one fades out.
+ * A soft radial glow in a title's cover colour. A colour change is instant (a fade repaints the
+ * whole glow every frame); without a colour the last one fades out.
  */
 export const AmbientGlow: React.FC<AmbientGlowProps> = ({ color, className, intensity = 1 }) => {
   const channels = hexToChannels(color);

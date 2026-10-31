@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { scrollBehavior } from '../lib/motion';
 import { Link } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -57,7 +58,7 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
     el.scrollBy({
       left: (direction === 'left' ? -1 : 1) * Math.max(el.clientWidth - 240, 240),
       // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      behavior: scrollBehavior(),
     });
   };
 

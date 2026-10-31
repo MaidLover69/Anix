@@ -58,13 +58,15 @@ export function applyTheme(theme: ThemeId): void {
 
 /**
  * The look settings that sit on top of any theme (Settings › Appearance): contrast level,
- * interface size and background art, as `data-contrast`, `data-ui-size` and `data-art` on
- * <html> (rules in themes.css). Remembered like the theme so the next launch starts with them.
+ * interface size, background art and fewer effects, as `data-contrast`, `data-ui-size`, `data-art`
+ * and `data-effects` on <html> (rules in themes.css and global.css). Remembered like the theme so
+ * the next launch starts with them.
  */
 export interface Look {
   contrast?: 'standard' | 'medium' | 'high';
   uiSize?: 'small' | 'medium' | 'large';
   art?: { url: string; style: 'blur' | 'plain' } | null;
+  fewerEffects?: boolean;
 }
 
 const LOOK_STORAGE_KEY = 'anix-look';
@@ -78,7 +80,9 @@ export function applyLook(look: Look): void {
   set('data-contrast', look.contrast && look.contrast !== 'standard' ? look.contrast : undefined);
   set('data-ui-size', look.uiSize && look.uiSize !== 'medium' ? look.uiSize : undefined);
   const art = look.art && /^https?:\/\//.test(look.art.url) ? look.art : null;
-  set('data-art', art ? art.style : undefined);
+  // A full-window blur is the most expensive thing to draw, so fewer effects shows the art plain.
+  set('data-art', art ? (look.fewerEffects ? 'plain' : art.style) : undefined);
+  set('data-effects', look.fewerEffects ? 'fewer' : undefined);
   if (art) root.style.setProperty('--app-art', `url(${JSON.stringify(art.url)})`);
   else root.style.removeProperty('--app-art');
   try {

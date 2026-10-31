@@ -37,10 +37,16 @@ export function useThemeSync(): void {
   const art = settings?.background_art;
   const artUrl = art?.url;
   const artStyle = art?.style;
+  const fewerEffects = settings?.fewer_effects === true;
   useEffect(() => {
     if (!loaded) return;
-    applyLook({ contrast, uiSize, art: artUrl ? { url: artUrl, style: artStyle === 'plain' ? 'plain' : 'blur' } : null });
-  }, [loaded, contrast, uiSize, artUrl, artStyle]);
+    applyLook({
+      contrast,
+      uiSize,
+      art: artUrl ? { url: artUrl, style: artStyle === 'plain' ? 'plain' : 'blur' } : null,
+      fewerEffects,
+    });
+  }, [loaded, contrast, uiSize, artUrl, artStyle, fewerEffects]);
 }
 
 /** The selected theme and a setter that applies it at once and saves it. */

@@ -214,6 +214,25 @@ option:checked, option:hover {
   letter-spacing: 0;
 }
 
+/* Settings › Appearance › Fewer effects (themes.ts applyLook): no glow, no frosted blur, and motion
+   as with reduced motion, for weak graphics and older WebKit. */
+:root[data-effects="fewer"] .ui-ambient {
+  display: none;
+}
+:root[data-effects="fewer"] .ui-frost {
+  background-color: rgb(var(--bg-page));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+:root[data-effects="fewer"] *,
+:root[data-effects="fewer"] *::before,
+:root[data-effects="fewer"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* Respect the OS "reduce motion" setting */
 @media (prefers-reduced-motion: reduce) {
   *,

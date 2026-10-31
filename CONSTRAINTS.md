@@ -30,8 +30,8 @@ number here in the same change. The guard reads the limit, not the `(measured �
 |---|---|---|
 | Main JS chunk (`dist/assets/index-*.js`) | 1421944 bytes, must not grow | down |
 | Shell ready after launch, web player | at most 3.0 s (measured 2.4–2.6 s) | down |
-| Idle CPU on Home, web player | at most 1 % (measured 9–12 %: the banner's slide change; 0 % paused), must fall | down |
-| Idle CPU on Home, embedded mpv | at most 15 % (measured 7–15 %), must fall | down |
+| Idle CPU on Home, web player | at most 1 % (measured 5.3–6.4 % in front while the banner turns, was 9–12 %; 0 % in the background or with Fewer effects), must fall | down |
+| Idle CPU on Home, embedded mpv | at most 6 % (measured 4.1 % in front, was 7–15 %; 0 % in the background or with Fewer effects), must fall | down |
 | Memory after a 2-minute browse, web player | at most 560 MB (measured ≈536 MB) | down |
 | Memory while playing, web player | at most 950 MB (measured 730–900 MB) | down |
 | First frame of a stream, web player | at most 12 s (measured 8–11 s) | down |

@@ -837,7 +837,9 @@
   background-color: rgb(var(--ambient-rgb, 0 0 0) / var(--ambient-strength));
   -webkit-mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%);
   mask-image: radial-gradient(closest-side, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%);
-  transition: background-color 700ms ease, opacity 700ms ease;
+  /* No colour fade: WebKit repaints the whole masked glow on every frame of one (about 6 % CPU on
+     Home, measured). The banner image under it cross-fades, which hides the switch. */
+  transition: opacity 700ms ease;
 }
 
 .ui-ambient[data-empty="true"] {

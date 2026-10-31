@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { scrollBehavior } from '../lib/motion';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShimmerImage } from './ShimmerImage';
@@ -52,7 +53,7 @@ export const RelationsRail: React.FC<RelationsRailProps> = ({ relations = [] }) 
     scrollRef.current?.scrollBy({
       left: direction === 'left' ? -528 : 528,
       // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      behavior: scrollBehavior(),
     });
   };
 

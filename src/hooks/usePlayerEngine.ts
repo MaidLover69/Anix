@@ -62,6 +62,8 @@ export interface PlayerEngine {
   play: () => void;
   pause: () => void;
   togglePlay: () => void;
+  /** Whether playback was asked for and not paused since (read by the stall watchdog). */
+  wantsPlay: () => boolean;
   /** Playback is held after a stall until enough video is buffered. */
   rebuffering: boolean;
 }
@@ -473,6 +475,8 @@ export function usePlayerEngine({
     else pause();
   }, [videoRef, play, pause]);
 
+  const wantsPlay = useCallback(() => wantPlayRef.current, []);
+
   return {
     phase,
     error,
@@ -492,5 +496,6 @@ export function usePlayerEngine({
     play,
     pause,
     togglePlay,
+    wantsPlay,
   };
 }

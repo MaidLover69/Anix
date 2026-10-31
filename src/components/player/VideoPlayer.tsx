@@ -12,6 +12,8 @@ import type { EpisodeStep } from './PlayerControls';
 import { PlayerSettingsPanel } from './PlayerSettingsPanel';
 import { PauseDetails, PlayerClock } from './PlayerTopBar';
 import { countdownLabel, HOLD_RATE, mpvSubtitlePositions, objectFitClass, PAUSE_DETAILS_MS, stepSpeed } from './playerLogic';
+import { watchStall } from '../../lib/stall';
+import type { StallWatch } from '../../lib/stall';
 import { SecondarySubtitle } from './SecondarySubtitle';
 import type { FeedbackMessage } from './PlayerFeedback';
 import type { PlayerMenuOption } from './PlayerSettingsPanel';
@@ -740,6 +742,58 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => window.clearTimeout(timer);
   }, [pausedNow]);
 
+  // Playback that should be moving but is not gets one offer per load to change server or,
+  // in embedded mpv, to use the web player; a stalled stream otherwise just spins forever.
+  const [stuck, setStuck] = useState(false);
+  const stallOffered = useRef<string | null>(null);
+  const loadId = `${episodeNumber}:${loadKey}`;
+  const wantsPlay = engine.wantsPlay;
+  const enginePhase = engine.phase;
+  const holdingNow = useRef(false);
+  holdingNow.current = engine.rebuffering;
+  useEffect(() => {
+    setStuck(false);
+    if (openExternally || enginePhase === 'error' || stallOffered.current === loadId) return;
+    let watch: StallWatch | null = null;
+    const timer = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video) return;
+      const next = watchStall(watch, {
+        now: Date.now(),
+        time: video.currentTime,
+        phase: enginePhase,
+        wantsPlay: wantsPlay(),
+        paused: video.paused,
+        rebuffering: holdingNow.current,
+      });
+      watch = next.watch;
+      if (!next.stuck) return;
+      stallOffered.current = loadId;
+      setStuck(true);
+      window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [loadId, enginePhase, openExternally, wantsPlay]);
+  // Moving again (or paused by the user) takes the offer away.
+  useEffect(() => {
+    if (!stuck) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const startedAt = video.currentTime;
+    const onTime = () => {
+      if (Math.abs(video.currentTime - startedAt) > 1) setStuck(false);
+    };
+    const onPause = () => {
+      if (!wantsPlay()) setStuck(false);
+    };
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('pause', onPause);
+    return () => {
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('pause', onPause);
+    };
+  }, [stuck, wantsPlay]);
+
   return (
     <div
       ref={rootRef}
@@ -827,6 +881,44 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <span className="sr-only">{t('videoPlayer.buffering')}</span>
           </div>
         )
+      )}
+
+      {stuck && !failed && !miniPlayer.mini && (
+        <div
+          role="status"
+          className="absolute left-1/2 top-16 z-20 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-lg border border-white/20 bg-black/80 px-4 py-2 text-[13px] text-white"
+        >
+          <span>{t('videoPlayer.stuckTitle')}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setStuck(false);
+              (onTryOtherServers ?? onOpenServers)();
+            }}
+            className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
+          >
+            {onTryOtherServers ? t('videoPlayer.tryOtherServers') : t('videoPlayer.changeServer')}
+          </button>
+          {isMpv && (
+            <button
+              type="button"
+              onClick={() => {
+                setStuck(false);
+                onEngineFail(t('videoPlayer.stuckReason'));
+              }}
+              className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
+            >
+              {t('videoPlayer.useWebPlayer')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setStuck(false)}
+            className="h-8 rounded-md px-2 text-white/80 cursor-pointer transition-colors hover:bg-white/15 hover:text-white"
+          >
+            {t('common.close')}
+          </button>
+        </div>
       )}
 
       {skip.active && !failed && !miniPlayer.mini && (

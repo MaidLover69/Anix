@@ -417,6 +417,8 @@ export function useMpvEngine({
     else media.pause();
   }, [media]);
   const noop = useCallback(() => {}, []);
+  // mpv's own pause flag is the user's choice; waiting for its cache does not set it.
+  const wantsPlay = useCallback(() => !!media && !media.paused, [media]);
 
   return {
     phase: loaded ? 'ready' : 'loading',
@@ -436,6 +438,7 @@ export function useMpvEngine({
     play,
     pause,
     togglePlay,
+    wantsPlay,
     rebuffering: false,
     subtitleOptions,
     selectedSubtitle,

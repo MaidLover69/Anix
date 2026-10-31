@@ -169,7 +169,7 @@ async fn test_account_mal_login_exchanges_the_code_and_stores_tokens() {
     assert_eq!(exchange.form("grant_type").as_deref(), Some("authorization_code"));
     assert_eq!(exchange.form("code").as_deref(), Some("the-code"));
     assert_eq!(exchange.form("code_verifier").as_deref(), Some("the-verifier"));
-    assert_eq!(exchange.form("client_id").as_deref(), Some("4ae5f8056db821737a4f40f8816177cd"));
+    assert_eq!(exchange.form("client_id").as_deref(), Some("cb724710c0572e8bafd62051606d949c"));
     assert_eq!(exchange.form("redirect_uri"), None);
     assert_eq!(
         server.requests_to("/users/@me")[0].authorization.as_deref(),
@@ -281,7 +281,7 @@ async fn test_account_mal_token_is_refreshed_when_expired() {
     assert_eq!(refresh.url, "/token");
     assert_eq!(refresh.form("grant_type").as_deref(), Some("refresh_token"));
     assert_eq!(refresh.form("refresh_token").as_deref(), Some("refresh-1"));
-    assert_eq!(refresh.form("client_id").as_deref(), Some("4ae5f8056db821737a4f40f8816177cd"));
+    assert_eq!(refresh.form("client_id").as_deref(), Some("cb724710c0572e8bafd62051606d949c"));
 
     let session_now = world.store.mal().unwrap();
     assert_eq!(session_now.access_token, "access-2");

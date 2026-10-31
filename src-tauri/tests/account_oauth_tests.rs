@@ -48,7 +48,7 @@ fn test_account_anilist_authorize_url() {
     let authorize = anilist_authorize_url("st4te");
     assert!(authorize.starts_with("https://anilist.co/api/v2/oauth/authorize?"));
     let params = query(&authorize);
-    assert_eq!(params.get("client_id").map(String::as_str), Some("45552"));
+    assert_eq!(params.get("client_id").map(String::as_str), Some("55580"));
     assert_eq!(params.get("response_type").map(String::as_str), Some("token"));
     assert_eq!(params.get("state").map(String::as_str), Some("st4te"));
     // AniList's grant step fails when the registered redirect is passed explicitly.
@@ -63,7 +63,7 @@ fn test_account_mal_authorize_url() {
     assert_eq!(params.get("response_type").map(String::as_str), Some("code"));
     assert_eq!(
         params.get("client_id").map(String::as_str),
-        Some("4ae5f8056db821737a4f40f8816177cd")
+        Some("cb724710c0572e8bafd62051606d949c")
     );
     assert_eq!(params.get("state").map(String::as_str), Some("st4te"));
     assert_eq!(params.get("code_challenge").map(String::as_str), Some("the-verifier"));

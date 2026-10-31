@@ -6,7 +6,7 @@ use accounts::session;
 use accounts::store::{AccountStore, AccountsStatus};
 use tauri::{AppHandle, State};
 
-pub const ANILIST_CLIENT_ID: &str = "45552";
+pub const ANILIST_CLIENT_ID: &str = "55580";
 
 /// Opens the sign-in window of `service` (`anilist` or `mal`), or focuses it when it is
 /// already open; for `comick`, opens Comick's sign-in page in the system browser. How the

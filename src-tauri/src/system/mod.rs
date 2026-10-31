@@ -7,6 +7,7 @@ pub mod background;
 pub mod gnutls;
 pub mod hwaccel;
 pub mod page_crash;
+pub mod safe_mode;
 pub mod session_marker;
 pub mod tray;
 pub mod url_handler;

@@ -405,6 +405,11 @@ export interface UpdateInfo {
   appimage?: { url: string; sha256: string; size: number | null };
 }
 
+/** `get_rollback`: the version an update replaced, while its backup is kept. */
+export interface RollbackInfo {
+  version: string;
+}
+
 /** `get_update_install_support`: whether Install can replace the running AppImage. */
 export interface UpdateInstallSupport {
   appimage: boolean;

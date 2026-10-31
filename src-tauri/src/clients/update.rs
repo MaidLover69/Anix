@@ -34,6 +34,9 @@ pub struct UpdateInfo {
     /// The release's AppImage, when the site lists one with its checksum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appimage: Option<AppImageAsset>,
+    /// Versions the site marks as having a known serious problem (`"bad_versions"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bad_versions: Vec<String>,
 }
 
 /// `"appimage": { "url", "sha256", "size" }` in `version.json`.
@@ -53,6 +56,7 @@ impl UpdateInfo {
             published_at,
             release_url,
             appimage: None,
+            bad_versions: Vec::new(),
         }
     }
 }
@@ -176,7 +180,29 @@ pub fn parse_version_document(json: &serde_json::Value, site: &str) -> Option<Up
         published_at: json["published_at"].as_str().unwrap_or("").trim().to_string(),
         release_url,
         appimage: parse_appimage_asset(&json["appimage"]),
+        bad_versions: parse_bad_versions(&json["bad_versions"]),
     })
+}
+
+/// At most this many entries of `bad_versions` are read.
+const MAX_BAD_VERSIONS: usize = 50;
+
+/// `"bad_versions": ["1.4.0", …]`: plain version strings, a leading `v` dropped. Anything else
+/// in the list is ignored.
+pub fn parse_bad_versions(json: &serde_json::Value) -> Vec<String> {
+    json.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .map(|v| v.trim().trim_start_matches(['v', 'V']).to_string())
+        .filter(|v| !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .take(MAX_BAD_VERSIONS)
+        .collect()
+}
+
+/// True when the site lists `current` as a version with a known serious problem.
+pub fn is_bad_version(info: &UpdateInfo, current: &str) -> bool {
+    info.bad_versions.iter().any(|v| v == current.trim_start_matches(['v', 'V']))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -269,6 +295,53 @@ pub fn install_verified(downloaded: &Path, target: &Path, sha256: &str) -> Resul
         tracing::warn!("The folder of the updated AppImage could not be synced: {}", e);
     }
     Ok(backup)
+}
+
+// ---------------------------------------------------------------------------------------
+// Going back after a bad update
+// ---------------------------------------------------------------------------------------
+
+/// Written to the data folder after an update: which version it replaced, so the new version
+/// can offer to go back while the backup is still there.
+pub const ROLLBACK_FILE: &str = "update-rollback.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RollbackRecord {
+    /// The version the backup holds.
+    pub from: String,
+    /// The version that was installed over it.
+    pub to: String,
+}
+
+/// Remembers that `to` was installed over `from`. A failure is only logged: the update itself
+/// is already in place.
+pub fn record_update(app_dir: &Path, from: &str, to: &str) {
+    let record = RollbackRecord { from: from.to_string(), to: to.to_string() };
+    let written = serde_json::to_vec(&record)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| std::fs::write(app_dir.join(ROLLBACK_FILE), bytes));
+    if let Err(e) = written {
+        tracing::warn!("The update record could not be saved: {}", e);
+    }
+}
+
+/// The version Anix can go back to: there is a record of the update to `current`, and the
+/// backup of `target` it made is still there.
+pub fn rollback_available(app_dir: &Path, current: &str, target: &Path) -> Option<RollbackRecord> {
+    let record: RollbackRecord = serde_json::from_slice(&std::fs::read(app_dir.join(ROLLBACK_FILE)).ok()?).ok()?;
+    (record.to == current && backup_path(target).is_file()).then_some(record)
+}
+
+/// Puts the backup back in place of `target` in one rename, so `target` is always a whole
+/// AppImage, and forgets the record. The version being left is not kept.
+pub fn roll_back(app_dir: &Path, current: &str, target: &Path) -> Result<RollbackRecord, String> {
+    let record = rollback_available(app_dir, current, target).ok_or("There is no earlier version to go back to.")?;
+    std::fs::rename(backup_path(target), target).map_err(|e| format!("Could not put the earlier version back: {}", e))?;
+    if let Some(Err(e)) = target.parent().map(|dir| std::fs::File::open(dir).and_then(|dir| dir.sync_all())) {
+        tracing::warn!("The folder of the AppImage could not be synced: {}", e);
+    }
+    let _ = std::fs::remove_file(app_dir.join(ROLLBACK_FILE));
+    Ok(record)
 }
 
 /// Downloads `asset` next to `target` and installs it with [`install_verified`]. `progress`

@@ -48,6 +48,10 @@ pub fn start(app: tauri::AppHandle, registry: registry::PluginRegistry) {
     );
     tauri::async_runtime::spawn(async move {
         registry.load_all().await;
-        registry.refresh_repos().await;
+        if crate::system::safe_mode::active() {
+            tracing::info!("Safe mode: the extension lists are not refreshed at start");
+        } else {
+            registry.refresh_repos().await;
+        }
     });
 }

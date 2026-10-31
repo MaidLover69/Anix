@@ -104,6 +104,8 @@ Notes:
 - Only one instance runs at a time (single-instance plugin). A second launch hands its arguments to the running window. Stop only the processes you started. Never kill every `anix` process.
 - Debug-only switches: `ANIX_CATALOGUE_DOWN=anilist,myanimelist,…` simulates catalogue outages, and `ANIX_TEST_NOTIFICATION=1` shows a sample notification.
 - `ANIX_PLAYER_ENGINE=web` or `--web-player` forces the web player. `--background` runs the release checks with no window.
+- Crash handling: `running.marker` in the data folder counts starts in a row that did not exit cleanly (`system/session_marker.rs`). One shows a notice; two start **safe mode** (`system/safe_mode.rs`, decided in `main` before WebKit starts): web player, `WEBKIT_DISABLE_COMPOSITING_MODE=1`, no extension-list refresh at start, no reopened screen. One clean exit ends it. To try it, write `1 1` into a scratch profile's `running.marker`.
+- Updates: after an in-app update the old AppImage stays as `<name>.bak` and `update-rollback.json` records both versions, so Settings › System can go back (`clients/update.rs`: `rollback_available`, `roll_back`). `version.json` may list `"bad_versions"`; a listed running version gets a notice at start.
 - The only deep link is `anix://anime/<id>` (negative ids allowed), parsed by `parseDeepLink` in `src/lib/routes.ts`.
   An AppImage registers the `anix://`/`anilili://` handler itself on start (`system/url_handler.rs`: one hidden `.desktop` file in `$XDG_DATA_HOME/applications`, rewritten only when the AppImage it names is gone). Tests pass a temp data folder and never run `xdg-mime`.
 

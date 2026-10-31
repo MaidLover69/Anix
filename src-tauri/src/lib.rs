@@ -125,7 +125,17 @@ pub fn run() {
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
                     notices::init(app.handle().clone());
-                    if db::get_app_dir().is_ok_and(|dir| system::session_marker::begin(&dir)) {
+                    let unclean = db::get_app_dir().map(|dir| system::session_marker::begin(&dir)).unwrap_or(0);
+                    if system::safe_mode::active() {
+                        tracing::warn!("{} sessions in a row did not exit cleanly: starting in safe mode", unclean);
+                        notices::push_translated(
+                            app.handle(),
+                            notices::SYSTEM,
+                            "safe_mode_title",
+                            "safe_mode_body",
+                            Some("/settings?section=system"),
+                        );
+                    } else if unclean > 0 {
                         tracing::warn!("The last session did not exit cleanly");
                         notices::push_translated(
                             app.handle(),
@@ -139,6 +149,7 @@ pub fn run() {
                     system::apply(app.handle(), system::SystemSettings::read());
                     system::url_handler::register_for_appimage();
                     system::exit_on_signals(app.handle());
+                    commands::updates::check_version_at_start(app.handle());
                     let stale = mpv_ipc::remove_stale_sockets(&mpv_ipc::socket_dir());
                     if stale > 0 {
                         tracing::info!("Removed {} mpv socket(s) left by an earlier session", stale);
@@ -288,6 +299,8 @@ pub fn run() {
             commands::get_update_install_support,
             commands::install_update,
             commands::restart_after_update,
+            commands::get_rollback,
+            commands::rollback_update,
             // Stream proxy
             stream_proxy::get_stream_proxy_base,
             // Embedded mpv player

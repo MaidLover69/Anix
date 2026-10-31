@@ -60,6 +60,9 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
         }
     })
     .await?;
+    if let Ok(dir) = crate::db::get_app_dir() {
+        update::record_update(&dir, env!("CARGO_PKG_VERSION"), &info.version);
+    }
     tracing::info!("Installed Anix {} into {}", info.version, target.display());
     Ok(target.to_string_lossy().into_owned())
 }
@@ -79,4 +82,51 @@ pub fn restart_after_update(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Could not start the new version: {}", e))?;
     app.exit(0);
     Ok(())
+}
+
+/// The version Anix can go back to after an update, when its backup is still there.
+#[derive(Debug, Clone, Serialize)]
+pub struct RollbackInfo {
+    pub version: String,
+}
+
+#[tauri::command]
+pub fn get_rollback() -> Option<RollbackInfo> {
+    let dir = crate::db::get_app_dir().ok()?;
+    let target = running_appimage().ok()?;
+    update::rollback_available(&dir, env!("CARGO_PKG_VERSION"), &target).map(|r| RollbackInfo { version: r.from })
+}
+
+/// Puts the previous AppImage back; the page then calls [`restart_after_update`]. Runs only
+/// when the user clicks the button.
+#[tauri::command]
+pub fn rollback_update() -> Result<String, String> {
+    let dir = crate::db::get_app_dir().map_err(|e| e.to_string())?;
+    let target = running_appimage()?;
+    let record = update::roll_back(&dir, env!("CARGO_PKG_VERSION"), &target)?;
+    tracing::warn!("Went back from Anix {} to {}", record.to, record.from);
+    Ok(record.from)
+}
+
+/// At start: a notice when this version is on the site's list of versions with a known
+/// problem, or, in safe mode, when the previous version can be put back.
+pub fn check_version_at_start(app: &AppHandle) {
+    use tauri::Manager;
+    if crate::system::safe_mode::active() && get_rollback().is_some() {
+        crate::notices::push_translated(app, crate::notices::SYSTEM, "rollback_offer_title", "rollback_offer_body", Some("/settings?section=system"));
+    }
+    let Some(state) = app.try_state::<AppState>() else { return };
+    let client = state.client.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match fetch_latest_release(&client).await {
+            Ok(Some(info)) if update::is_bad_version(&info, env!("CARGO_PKG_VERSION")) => {
+                tracing::warn!("Anix {} is listed as a version with a known problem", env!("CARGO_PKG_VERSION"));
+                crate::notices::push_translated(&app, crate::notices::SYSTEM, "bad_version_title", "bad_version_body", Some("/settings?section=system"));
+            }
+            Ok(_) => {}
+            // Offline or the site is down: the regular update check reports it.
+            Err(e) => tracing::info!("Version check at start skipped: {}", e),
+        }
+    });
 }

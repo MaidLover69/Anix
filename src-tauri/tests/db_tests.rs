@@ -1099,3 +1099,26 @@ async fn watch_times_keep_the_days_a_rewatch_moves() {
     db::set_episodes_watched(&pool, 202, "Other", None, &[1.0, 2.0], true).await.unwrap();
     assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_events WHERE anilist_id = 202").await, 2);
 }
+
+/// Going back to an earlier version after an update (Settings › System) opens a database the
+/// newer version already changed. Its migrations only add, so the earlier code must open it
+/// as it is and leave the newer tables and columns alone.
+#[tokio::test]
+async fn a_database_from_a_newer_version_opens_and_keeps_what_it_added() {
+    let tmp = TempDir::new("newer");
+    let pool = db::init_db_at(&tmp.db_path()).await.expect("init");
+    db::update_watch_progress(&pool, &history(21, 1.0, 60_000, 1_440_000, 1_788_549_800_000)).await.unwrap();
+    // What a later version might add: a table of its own and a column on an existing table.
+    sqlx::query("CREATE TABLE watch_party_peers (id TEXT PRIMARY KEY, name TEXT)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO watch_party_peers VALUES ('p1', 'host')").execute(&pool).await.unwrap();
+    sqlx::query("ALTER TABLE watch_history ADD COLUMN future_flag INTEGER DEFAULT 7").execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = db::init_db_at(&tmp.db_path()).await.expect("the earlier code opens it");
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_party_peers").await, 1, "the newer table is kept");
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_history WHERE future_flag = 7").await, 1, "and the newer column");
+    assert_eq!(db::get_episode_progress(&pool, 21, 1.0).await.unwrap(), Some((60_000, 1_440_000)), "progress is still read");
+    db::update_watch_progress(&pool, &history(21, 2.0, 30_000, 1_440_000, 1_788_549_900_000)).await.expect("and written");
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM watch_history").await, 2);
+    pool.close().await;
+}

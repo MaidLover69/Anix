@@ -515,6 +515,7 @@ fn decision() -> &'static Start {
 fn forced_web() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     policy::forced_web(&args, std::env::var("ANIX_PLAYER_ENGINE").ok().as_deref())
+        .or_else(|| crate::system::safe_mode::active().then(|| "Anix started in safe mode.".to_string()))
 }
 
 fn web_playback_marker() -> Option<PathBuf> {
@@ -1107,7 +1108,8 @@ pub async fn embedded_mpv_take_route() -> Option<String> {
         route = s.reopen.take();
         s
     });
-    route
+    // Safe mode does not go back to the screen that may have caused the crashes.
+    route.filter(|_| !crate::system::safe_mode::active())
 }
 
 /// Empties the on-disk video cache folder; returns the bytes freed.

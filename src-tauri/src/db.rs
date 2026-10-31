@@ -87,6 +87,13 @@ pub fn get_app_dir() -> Result<PathBuf, AppError> {
     ensure_dir(chosen, "data")
 }
 
+/// Where [`get_app_dir`] points, without creating it. For start-up code that runs before the
+/// folder rename in `migration`.
+pub fn app_dir_path() -> Option<PathBuf> {
+    let home_base = dirs::home_dir().map(|h| h.join(".local").join("share"));
+    choose_app_dir(dirs::data_dir(), home_base, &[DB_FILE_NAME, LEGACY_DB_FILE_NAME])
+}
+
 /// `$XDG_CONFIG_HOME/anix`, normally `~/.config/anix`.
 pub fn get_config_dir() -> Result<PathBuf, AppError> {
     let home_base = dirs::home_dir().map(|h| h.join(".config"));

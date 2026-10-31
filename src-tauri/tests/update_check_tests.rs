@@ -4,7 +4,8 @@ mod plugin_support;
 
 use anix_lib::clients::update::{
     appimage_target, backup_path, default_download_url, download_and_install, fetch_update_info, install_verified,
-    is_newer_version, parse_version_document, sha256_file, version_document_url, AppImageAsset, UpdateInfo, SITE_URL,
+    is_bad_version, is_newer_version, parse_bad_versions, parse_version_document, record_update, roll_back,
+    rollback_available, sha256_file, version_document_url, AppImageAsset, UpdateInfo, ROLLBACK_FILE, SITE_URL,
 };
 use std::path::{Path, PathBuf};
 use plugin_support::{Req, Resp, Site};
@@ -286,4 +287,58 @@ async fn the_update_is_downloaded_next_to_the_appimage_and_checked_before_it_rep
     assert_eq!(seen.last().copied(), Some(1.0));
     assert!(Path::new(&install.0).join("Anix.AppImage.bak").exists());
     assert_eq!(install.names(), vec!["Anix.AppImage", "Anix.AppImage.bak"], "the partial download is gone");
+}
+
+#[test]
+fn the_site_can_list_versions_with_a_known_problem() {
+    let listed = parse_bad_versions(&json!(["1.4.0", "v1.4.1", " 1.4.2 ", 7, null, "", "1.4.0; rm -rf /", "x".repeat(40)]));
+    assert_eq!(listed, vec!["1.4.0", "1.4.1", "1.4.2"], "only plain version strings are kept");
+    assert!(parse_bad_versions(&json!("1.4.0")).is_empty(), "not a list");
+    assert!(parse_bad_versions(&serde_json::Value::Null).is_empty());
+    let many: Vec<String> = (0..80).map(|n| format!("1.0.{}", n)).collect();
+    assert_eq!(parse_bad_versions(&json!(many)).len(), 50, "the list is capped");
+
+    let info = parse_version_document(&json!({"version": "1.4.1", "bad_versions": ["1.4.0"]}), SITE_URL).unwrap();
+    assert!(is_bad_version(&info, "1.4.0"));
+    assert!(is_bad_version(&info, "v1.4.0"));
+    assert!(!is_bad_version(&info, "1.4.1"));
+    let none = parse_version_document(&json!({"version": "1.4.1"}), SITE_URL).unwrap();
+    assert!(none.bad_versions.is_empty(), "older version files have no list");
+}
+
+#[test]
+fn an_update_can_be_undone_while_its_backup_is_kept() {
+    let install = Install::new("rollback");
+    let data = install.0.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let downloaded = install.0.join(".Anix.AppImage.anix-update");
+    std::fs::write(&downloaded, b"new version").unwrap();
+    install_verified(&downloaded, &install.target(), &sha256(b"new version")).unwrap();
+
+    assert!(rollback_available(&data, "1.4.0", &install.target()).is_none(), "nothing recorded yet");
+    record_update(&data, "1.3.2", "1.4.0");
+    assert!(rollback_available(&data, "1.3.2", &install.target()).is_none(), "only the version that was installed offers it");
+    assert_eq!(rollback_available(&data, "1.4.0", &install.target()).unwrap().from, "1.3.2");
+
+    let record = roll_back(&data, "1.4.0", &install.target()).unwrap();
+    assert_eq!(record.from, "1.3.2");
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"old version", "the previous AppImage is back");
+    assert_eq!(install.names(), vec!["Anix.AppImage", "data"], "the backup became the AppImage");
+    assert!(!data.join(ROLLBACK_FILE).exists(), "the record is used up");
+    assert!(roll_back(&data, "1.4.0", &install.target()).is_err(), "and cannot be used twice");
+}
+
+#[test]
+fn going_back_needs_the_backup_file() {
+    let install = Install::new("rollback-gone");
+    let data = install.0.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    record_update(&data, "1.3.2", "1.4.0");
+    // The user deleted the .bak (or never had one): no offer, and the AppImage stays.
+    assert!(rollback_available(&data, "1.4.0", &install.target()).is_none());
+    assert!(roll_back(&data, "1.4.0", &install.target()).is_err());
+    assert_eq!(std::fs::read(install.target()).unwrap(), b"old version");
+    // A broken record is no offer either.
+    std::fs::write(data.join(ROLLBACK_FILE), b"{not json").unwrap();
+    assert!(rollback_available(&data, "1.4.0", &install.target()).is_none());
 }

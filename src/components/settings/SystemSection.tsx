@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { invoke } from '@tauri-apps/api/core';
 import { Cpu, FileText, FolderOpen } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Switch } from '../ui/Switch';
@@ -15,7 +16,7 @@ import {
   useSaveDiagnosticsReport,
 } from '../../hooks/useSystem';
 import { useUIStore } from '../../stores/uiStore';
-import type { HardwareReport } from '../../types';
+import type { HardwareReport, RollbackInfo } from '../../types';
 import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { selfTestSummary } from './PlayerEngineSettings';
 import { t } from '../../i18n';
@@ -119,6 +120,44 @@ const ReportView: React.FC<{ report: HardwareReport }> = ({ report }) => {
 };
 
 /** Settings › System: tray and background mode, autostart, and the hardware check. */
+/**
+ * After an update: put the previous AppImage back and restart. Shown only while its backup
+ * exists; the first click asks, the second one goes back.
+ */
+const GoBackRow: React.FC = () => {
+  const showToast = useUIStore((s) => s.showToast);
+  const rollback = useQuery({
+    queryKey: ['rollback'],
+    queryFn: () => invoke<RollbackInfo | null>('get_rollback'),
+    staleTime: Infinity,
+  });
+  const [asked, setAsked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const version = rollback.data?.version;
+  if (!version) return null;
+  const goBack = async () => {
+    setBusy(true);
+    try {
+      await invoke('rollback_update');
+      await invoke('restart_after_update');
+    } catch (err) {
+      setBusy(false);
+      setAsked(false);
+      showToast({ type: 'error', title: t('systemSection.goBackFailed'), message: errorMessage(err) });
+    }
+  };
+  return (
+    <Row label={t('systemSection.goBack')} hint={asked ? t('systemSection.goBackConfirm', { version }) : t('systemSection.goBackHint', { version })}>
+      {() => (
+        <Button variant={asked ? 'primary' : 'secondary'} size="sm" disabled={busy} onClick={() => (asked ? goBack() : setAsked(true))}>
+          {busy ? <Spinner size="sm" label={t('systemSection.goingBack')} /> : null}
+          {asked ? t('systemSection.goBackNow', { version }) : t('systemSection.goBackTo', { version })}
+        </Button>
+      )}
+    </Row>
+  );
+};
+
 export const SystemSection: React.FC = () => {
   const queryClient = useQueryClient();
   const showToast = useUIStore((s) => s.showToast);
@@ -220,6 +259,7 @@ export const SystemSection: React.FC = () => {
           );
         }}
       </Row>
+      <GoBackRow />
       <Row
         label={t('systemSection.diagnostics')}
         hint={t('systemSection.diagnosticsHint')}

@@ -73,7 +73,7 @@ fn authority(url: &Url) -> String {
 
 impl DriveEndpoints {
     fn is_download_host(&self, url: &Url) -> bool {
-        Url::parse(&self.download_base).map_or(false, |base| authority(&base) == authority(url))
+        Url::parse(&self.download_base).is_ok_and(|base| authority(&base) == authority(url))
     }
 
     fn is_share_host(&self, url: &Url) -> bool {
@@ -135,7 +135,7 @@ fn parse_index(data: &[u8]) -> Result<(Vec<Value>, Option<String>), String> {
     let data = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
     match serde_json::from_slice::<Value>(data) {
         Ok(Value::Array(entries)) => Ok((entries, None)),
-        Ok(Value::Object(mut index)) if !index.contains_key("type") && index.get("plugins").map_or(false, Value::is_array) => {
+        Ok(Value::Object(mut index)) if !index.contains_key("type") && index.get("plugins").is_some_and(Value::is_array) => {
             let name = index
                 .get("name")
                 .and_then(Value::as_str)
@@ -199,6 +199,9 @@ pub struct PluginInfo {
     /// The last refresh could not install what its repository lists now (the manifest or code
     /// could not be read or used), so the installed version is kept as it was.
     pub stale: bool,
+    /// The repository marked it as broken for now (`"paused": "<reason>"` in its manifest), with
+    /// that reason. It stays installed; automatic lookups skip it while other plugins are left.
+    pub paused: Option<String>,
 }
 
 /// One setting of a plugin as the settings form shows it.
@@ -277,12 +280,22 @@ struct StoredPlugin {
     /// See `PluginInfo::stale`.
     #[serde(default)]
     stale: bool,
+    /// See `PluginInfo::paused`.
+    #[serde(default)]
+    paused: Option<String>,
 }
 
 impl StoredPlugin {
     fn effective_languages(&self) -> Languages {
         Languages::effective(self.languages.as_ref(), &self.lang, self.supports_dub)
     }
+}
+
+/// The manifest's `paused` reason, trimmed and kept short; `None` when it is missing or blank.
+fn paused_reason(manifest: &Value) -> Option<String> {
+    const MAX_CHARS: usize = 200;
+    let reason = manifest.get("paused")?.as_str()?.trim();
+    (!reason.is_empty()).then(|| reason.chars().take(MAX_CHARS).collect())
 }
 
 fn enabled_by_default() -> bool {
@@ -395,7 +408,7 @@ fn github_repository(url: &Url) -> Option<(String, String)> {
     let owner = parts.next()?.to_string();
     let repo = parts.next()?.trim_end_matches(".git").to_string();
     let rest: Vec<&str> = parts.collect();
-    let is_file = rest.first().map_or(false, |kind| matches!(*kind, "blob" | "raw"));
+    let is_file = rest.first().is_some_and(|kind| matches!(*kind, "blob" | "raw"));
     (!repo.is_empty() && !is_file).then_some((owner, repo))
 }
 
@@ -407,7 +420,7 @@ pub fn index_candidates(link: &str) -> Result<Vec<String>, String> {
 /// `index_candidates` with Google Drive at `drive`.
 pub fn index_candidates_with(link: &str, drive: &DriveEndpoints) -> Result<Vec<String>, String> {
     let url = Url::parse(&with_scheme(link)).map_err(|_| "That is not a valid link.".to_string())?;
-    if url.host_str().map_or(true, str::is_empty) {
+    if url.host_str().is_none_or(str::is_empty) {
         return Err("That is not a valid link.".to_string());
     }
     // A link to a file shared on Google Drive is read as a direct download of that file.
@@ -613,8 +626,9 @@ impl PluginRegistry {
                 sub_languages: plugin.effective_languages().sub,
                 dub_languages: plugin.effective_languages().dub,
                 servers: plugin.servers.clone(),
-                configurable: plugin.user_config.as_ref().map_or(false, |config| !config.fields.is_empty()),
+                configurable: plugin.user_config.as_ref().is_some_and(|config| !config.fields.is_empty()),
                 stale: plugin.stale,
+                paused: plugin.paused.clone(),
             })
             .collect()
     }
@@ -709,7 +723,7 @@ impl PluginRegistry {
     pub async fn load_all(&self) {
         let is_loaded = |plugin: &StoredPlugin| {
             let loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
-            loaded.get(&plugin.id).map_or(false, |l| l.revision == plugin.revision)
+            loaded.get(&plugin.id).is_some_and(|l| l.revision == plugin.revision)
         };
         let pending: Vec<StoredPlugin> =
             self.state().plugins.into_iter().filter(|plugin| plugin.enabled && !is_loaded(plugin)).collect();
@@ -730,7 +744,7 @@ impl PluginRegistry {
             let Some(plugin) = current else {
                 // Switched off, removed or updated meanwhile: drop the copy started here.
                 let mut loaded = self.inner.loaded.lock().unwrap_or_else(|p| p.into_inner());
-                if loaded.get(&done.id).map_or(false, |l| l.revision == done.revision) {
+                if loaded.get(&done.id).is_some_and(|l| l.revision == done.revision) {
                     loaded.remove(&done.id);
                 }
                 continue;
@@ -759,8 +773,9 @@ impl PluginRegistry {
             let languages = plugin.effective_languages();
             if let Some(known) = loaded.get_mut(&plugin.id).filter(|l| l.revision == plugin.revision) {
                 // A refreshed manifest can change the languages without changing the code.
-                if known.provider.languages() != languages.clone().declared() {
-                    known.provider = Arc::new(known.provider.relabelled(languages));
+                let paused = plugin.paused.is_some();
+                if known.provider.languages() != languages.clone().declared() || known.provider.paused() != paused {
+                    known.provider = Arc::new(known.provider.relabelled(languages, paused));
                 }
                 providers.push(known.provider.clone());
                 continue;
@@ -775,7 +790,8 @@ impl PluginRegistry {
             };
             let provider = Arc::new(
                 PluginProvider::new(&plugin.id, runtime.clone(), settings, &plugin.revision.to_string())
-                    .with_languages(languages),
+                    .with_languages(languages)
+                    .with_paused(plugin.paused.is_some()),
             );
             loaded.insert(
                 plugin.id.clone(),
@@ -904,7 +920,7 @@ impl PluginRegistry {
 
     /// A repository in a local directory; see `DEV_REPOS_ENV`.
     fn read_local_index(&self, link: &str) -> Result<Index, String> {
-        let allowed = crate::env_var_os(DEV_REPOS_ENV, LEGACY_DEV_REPOS_ENV).map_or(false, |value| value == "1");
+        let allowed = crate::env_var_os(DEV_REPOS_ENV, LEGACY_DEV_REPOS_ENV).is_some_and(|value| value == "1");
         if !allowed {
             return Err("only https links are accepted".to_string());
         }
@@ -971,9 +987,9 @@ impl PluginRegistry {
             }
             listed.push(id.clone());
 
-            let has_payload = entry.get("payload").and_then(Value::as_str).map_or(false, |p| !p.trim().is_empty())
-                || entry.get("payloadURI").and_then(Value::as_str).map_or(false, |p| !p.trim().is_empty());
-            let has_version = entry.get("version").and_then(Value::as_str).map_or(false, |v| !v.trim().is_empty());
+            let has_payload = entry.get("payload").and_then(Value::as_str).is_some_and(|p| !p.trim().is_empty())
+                || entry.get("payloadURI").and_then(Value::as_str).is_some_and(|p| !p.trim().is_empty());
+            let has_version = entry.get("version").and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty());
             let manifest_uri = entry.get("manifestURI").and_then(Value::as_str).unwrap_or_default().trim().to_string();
 
             // An entry that carries the code location and a version is the manifest; otherwise
@@ -1063,6 +1079,7 @@ impl PluginRegistry {
             .filter(|icon| icon.starts_with("https://") || icon.starts_with("data:image/"))
             .map(String::from);
         stored.user_config = UserConfig::from_manifest(manifest);
+        stored.paused = paused_reason(manifest);
     }
 
     /// True when `plugin` already runs the code `manifest` names: code that comes with the
@@ -1072,7 +1089,7 @@ impl PluginRegistry {
         let stored = std::fs::read_to_string(self.payload_path(plugin)).ok();
         plugin.version == text_field(manifest, "version")
             && stored.is_some()
-            && inline.map_or(true, |source| stored.as_deref() == Some(source))
+            && inline.is_none_or(|source| stored.as_deref() == Some(source))
     }
 
     /// Downloads what one repository's index asks for: its manifests, and the code of plugins
@@ -1084,7 +1101,7 @@ impl PluginRegistry {
         let mut payloads = HashMap::new();
         for want in &wanted {
             let current = installed.iter().find(|p| p.id == want.id);
-            if current.map_or(false, |p| p.repo_url != repo_url || self.up_to_date(p, &want.manifest)) {
+            if current.is_some_and(|p| p.repo_url != repo_url || self.up_to_date(p, &want.manifest)) {
                 continue;
             }
             payloads.insert(want.id.clone(), self.fetch_payload(want).await);
@@ -1139,7 +1156,7 @@ impl PluginRegistry {
                     continue;
                 }
             }
-            let up_to_date = existing.map_or(false, |at| self.up_to_date(&state.plugins[at], &want.manifest));
+            let up_to_date = existing.is_some_and(|at| self.up_to_date(&state.plugins[at], &want.manifest));
             if up_to_date {
                 // Same version: only the description may have changed.
                 let at = existing.unwrap_or_default();

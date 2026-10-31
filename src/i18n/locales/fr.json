@@ -1439,6 +1439,7 @@
     "other": "{count} plugins"
   },
   "settings.pluginListFailed": "La liste des plugins n’a pas pu être chargée : {error}",
+  "settings.pluginPaused": "Mise en pause par sa liste : {reason}. Le choix automatique l’ignore ; vous pouvez toujours le choisir comme serveur.",
   "settings.pluginStale": "Sa dernière version n’a pas pu être installée lors de la dernière actualisation, la version installée est donc conservée.",
   "settings.pluginsInstalled": {
     "one": "{count} plugin installé.",

@@ -736,6 +736,8 @@ export interface PluginInfo {
   configurable: boolean;
   /** The last refresh could not read its manifest or code; the installed version is kept. */
   stale: boolean;
+  /** Its repository paused it as broken, with this reason; automatic lookups skip it. */
+  paused: string | null;
 }
 
 /** One setting of a plugin (`get_plugin_config`). */

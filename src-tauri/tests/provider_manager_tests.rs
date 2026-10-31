@@ -160,6 +160,7 @@ struct MockProvider {
     source_calls: AtomicUsize,
     /// The titles of every listing request, in order.
     titles_seen: Mutex<Vec<String>>,
+    paused: bool,
 }
 
 impl MockProvider {
@@ -174,6 +175,7 @@ impl MockProvider {
             list_calls: AtomicUsize::new(0),
             source_calls: AtomicUsize::new(0),
             titles_seen: Mutex::new(Vec::new()),
+            paused: false,
         }
     }
 
@@ -198,6 +200,10 @@ impl AnimeProvider for MockProvider {
 
     fn supports_dub(&self) -> bool {
         self.dub
+    }
+
+    fn paused(&self) -> bool {
+        self.paused
     }
 
     fn episode_by_number(&self, query: &AnimeQuery, number: f64) -> Option<EpisodeItem> {
@@ -499,6 +505,36 @@ async fn first_verified_provider_wins_regardless_of_position() {
 }
 
 #[tokio::test]
+async fn an_automatic_lookup_skips_a_paused_provider_but_it_can_still_be_picked() {
+    let host = host_with_good_stream().await;
+    let good = vec![hls(host.url("/hls/master.m3u8"))];
+    let mut broken = MockProvider::new("paused-first", Ok(good.clone()));
+    broken.paused = true;
+    let broken = Arc::new(broken);
+    let mut working = MockProvider::new("working", Ok(good));
+    working.delay = Duration::from_millis(300);
+    let working = Arc::new(working);
+    let manager = manager_of(&[broken.clone(), working.clone()]);
+
+    let result = sources(&manager, 2.0, "sub", None).await.expect("a source");
+    assert_eq!(result.provider.as_deref(), Some("working"));
+    assert_eq!(broken.list_calls() + broken.source_calls(), 0, "the paused provider was asked");
+
+    let picked = sources(&manager, 2.0, "sub", Some("paused-first")).await.expect("picked by name");
+    assert_eq!(picked.provider.as_deref(), Some("paused-first"));
+}
+
+#[tokio::test]
+async fn paused_providers_are_still_asked_when_nothing_else_is_installed() {
+    let host = host_with_good_stream().await;
+    let mut only = MockProvider::new("only-paused", Ok(vec![hls(host.url("/hls/master.m3u8"))]));
+    only.paused = true;
+    let manager = manager_of(&[Arc::new(only)]);
+    let result = sources(&manager, 2.0, "sub", None).await.expect("a source");
+    assert_eq!(result.provider.as_deref(), Some("only-paused"));
+}
+
+#[tokio::test]
 async fn preferred_provider_is_the_only_one_tried() {
     english_ui();
     let host = host_with_good_stream().await;
@@ -568,7 +604,7 @@ async fn dub_requests_only_reach_providers_with_a_dub() {
     assert_eq!(result.provider.as_deref(), Some("dubbed"));
     assert_eq!(sub_only.list_calls() + sub_only.source_calls(), 0);
 
-    let only_sub = manager_of(&[sub_only.clone()]);
+    let only_sub = manager_of(std::slice::from_ref(&sub_only));
     let message = failure_message(sources(&only_sub, 1.0, "dub", None).await);
     assert_eq!(details(&message), "No source found. sub-only: no dub");
     assert_eq!(headline(&message), "No installed extension has this episode in dub.");
@@ -585,7 +621,7 @@ fn an_episode_listing_has_room_for_an_extensions_search_and_episode_list() {
 async fn episode_lists_are_cached_per_provider_and_anime() {
     let host = host_with_good_stream().await;
     let provider = Arc::new(MockProvider::new("cached", Ok(vec![hls(host.url("/hls/master.m3u8"))])));
-    let manager = manager_of(&[provider.clone()]);
+    let manager = manager_of(std::slice::from_ref(&provider));
 
     let listed = manager.get_all_episodes(21, Some(21), Some("One Piece".to_string())).await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -607,7 +643,7 @@ async fn number_addressed_providers_skip_the_episode_list() {
     let mut by_number = MockProvider::new("by-number", Ok(vec![hls(host.url("/hls/master.m3u8"))]));
     by_number.by_number = true;
     let by_number = Arc::new(by_number);
-    let manager = manager_of(&[by_number.clone()]);
+    let manager = manager_of(std::slice::from_ref(&by_number));
 
     assert!(manager.is_number_addressed("by-number"));
     let result = sources(&manager, 1234.0, "sub", None).await.expect("a source");
@@ -625,7 +661,7 @@ async fn an_unreachable_site_is_deprioritised_but_never_locked_out() {
     let mut down = MockProvider::new("down", Ok(Vec::new()));
     down.listing = Listing::Fail(AppError::Unreachable("down.example: connection refused".into()));
     let down = Arc::new(down);
-    let manager = manager_of(&[down.clone()]);
+    let manager = manager_of(std::slice::from_ref(&down));
 
     let first = failure_message(sources(&manager, 1.0, "sub", None).await);
     assert!(first.contains("down: connection failed (down.example: connection refused)"), "{}", first);

@@ -1327,6 +1327,7 @@
     "other": "{count}個のプラグイン"
   },
   "settings.pluginListFailed": "プラグイン一覧を読み込めませんでした: {error}",
+  "settings.pluginPaused": "リストにより一時停止中：{reason}。自動選択では使われませんが、サーバーとして選ぶことはできます。",
   "settings.pluginStale": "前回の更新で最新バージョンをインストールできなかったため、インストール済みのバージョンをそのまま使用しています。",
   "settings.pluginsInstalled": {
     "other": "{count}個のプラグインがインストールされています。"

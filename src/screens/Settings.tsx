@@ -263,6 +263,11 @@ const PluginRow: React.FC<{
           </p>
         </div>
       )}
+      {plugin.paused && !failed && (
+        <p className="mt-2 break-words text-xs text-text-muted select-text">
+          {t('settings.pluginPaused', { reason: plugin.paused })}
+        </p>
+      )}
       {plugin.stale && !failed && (
         <p className="mt-2 break-words text-xs text-text-muted select-text">{t('settings.pluginStale')}</p>
       )}

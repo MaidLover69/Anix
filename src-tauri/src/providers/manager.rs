@@ -604,6 +604,21 @@ type SharedQuery = Arc<OnceCell<Arc<AnimeQuery>>>;
 /// The providers one lookup works with, in priority order.
 type Lineup = Arc<Vec<Arc<dyn AnimeProvider>>>;
 
+/// An automatic lookup leaves out providers their repository paused, unless that would leave
+/// nothing to ask.
+fn skip_paused(tiers: Vec<Tier>, lineup: &Lineup) -> Vec<Tier> {
+    let kept: Vec<Tier> = tiers
+        .iter()
+        .map(|t| Tier { language: t.language.clone(), members: t.members.iter().copied().filter(|&i| !lineup[i].paused()).collect() })
+        .filter(|t| !t.members.is_empty())
+        .collect();
+    if kept.is_empty() {
+        tiers
+    } else {
+        kept
+    }
+}
+
 /// Where the manager's providers come from: a fixed list, or a list asked for at the start of
 /// every lookup (installed plugins, which come and go while the app runs).
 pub type ProviderSource = Arc<dyn Fn() -> Vec<Arc<dyn AnimeProvider>> + Send + Sync>;
@@ -617,7 +632,7 @@ fn asked_category(provider: &dyn AnimeProvider, category: &Category) -> Option<C
     match category {
         Category::Sub => Some(Category::Sub),
         Category::Dub if provider.supports_dub() => Some(Category::Dub),
-        Category::Dub if provider.languages().map_or(false, |l| l.dub_only(false)) => Some(Category::Sub),
+        Category::Dub if provider.languages().is_some_and(|l| l.dub_only(false)) => Some(Category::Sub),
         Category::Dub => None,
     }
 }
@@ -626,7 +641,7 @@ fn asked_category(provider: &dyn AnimeProvider, category: &Category) -> Option<C
 /// other languages are allowed, for the provider picked in settings and for providers that do
 /// not say their languages; otherwise only when it serves a preferred language.
 fn offers_preferred(provider: &dyn AnimeProvider, category: &Category, prefs: &LanguagePrefs) -> bool {
-    if !prefs.strict || prefs.pinned.as_deref().map_or(false, |p| p.eq_ignore_ascii_case(provider.name())) {
+    if !prefs.strict || prefs.pinned.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(provider.name())) {
         return true;
     }
     let Some(langs) = provider.languages() else {
@@ -642,7 +657,7 @@ fn offers_preferred(provider: &dyn AnimeProvider, category: &Category, prefs: &L
 /// A provider's listing as it is offered: a dub-only site's episodes are its dub, and with
 /// preferences, lists in languages the user did not ask for are left out.
 fn shape_listing(provider: &dyn AnimeProvider, mut data: ProviderData, prefs: Option<&LanguagePrefs>) -> ProviderData {
-    if provider.languages().map_or(false, |l| l.dub_only(provider.supports_dub())) && data.dub.is_empty() {
+    if provider.languages().is_some_and(|l| l.dub_only(provider.supports_dub())) && data.dub.is_empty() {
         data.dub = std::mem::take(&mut data.sub);
     }
     if let Some(prefs) = prefs {
@@ -693,7 +708,7 @@ impl Inner {
 
     fn is_cooling_down(&self, site: &'static str) -> bool {
         let guard = self.cooldowns.lock().unwrap_or_else(|p| p.into_inner());
-        guard.get(site).map_or(false, |c| Instant::now() < c.until)
+        guard.get(site).is_some_and(|c| Instant::now() < c.until)
     }
 
     fn note_unreachable(&self, site: &'static str) {
@@ -785,7 +800,7 @@ impl Inner {
         if let Some(hit) = self.episodes.get(&key).await {
             let age = hit.fetched_at.elapsed();
             let expired = hit.data.is_empty() && age > EMPTY_EPISODES_TTL;
-            let too_old = refresh_if_older.map_or(false, |limit| age > limit);
+            let too_old = refresh_if_older.is_some_and(|limit| age > limit);
             if !expired && !too_old {
                 return Ok(hit);
             }
@@ -960,7 +975,7 @@ impl Inner {
             }
             match joined {
                 Ok((idx, Ok(sources))) => {
-                    if pending.as_ref().map_or(true, |(held, _)| idx < *held) {
+                    if pending.as_ref().is_none_or(|(held, _)| idx < *held) {
                         pending = Some((idx, sources));
                     }
                     grace_until.get_or_insert_with(|| tokio::time::Instant::now() + ORDER_GRACE);
@@ -1080,7 +1095,7 @@ impl ProviderManager {
             .lineup()
             .iter()
             .find(|p| p.name().eq_ignore_ascii_case(name))
-            .map_or(false, |p| p.episode_by_number(&probe, 1.0).is_some())
+            .is_some_and(|p| p.episode_by_number(&probe, 1.0).is_some())
     }
 
     /// Episode listings of every provider that answered, in provider order. Each provider has
@@ -1244,6 +1259,10 @@ impl ProviderManager {
             }
         };
         let left_out = tiers.iter().map(|t| t.members.len()).sum::<usize>() < lineup.len();
+        let tiers = match preferred {
+            Some(_) => tiers,
+            None => skip_paused(tiers, &lineup),
+        };
 
         let finish = |mut sources: SourcesResult| -> SourcesResult {
             let Some(prefs) = &prefs else {

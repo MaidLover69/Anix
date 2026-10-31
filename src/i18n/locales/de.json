@@ -1383,6 +1383,7 @@
     "other": "{count} Plugins"
   },
   "settings.pluginListFailed": "Die Plugin-Liste konnte nicht geladen werden: {error}",
+  "settings.pluginPaused": "Von seiner Liste pausiert: {reason}. Die automatische Wahl überspringt es; du kannst es weiterhin als Server wählen.",
   "settings.pluginStale": "Die neueste Version konnte bei der letzten Aktualisierung nicht installiert werden, daher bleibt die installierte Version erhalten.",
   "settings.pluginsInstalled": {
     "one": "{count} Plugin installiert.",

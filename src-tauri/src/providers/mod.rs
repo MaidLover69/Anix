@@ -55,6 +55,12 @@ pub trait AnimeProvider: Send + Sync {
         std::time::Duration::ZERO
     }
 
+    /// Its repository paused it as broken (manifest `paused`): automatic lookups skip it
+    /// while others are left; asking for it by name still works.
+    fn paused(&self) -> bool {
+        false
+    }
+
     /// Lets this provider's streams be checked on loopback and private addresses. Only test
     /// providers and extensions loaded with the dev allowance (`plugin_run --allow-local`) say yes.
     fn allows_private_network(&self) -> bool {

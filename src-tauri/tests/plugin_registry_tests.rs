@@ -10,7 +10,7 @@ use anix_lib::providers::manager::{ProviderManager, NO_PLUGIN_MESSAGE};
 use anix_lib::web_session::SiteSession;
 use plugin_support::{FakeSession, NoSession, Req, Resp, Site};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -34,8 +34,8 @@ fn options(session: Arc<dyn SiteSession>) -> RegistryOptions {
     }
 }
 
-fn open(dir: &PathBuf) -> PluginRegistry {
-    PluginRegistry::open(dir.clone(), options(Arc::new(NoSession)))
+fn open(dir: &Path) -> PluginRegistry {
+    PluginRegistry::open(dir.to_path_buf(), options(Arc::new(NoSession)))
 }
 
 fn manager(registry: &PluginRegistry) -> ProviderManager {
@@ -810,9 +810,9 @@ impl DriveFixture {
         }
     }
 
-    fn registry(&self, dir: &PathBuf) -> PluginRegistry {
+    fn registry(&self, dir: &Path) -> PluginRegistry {
         PluginRegistry::open(
-            dir.clone(),
+            dir.to_path_buf(),
             RegistryOptions { drive: self.endpoints(), ..options(Arc::new(NoSession)) },
         )
     }
@@ -1108,6 +1108,35 @@ async fn inline_code_that_changes_under_the_same_version_is_installed() {
     assert!(!dir.join("payloads/drive-one.js").exists());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repository_can_pause_a_plugin_without_a_new_version() {
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-paused");
+    let registry = fx.registry(&dir);
+    registry.add_repo(&fx.drive.url(&format!("/uc?id={}", FILE_ID))).await.unwrap();
+    let paused = |registry: &PluginRegistry| registry.list_plugins().into_iter().find(|p| p.id == "drive-one").unwrap().paused;
+    let provider_paused = |registry: &PluginRegistry| {
+        registry.providers().into_iter().find(|p| p.name() == "drive-one").unwrap().paused()
+    };
+    assert_eq!(paused(&registry), None);
+    assert!(!provider_paused(&registry));
+
+    let mut index = drive_index(Some("Anix extensions"), "1.0.0", "'a'");
+    index["plugins"][0]["paused"] = json!("  The site changed its player  ");
+    fx.set_file(index.clone());
+    registry.refresh_repos().await;
+    assert_eq!(paused(&registry).as_deref(), Some("The site changed its player"));
+    assert!(provider_paused(&registry), "the loaded plugin follows without a reinstall");
+    let one = registry.list_plugins().into_iter().find(|p| p.id == "drive-one").unwrap();
+    assert!(one.enabled && one.status == "ready", "a paused plugin stays installed and on");
+
+    index["plugins"][0]["paused"] = json!("");
+    fx.set_file(index);
+    registry.refresh_repos().await;
+    assert_eq!(paused(&registry), None, "a blank reason is no pause");
+    assert!(!provider_paused(&registry));
+}
+
 const TINY_PLUGIN: &str = "class Provider { getSettings() { return { episodeServers: ['only'], supportsDub: false }; } }";
 
 fn tiny_entry(id: &str) -> serde_json::Value {
@@ -1195,7 +1224,7 @@ fn slow_repo_server(slow: Arc<std::sync::atomic::AtomicBool>) -> (String, Arc<At
             std::thread::spawn(move || {
                 let mut head = Vec::new();
                 let mut byte = [0u8; 1];
-                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).map_or(false, |n| n == 1) {
+                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|n| n == 1) {
                     head.push(byte[0]);
                 }
                 let path = String::from_utf8_lossy(&head).split_whitespace().nth(1).unwrap_or_default().to_string();

@@ -281,7 +281,7 @@ fn parse_server(value: &Value, server: &str, category: &Category, allow_private:
             continue;
         };
         let parsed = reqwest::Url::parse(&url);
-        if !parsed.map_or(false, |u| matches!(u.scheme(), "http" | "https")) {
+        if !parsed.is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
             continue;
         }
         if private(&url) {
@@ -377,6 +377,7 @@ pub struct PluginProvider {
     settings: ProviderSettings,
     cache_key: String,
     languages: Languages,
+    paused: bool,
 }
 
 impl PluginProvider {
@@ -389,6 +390,7 @@ impl PluginProvider {
             languages: Languages::effective(None, "", settings.supports_dub),
             settings,
             cache_key: format!("{}@{}", id, revision),
+            paused: false,
         }
     }
 
@@ -398,14 +400,20 @@ impl PluginProvider {
         self
     }
 
-    /// The same loaded plugin, with other languages.
-    pub fn relabelled(&self, languages: Languages) -> Self {
+    pub fn with_paused(mut self, paused: bool) -> Self {
+        self.paused = paused;
+        self
+    }
+
+    /// The same loaded plugin, with other languages and pause state.
+    pub fn relabelled(&self, languages: Languages, paused: bool) -> Self {
         Self {
             id: self.id,
             runtime: self.runtime.clone(),
             settings: self.settings.clone(),
             cache_key: self.cache_key.clone(),
             languages,
+            paused,
         }
     }
 
@@ -568,6 +576,10 @@ impl AnimeProvider for PluginProvider {
 
     fn cache_key(&self) -> String {
         self.cache_key.clone()
+    }
+
+    fn paused(&self) -> bool {
+        self.paused
     }
 
     fn may_use_session(&self) -> bool {

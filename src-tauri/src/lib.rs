@@ -96,6 +96,8 @@ pub fn run() {
     let migrated = migration::migrate(&bases);
     init_logging();
     migrated.log();
+    // Before the window is built, so a start that crashes while building it is counted too.
+    let unclean = db::get_app_dir().map(|dir| system::session_marker::begin(&dir)).unwrap_or(0);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -125,7 +127,6 @@ pub fn run() {
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
                     notices::init(app.handle().clone());
-                    let unclean = db::get_app_dir().map(|dir| system::session_marker::begin(&dir)).unwrap_or(0);
                     if system::safe_mode::active() {
                         tracing::warn!("{} sessions in a row did not exit cleanly: starting in safe mode", unclean);
                         notices::push_translated(
@@ -176,6 +177,9 @@ pub fn run() {
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize database: {}", e);
+                    if let Ok(dir) = db::get_app_dir() {
+                        system::session_marker::abandon(&dir, unclean);
+                    }
                     let handle = app.handle().clone();
                     // i18n reads settings.json and the locale, not the database, so this works.
                     let text = crate::i18n::text(crate::i18n::current(), "db_open_failed");

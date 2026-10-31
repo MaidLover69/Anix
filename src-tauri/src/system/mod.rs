@@ -68,14 +68,16 @@ pub fn exit_on_signals(app: &AppHandle) {
     const FORCE_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Under `nohup` the hangup stays ignored: watching it would replace that.
+        let hup = if sighup_ignored() { None } else { Some(signal(SignalKind::hangup())) };
         let (Ok(mut hup), Ok(mut term), Ok(mut int)) =
-            (signal(SignalKind::hangup()), signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
+            (hup.transpose(), signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
         else {
             tracing::warn!("Quit signals could not be watched; they end Anix without its exit steps");
             return;
         };
         let name = tokio::select! {
-            _ = hup.recv() => "SIGHUP",
+            Some(_) = async { hup.as_mut()?.recv().await } => "SIGHUP",
             _ = term.recv() => "SIGTERM",
             _ = int.recv() => "SIGINT",
         };
@@ -86,6 +88,15 @@ pub fn exit_on_signals(app: &AppHandle) {
         tracing::warn!("Anix did not quit within {:?} of {}; forcing it", FORCE_AFTER, name);
         std::process::exit(1);
     });
+}
+
+/// Whether SIGHUP is ignored in this process, as `nohup` leaves it.
+pub fn sighup_ignored() -> bool {
+    // SAFETY: a null new action only reads the current one into `old`.
+    unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGHUP, std::ptr::null(), &mut old) == 0 && old.sa_sigaction == libc::SIG_IGN
+    }
 }
 
 /// Called from the app's `RunEvent::Exit` handler: finishes a [`restart`].

@@ -66,6 +66,8 @@ interface PlayerControlsProps {
   onToggleMiniPlayer: () => void;
   /** Absent when the webview has no picture-in-picture. */
   onPictureInPicture?: () => void;
+  /** Play, pause, seeking and episode steps are the watch party host's. */
+  locked?: boolean;
 }
 
 /** A control-bar button with its name written next to the icon. */
@@ -106,6 +108,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onToggleFullscreen,
   onToggleMiniPlayer,
   onPictureInPicture,
+  locked = false,
 }) => {
   const silent = muted || volume === 0;
   const shownVolume = silent ? 0 : volume;
@@ -124,7 +127,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         className={`flex flex-col gap-1 px-4 pb-3 ${visible ? 'pointer-events-auto' : ''}`}
         onMouseDown={(e) => e.preventDefault()}
       >
-        <PlayerTimeline videoRef={videoRef} duration={duration} onSeek={onSeek} />
+        <PlayerTimeline videoRef={videoRef} duration={duration} onSeek={onSeek} locked={locked} />
 
         <div className="flex items-center justify-between gap-2">
           {/* Three groups on each side: episode and play, seek, volume | panels, playback options. */}
@@ -140,7 +143,8 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
               </IconButton>
               <IconButton
                 label={playing ? t('common.pause') : t('common.play')}
-                title={playing ? t('playerControls.pauseWithKey') : t('playerControls.playWithKey')}
+                title={locked ? t('party.hostControls') : playing ? t('playerControls.pauseWithKey') : t('playerControls.playWithKey')}
+                disabled={locked}
                 onClick={onTogglePlay}
               >
                 {playing ? (
@@ -163,6 +167,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
               <IconButton
                 label={t('playerControls.back10')}
                 title={t('playerControls.back10WithKey')}
+                disabled={locked}
                 onClick={() => onSeekBy(-10)}
               >
                 <RotateCcw aria-hidden="true" className="h-4 w-4" />
@@ -170,6 +175,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
               <IconButton
                 label={t('playerControls.forward10')}
                 title={t('playerControls.forward10WithKey')}
+                disabled={locked}
                 onClick={() => onSeekBy(10)}
               >
                 <RotateCw aria-hidden="true" className="h-4 w-4" />

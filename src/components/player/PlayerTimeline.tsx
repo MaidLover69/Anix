@@ -9,6 +9,8 @@ interface PlayerTimelineProps {
   /** Seconds; 0 while unknown. */
   duration: number;
   onSeek: (time: number) => void;
+  /** Shown but not movable (a watch party guest follows the host). */
+  locked?: boolean;
 }
 
 const TIME_EVENTS = ['timeupdate', 'seeking', 'seeked', 'progress', 'loadedmetadata', 'emptied'] as const;
@@ -17,7 +19,7 @@ const TIME_EVENTS = ['timeupdate', 'seeking', 'seeked', 'progress', 'loadedmetad
  * Timecodes and seek bar. This is the only component that follows the playhead, so the
  * several `timeupdate` events per second re-render nothing else.
  */
-export const PlayerTimeline: React.FC<PlayerTimelineProps> = React.memo(({ videoRef, duration, onSeek }) => {
+export const PlayerTimeline: React.FC<PlayerTimelineProps> = React.memo(({ videoRef, duration, onSeek, locked = false }) => {
   const [time, setTime] = useState(0);
   const [buffered, setBuffered] = useState(0);
   // Position under the pointer while dragging; the seek happens on release.
@@ -58,7 +60,7 @@ export const PlayerTimeline: React.FC<PlayerTimelineProps> = React.memo(({ video
         keyStep={5}
         buffered={buffered}
         valueText={t('playerTimeline.position', { time: formatTime(shown), duration: formatTime(duration) })}
-        disabled={duration <= 0}
+        disabled={duration <= 0 || locked}
         onChange={setScrub}
         onCommit={(value) => {
           onSeek(value);

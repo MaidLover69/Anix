@@ -25,6 +25,7 @@ import { Button } from './components/ui/Button';
 import { EmptyState } from './components/ui/EmptyState';
 import { hasOpenModal } from './components/ui/Modal';
 import { usePluginEvents } from './hooks/usePlugins';
+import { usePartyFollow } from './hooks/useWatchParty';
 import { usePlayful } from './hooks/useSettings';
 import { useUIStore } from './stores/uiStore';
 import { t } from './i18n';
@@ -60,6 +61,8 @@ const AppLayout: React.FC = () => {
 
   // The layout lives as long as the app, so plugin state stays current on every screen.
   usePluginEvents();
+  // A watch party guest goes wherever the host's episode is.
+  usePartyFollow();
 
   const commandPaletteOpen = useUIStore((s) => s.commandPaletteOpen);
   const playful = usePlayful();

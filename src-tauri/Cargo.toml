@@ -57,6 +57,12 @@ sha2 = "0.10"
 hmac = "0.12"
 zbus = "5"
 anitomy-ng = "1.0.10"
+# Watch party on the local network: discovery, the join-code key exchange and message encryption.
+mdns-sd = { version = "0.21", default-features = false }
+if-addrs = "0.15"
+spake2 = "0.4"
+chacha20poly1305 = "0.10"
+rand = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Already part of Tauri's tree; used to place the embedded mpv GL area under the webview.

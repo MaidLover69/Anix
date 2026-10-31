@@ -10,6 +10,7 @@ pub mod local_media;
 pub mod local_scanner;
 pub mod mal;
 pub mod notices;
+pub mod party;
 pub mod player;
 pub mod playlists;
 pub mod plugins;

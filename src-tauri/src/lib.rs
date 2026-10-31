@@ -19,6 +19,7 @@ pub mod mpv_ipc;
 pub mod notices;
 pub mod notifier;
 pub mod offline;
+pub mod party;
 pub mod plugins;
 pub mod providers;
 pub mod release_check;
@@ -108,6 +109,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
+        .manage(commands::party::PartyState::default())
         .setup(move |app| {
             web_session::init(app.handle().clone());
             match tauri::async_runtime::block_on(db::init_db()) {
@@ -283,6 +285,15 @@ pub fn run() {
             commands::read_subtitle_file,
             mpris::mpris_update,
             mpris::mpris_clear,
+            // Watch party
+            commands::party::party_host,
+            commands::party::party_join,
+            commands::party::party_leave,
+            commands::party::party_status,
+            commands::party::party_discover,
+            commands::party::party_load,
+            commands::party::party_report,
+            commands::party::party_ready,
             // AnimeThemes & Local Media
             commands::fetch_anime_themes,
             commands::scan_local_anime_directory,

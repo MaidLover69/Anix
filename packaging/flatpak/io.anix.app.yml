@@ -1,0 +1,48 @@
+# Flatpak of Anix, built from the release DEB (.github/workflows/flatpak.yml). Preview: the GNOME
+# runtime brings WebKitGTK 4.1 and GStreamer, so Anix starts with the web player (no LGPL libmpv
+# here yet) and HLS downloads need an ffmpeg program the runtime does not have.
+#   flatpak-builder --user --install-deps-from=flathub --repo=repo build io.anix.app.yml
+#   flatpak build-bundle repo anix.flatpak io.anix.app
+app-id: io.anix.app
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: anix
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  # Release notifications, the tray icon and media keys (MPRIS).
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.mpris.MediaPlayer2.anix
+  - --own-name=org.mpris.MediaPlayer2.anix.*
+  # Downloads and the local library.
+  - --filesystem=xdg-download
+  - --filesystem=xdg-videos
+  # Read-only: the data of an AppImage/DEB/RPM install, for importing it.
+  - --filesystem=~/.local/share/anix:ro
+  - --filesystem=~/.config/anix:ro
+modules:
+  - name: anix
+    buildsystem: simple
+    sources:
+      - type: file
+        path: anix.deb
+      - type: file
+        path: io.anix.app.metainfo.xml
+    build-commands:
+      - ar x anix.deb
+      - tar -xf data.tar.*
+      - install -Dm755 usr/bin/anix /app/bin/anix
+      - install -Dm644 usr/share/applications/*.desktop /app/share/applications/io.anix.app.desktop
+      - desktop-file-edit --set-icon=io.anix.app --set-key=Exec --set-value='anix %U' /app/share/applications/io.anix.app.desktop
+      - |
+        for icon in usr/share/icons/hicolor/*/apps/*.png; do
+          size="$(basename "$(dirname "$(dirname "$icon")")")"
+          install -Dm644 "$icon" "/app/share/icons/hicolor/$size/apps/io.anix.app.png"
+        done
+      - install -Dm644 io.anix.app.metainfo.xml /app/share/metainfo/io.anix.app.metainfo.xml

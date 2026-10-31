@@ -20,6 +20,7 @@ on:
       - scripts/smoke-appimage.py
       - .github/workflows/smoke.yml
       - .github/workflows/release.yml
+      - packaging/**
   workflow_dispatch:
 
 permissions:
@@ -338,6 +339,48 @@ jobs:
           home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
           DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
             || { cat "$home/out.log"; exit 1; }
+
+  # Preview: the DEB repackaged on the GNOME runtime (packaging/flatpak), installed and started.
+  flatpak:
+    name: Flatpak (preview, from the DEB)
+    needs: packages
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    continue-on-error: true
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
+      - name: Put the DEB next to the manifest
+        run: cp dist/*.deb packaging/flatpak/anix.deb
+
+      - name: Build the Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: anix.flatpak
+          manifest-path: packaging/flatpak/io.anix.app.yml
+          cache: false
+          upload-artifact: true
+
+      - name: Install and start it
+        run: |
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install -y --noninteractive anix.flatpak
+          flatpak --user info io.anix.app
+          dnf install -y -q xorg-x11-server-Xvfb dbus-daemon >/dev/null 2>&1 || true
+          Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
+          DISPLAY=:99 dbus-run-session -- sh -c 'flatpak run io.anix.app >out.log 2>&1 & pid=$!; sleep 25; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
+            || { cat out.log; exit 1; }
+          tail -20 out.log
 
   # The built AppImage on clean systems with real input: .github/workflows/smoke.yml.
   smoke:

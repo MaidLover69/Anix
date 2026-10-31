@@ -1,8 +1,9 @@
 name: Release AppImage, DEB and RPM
 
-# Builds the release AppImage, DEB and RPM on Ubuntu 22.04. An AppImage runs only on systems whose glibc is at
-# least as new as the build system's, so this old base (glibc 2.35) makes it run on Ubuntu 22.04,
-# Linux Mint 21, Debian 12, Fedora 36 and everything newer, Arch and CachyOS included.
+# Builds the release AppImages, DEB and RPM. An AppImage runs only on systems whose glibc is at least as
+# new as the build system's. The classic AppImage is built on Ubuntu 22.04 (glibc 2.35: Ubuntu 22.04,
+# Linux Mint 21, Debian 12 and everything newer); the one for newer systems on Ubuntu 24.04 (glibc 2.39,
+# WebKitGTK 2.52 instead of 2.50). The in-app updater picks between them (version.json appimage_modern).
 # The files are kept as workflow artifacts for 30 days. Pushing a version tag (v1.3.2) also publishes
 # them as a GitHub release, with that version's CHANGELOG.md section as the notes.
 on:
@@ -35,10 +36,16 @@ defaults:
 
 jobs:
   appimage:
-    name: AppImage (built on Ubuntu 22.04)
+    name: AppImage (built on ${{ matrix.base }})
     runs-on: ubuntu-latest
-    container: ubuntu:22.04
+    container: ${{ matrix.base }}
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { base: 'ubuntu:22.04', flavour: classic, glibc: '2.35', artifact: anix-appimage, suffix: '' }
+          - { base: 'ubuntu:24.04', flavour: modern, glibc: '2.39', artifact: anix-appimage-modern, suffix: '-modern' }
     env:
       DEBIAN_FRONTEND: noninteractive
       # No FUSE inside the container: the AppImage tools unpack themselves instead.
@@ -58,8 +65,10 @@ jobs:
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav \
             gstreamer1.0-pulseaudio gstreamer1.0-alsa gstreamer1.0-pipewire gstreamer1.0-gl \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev glib-networking
-          # mpv needs meson 1.3 or newer; Ubuntu 22.04 ships 0.61.
-          pip3 install -q 'meson>=1.3,<2'
+          # mpv needs meson 1.3 or newer; Ubuntu 22.04 ships 0.61, 24.04 ships 1.3.2 (and its pip refuses
+          # system-wide installs).
+          if [ "${{ matrix.base }}" = ubuntu:22.04 ]; then pip3 install -q 'meson>=1.3,<2'
+          else apt-get install -y -qq --no-install-recommends meson; fi
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -80,7 +89,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/anix-build/libmpv/out
-          key: libmpv-ubuntu2204-${{ hashFiles('scripts/build-libmpv-lgpl.sh') }}
+          key: libmpv-${{ matrix.flavour == 'modern' && 'ubuntu2404' || 'ubuntu2204' }}-${{ hashFiles('scripts/build-libmpv-lgpl.sh') }}
 
       - name: Build LGPL libmpv and FFmpeg
         if: steps.libmpv.outputs.cache-hit != 'true'
@@ -92,7 +101,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/anix-build/libmpv/out
-          key: libmpv-ubuntu2204-${{ hashFiles('scripts/build-libmpv-lgpl.sh') }}
+          key: libmpv-${{ matrix.flavour == 'modern' && 'ubuntu2404' || 'ubuntu2204' }}-${{ hashFiles('scripts/build-libmpv-lgpl.sh') }}
 
       - name: Install npm dependencies
         run: npm ci
@@ -101,6 +110,8 @@ jobs:
         env:
           # Without it the build has no Comick sign-in. Set it under Settings › Secrets › Actions.
           ANIX_COMICK_CLIENT_ID: ${{ secrets.ANIX_COMICK_CLIENT_ID }}
+          # Baked in: tells the updater which of the two AppImages this is.
+          ANIX_APPIMAGE_BASE: ${{ matrix.flavour }}
         run: bash scripts/build-appimage.sh 2>&1 | tee appimage-build.log
 
       - name: Check the oldest system it runs on
@@ -109,19 +120,22 @@ jobs:
           dir="$(mktemp -d)" && cd "$dir" && "$appimage" --appimage-extract >/dev/null
           newest="$(find squashfs-root -type f -exec sh -c 'file -b "$1" | grep -q "^ELF" && objdump -T "$1" 2>/dev/null' _ {} \; \
             | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
-          echo "The AppImage needs $newest; Ubuntu 22.04 has GLIBC_2.35."
-          [ "$(printf '%s\n' "$newest" GLIBC_2.35 | sort -V | tail -1)" = GLIBC_2.35 ]
+          echo "The AppImage needs $newest; ${{ matrix.base }} has GLIBC_${{ matrix.glibc }}."
+          [ "$(printf '%s\n' "$newest" GLIBC_${{ matrix.glibc }} | sort -V | tail -1)" = GLIBC_${{ matrix.glibc }} ]
 
       - name: Collect the AppImage and its checksum
         run: |
           mkdir -p dist
-          cp "$GITHUB_WORKSPACE"/../release/*.AppImage dist/
+          for f in "$GITHUB_WORKSPACE"/../release/*.AppImage; do
+            name="$(basename "$f" .AppImage)"
+            cp "$f" "dist/$name${{ matrix.suffix }}.AppImage"
+          done
           (cd dist && sha256sum *.AppImage > SHA256SUMS && cat SHA256SUMS)
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: anix-appimage
+          name: ${{ matrix.artifact }}
           path: dist/
           retention-days: 30
           if-no-files-found: error
@@ -130,7 +144,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
+          name: build-logs-${{ matrix.flavour }}
           path: '*-build.log'
           retention-days: 7
           if-no-files-found: ignore
@@ -206,7 +220,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        base: ['ubuntu:22.04', 'debian:12']
+        base: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'debian:13']
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
@@ -223,6 +237,14 @@ jobs:
           test -x /usr/bin/anix
           grep -q 'x-scheme-handler/anix' /usr/share/applications/*.desktop
           ! ldd /usr/bin/anix | grep 'not found'
+
+      - name: Start it
+        run: |
+          apt-get install -y -qq --no-install-recommends xvfb dbus-x11 libgl1-mesa-dri
+          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
+            || { cat "$home/out.log"; exit 1; }
 
   rpm-check:
     name: Install the RPM on Fedora
@@ -245,6 +267,78 @@ jobs:
           grep -q 'x-scheme-handler/anix' /usr/share/applications/*.desktop
           ! ldd /usr/bin/anix | grep 'not found'
 
+      - name: Start it
+        run: |
+          dnf install -y -q xorg-x11-server-Xvfb dbus-daemon mesa-dri-drivers
+          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
+            || { cat "$home/out.log"; exit 1; }
+
+  # The RPM's dependencies use Fedora's package names; openSUSE names them differently. Reported, not
+  # required, until the RPM lists openSUSE's names too.
+  rpm-check-opensuse:
+    name: Install the RPM on openSUSE Tumbleweed (informational)
+    needs: packages
+    runs-on: ubuntu-latest
+    container: opensuse/tumbleweed
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
+      - name: Install it
+        run: |
+          zypper --non-interactive refresh
+          zypper --non-interactive install --allow-unsigned-rpm dist/*.rpm
+          ! ldd /usr/bin/anix | grep 'not found'
+
+  # packaging/aur/PKGBUILD, built with makepkg from this run's DEB instead of the release download.
+  aur-check:
+    name: Build and install the AUR package on Arch
+    needs: packages
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the DEB and RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-packages
+          path: dist
+
+      - name: Build and install it
+        run: |
+          pacman -Syu --noconfirm --quiet base-devel xorg-server-xvfb dbus mesa
+          version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' package.json | head -1)"
+          useradd -m builder
+          work=/home/builder/pkg && mkdir -p "$work"
+          cp dist/*.deb "$work/Anix_${version}_amd64.deb" && cp LICENSE "$work/LICENSE-${version}"
+          sed -e "s/^pkgver=.*/pkgver=${version}/" \
+              -e 's|^source=(.*|source=("Anix_${pkgver}_amd64.deb"|' -e 's|^        "LICENSE-${pkgver}::.*|        "LICENSE-${pkgver}")|' \
+              -e "s/^sha256sums=(.*/sha256sums=('SKIP'/" -e "s/^            '[0-9a-f]\{64\}')/            'SKIP')/" \
+              packaging/aur/PKGBUILD > "$work/PKGBUILD"
+          cat "$work/PKGBUILD" | sed -n '/^source=/,/^package/p'
+          chown -R builder "$work"
+          su builder -c "cd $work && makepkg --noconfirm"
+          pacman -U --noconfirm "$work"/anix-bin-*.pkg.tar.*
+          test -x /usr/bin/anix
+          ! ldd /usr/bin/anix | grep 'not found'
+
+      - name: Start it
+        run: |
+          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
+            || { cat "$home/out.log"; exit 1; }
+
   # The built AppImage on clean systems with real input: .github/workflows/smoke.yml.
   smoke:
     needs: appimage
@@ -253,9 +347,22 @@ jobs:
       contents: read
       actions: read
 
+  # The newer-systems AppImage where it is meant to run; WebDriver checks on Ubuntu 24.04, whose
+  # WebKitWebDriver is the WebKit it bundles.
+  smoke-modern:
+    needs: appimage
+    uses: ./.github/workflows/smoke.yml
+    with:
+      artifact: anix-appimage-modern
+      bases: '["ubuntu:24.04", "debian:13", "fedora:latest", "archlinux:latest"]'
+      webdriver_base: 'ubuntu:24.04'
+    permissions:
+      contents: read
+      actions: read
+
   publish:
     name: Publish the GitHub release
-    needs: [appimage, packages, deb-check, rpm-check, smoke]
+    needs: [appimage, packages, deb-check, rpm-check, smoke, smoke-modern]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -270,6 +377,12 @@ jobs:
           name: anix-appimage
           path: dist
 
+      - name: Download the AppImage for newer systems
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-appimage-modern
+          path: dist-modern
+
       - name: Download the DEB and RPM
         uses: actions/download-artifact@v4
         with:
@@ -281,7 +394,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           awk -v v="$version" '$0 == "## " v {f=1; next} /^## /{if (f) exit} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
-          cat dist/SHA256SUMS-packages >> dist/SHA256SUMS && rm dist/SHA256SUMS-packages
+          cat dist-modern/SHA256SUMS dist/SHA256SUMS-packages >> dist/SHA256SUMS && rm dist/SHA256SUMS-packages
           printf '\n### SHA-256\n```\n%s\n```\n' "$(cat dist/SHA256SUMS)" >> notes.md
 
       - name: Publish
@@ -291,6 +404,7 @@ jobs:
           body_path: notes.md
           files: |
             dist/*.AppImage
+            dist-modern/*.AppImage
             dist/*.deb
             dist/*.rpm
             dist/SHA256SUMS

@@ -36,9 +36,8 @@ conflicts=('anix')
 options=('!strip' '!debug')
 source=("https://github.com/MaidLover69/Anix/releases/download/v${pkgver}/Anix_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/MaidLover69/Anix/v${pkgver}/LICENSE")
-# Filled in by updpkgsums once the release files exist.
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('3d46b0cde393ac6bcd873d251efe3e7730ec12d64a9fbb632f542971894b0881'
+            '18b58b87a6862f3651243d210089290c8c329583702b76710d5685c2545edde2')
 
 package() {
   bsdtar -xf data.tar.* -C "$pkgdir"

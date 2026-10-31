@@ -1784,6 +1784,13 @@
   "watch.animeLoadFailed": "このアニメを読み込めませんでした",
   "watch.askingProvider": "{provider} に問い合わせています。最大で 30 秒ほどかかることがあります。",
   "watch.askingProviders": "プロバイダーに問い合わせています。最大で 30 秒ほどかかることがあります。",
+  "watch.foundNothing": {
+    "other": "{count} 件はこのエピソードがありませんでした"
+  },
+  "watch.stillAsking": "問い合わせ中: {names}",
+  "watch.stillAskingMore": {
+    "other": "問い合わせ中: {names} ほか {count} 件"
+  },
   "watch.changeServer": "サーバーを変更",
   "watch.couldNotOpenExternal": "外部プレーヤーを開けませんでした: {message}",
   "watch.episodeNotFound": "エピソードが見つかりません",

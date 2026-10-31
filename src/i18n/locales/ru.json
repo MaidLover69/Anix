@@ -2024,6 +2024,19 @@
   "watch.animeLoadFailed": "Не удалось загрузить это аниме",
   "watch.askingProvider": "Запрос к {provider}. Это может занять до полуминуты.",
   "watch.askingProviders": "Опрашиваем провайдеров. Это может занять до полуминуты.",
+  "watch.foundNothing": {
+    "one": "У {count} нет этой серии",
+    "few": "У {count} нет этой серии",
+    "many": "У {count} нет этой серии",
+    "other": "У {count} нет этой серии"
+  },
+  "watch.stillAsking": "Ещё ждём ответа: {names}",
+  "watch.stillAskingMore": {
+    "one": "Ещё ждём ответа: {names} и ещё {count}",
+    "few": "Ещё ждём ответа: {names} и ещё {count}",
+    "many": "Ещё ждём ответа: {names} и ещё {count}",
+    "other": "Ещё ждём ответа: {names} и ещё {count}"
+  },
   "watch.changeServer": "Сменить сервер",
   "watch.couldNotOpenExternal": "Не удалось открыть внешний плеер: {message}",
   "watch.episodeNotFound": "Серия не найдена",

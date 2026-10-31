@@ -1784,6 +1784,13 @@
   "watch.animeLoadFailed": "无法加载这部动画",
   "watch.askingProvider": "正在询问 {provider}。最多可能需要半分钟。",
   "watch.askingProviders": "正在询问各片源站。最多可能需要半分钟。",
+  "watch.foundNothing": {
+    "other": "{count} 个没有这一集"
+  },
+  "watch.stillAsking": "正在询问：{names}",
+  "watch.stillAskingMore": {
+    "other": "正在询问：{names} 等另外 {count} 个"
+  },
   "watch.changeServer": "切换线路",
   "watch.couldNotOpenExternal": "无法打开外部播放器：{message}",
   "watch.episodeNotFound": "未找到剧集",

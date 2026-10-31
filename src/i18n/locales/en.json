@@ -1864,6 +1864,15 @@
   "watch.animeLoadFailed": "This anime could not be loaded",
   "watch.askingProvider": "Asking {provider}. This can take up to half a minute.",
   "watch.askingProviders": "Asking the providers. This can take up to half a minute.",
+  "watch.foundNothing": {
+    "one": "{count} had nothing for this episode",
+    "other": "{count} had nothing for this episode"
+  },
+  "watch.stillAsking": "Still asking {names}",
+  "watch.stillAskingMore": {
+    "one": "Still asking {names} and {count} more",
+    "other": "Still asking {names} and {count} more"
+  },
   "watch.changeServer": "Change server",
   "watch.couldNotOpenExternal": "Could not open the external player: {message}",
   "watch.episodeNotFound": "Episode not found",

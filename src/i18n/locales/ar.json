@@ -2184,6 +2184,23 @@
   "watch.animeLoadFailed": "تعذّر تحميل هذا الأنمي",
   "watch.askingProvider": "جارٍ سؤال {provider}. قد يستغرق هذا حتى نصف دقيقة.",
   "watch.askingProviders": "جارٍ سؤال المزوّدين. قد يستغرق هذا حتى نصف دقيقة.",
+  "watch.foundNothing": {
+    "zero": "لم تجد {count} هذه الحلقة",
+    "one": "لم تجد إضافة واحدة هذه الحلقة",
+    "two": "لم تجد إضافتان هذه الحلقة",
+    "few": "لم تجد {count} إضافات هذه الحلقة",
+    "many": "لم تجد {count} إضافة هذه الحلقة",
+    "other": "لم تجد {count} إضافة هذه الحلقة"
+  },
+  "watch.stillAsking": "لا يزال السؤال جاريًا: {names}",
+  "watch.stillAskingMore": {
+    "zero": "لا يزال السؤال جاريًا: {names} و{count} أخرى",
+    "one": "لا يزال السؤال جاريًا: {names} وواحدة أخرى",
+    "two": "لا يزال السؤال جاريًا: {names} واثنتان أخريان",
+    "few": "لا يزال السؤال جاريًا: {names} و{count} أخرى",
+    "many": "لا يزال السؤال جاريًا: {names} و{count} أخرى",
+    "other": "لا يزال السؤال جاريًا: {names} و{count} أخرى"
+  },
   "watch.changeServer": "غيّر الخادم",
   "watch.couldNotOpenExternal": "تعذّر فتح المشغّل الخارجي: {message}",
   "watch.episodeNotFound": "لم يُعثر على الحلقة",

@@ -426,6 +426,35 @@ pub async fn verify_streams_in_order(streams: Vec<StreamItem>, allow_private: bo
 
 /// Joins per-provider failure reasons into one line, listing providers that failed for the same
 /// reason together: `"Miruro, AniZone: timed out; AniBD: HTTP 403 from example.org"`.
+/// Sent as the `sources-progress` event while a source lookup runs, once per extension and
+/// state, so the player can show which ones are still being asked.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct LookupProgress {
+    pub anilist_id: i64,
+    pub episode: f64,
+    pub category: &'static str,
+    /// The extension's id.
+    pub provider: String,
+    /// `asking`, `failed` or `found`.
+    pub state: &'static str,
+}
+
+pub const EVENT_SOURCES_PROGRESS: &str = "sources-progress";
+
+type ProgressSink = Arc<dyn Fn(LookupProgress) + Send + Sync>;
+static PROGRESS: std::sync::OnceLock<ProgressSink> = std::sync::OnceLock::new();
+
+/// Where lookup progress goes; set once at start (the app emits it to the page).
+pub fn set_progress_sink(sink: ProgressSink) {
+    let _ = PROGRESS.set(sink);
+}
+
+fn report(query: &AnimeQuery, episode: f64, category: &Category, provider: &str, state: &'static str) {
+    if let Some(sink) = PROGRESS.get() {
+        sink(LookupProgress { anilist_id: query.anilist_id, episode, category: category.as_str(), provider: provider.to_string(), state });
+    }
+}
+
 pub fn summarize_failures(failures: &[(String, String)]) -> String {
     let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
     for (name, reason) in failures {
@@ -916,6 +945,7 @@ impl Inner {
     ) -> Option<SourcesResult> {
         let mut attempts = JoinSet::new();
         for &idx in wave {
+            report(base, number, category, lineup[idx].name(), "asking");
             let inner = self.clone();
             let provider = lineup[idx].clone();
             let (base, cell, category) = (base.clone(), cell.clone(), category.clone());
@@ -975,6 +1005,7 @@ impl Inner {
             }
             match joined {
                 Ok((idx, Ok(sources))) => {
+                    report(base, number, category, lineup[idx].name(), "found");
                     if pending.as_ref().is_none_or(|(held, _)| idx < *held) {
                         pending = Some((idx, sources));
                     }
@@ -984,6 +1015,7 @@ impl Inner {
                     let provider = &lineup[idx];
                     let name = provider.name();
                     tracing::warn!("provider {} gave no source: {}", name, reason);
+                    report(base, number, category, name, "failed");
                     failures.push(ProviderFailure {
                         index: idx,
                         name,

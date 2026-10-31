@@ -224,3 +224,22 @@ console.log('player tests passed');
   assert.ok(!run(still(40, { phase: 'error' })).some(Boolean));
 }
 console.log('stall watchdog: ok');
+
+// S4: per-extension progress under the spinner.
+{
+  const { applyProgress, progressSummary, MAX_NAMES } = await import('../src/lib/sourceProgress.ts');
+  const key = { anilistId: 21, episode: 2, category: 'sub' };
+  const ev = (provider, state, over = {}) => ({ anilist_id: 21, episode: 2, category: 'sub', provider, state, ...over });
+  let list = [];
+  for (const e of [ev('a', 'asking'), ev('b', 'asking'), ev('c', 'asking'), ev('b', 'failed')]) list = applyProgress(list, e, key);
+  assert.deepEqual(list, [['a', 'asking'], ['b', 'failed'], ['c', 'asking']], 'order of first ask, latest state');
+  assert.equal(applyProgress(list, ev('a', 'asking'), key), list, 'no change, same list');
+  assert.equal(applyProgress(list, ev('z', 'asking', { episode: 3 }), key), list, 'another episode is ignored');
+  assert.equal(applyProgress(list, ev('z', 'asking', { category: 'dub' }), key), list, 'another audio is ignored');
+  assert.equal(applyProgress(list, ev('z', 'asking', { anilist_id: 1 }), key), list, 'another title is ignored');
+  assert.deepEqual(progressSummary(list), { asking: ['a', 'c'], more: 0, failed: 1 });
+  const many = Array.from({ length: MAX_NAMES + 3 }, (_, i) => [`p${i}`, 'asking']);
+  assert.deepEqual(progressSummary(many).more, 3);
+  assert.equal(progressSummary(many).asking.length, MAX_NAMES);
+  console.log('lookup progress: ok');
+}

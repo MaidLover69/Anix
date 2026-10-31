@@ -980,3 +980,33 @@ async fn titles_from_the_catalogue_reach_the_extensions() {
     let seen = provider.titles_seen.lock().unwrap().clone();
     assert_eq!(seen, vec!["Jujutsu Kaisen", "Sorcery Fight", "JJK"]);
 }
+
+#[tokio::test]
+async fn a_lookup_reports_each_extension_while_it_runs() {
+    use anix_lib::providers::manager::{set_progress_sink, LookupProgress};
+    static SEEN: Mutex<Vec<LookupProgress>> = Mutex::new(Vec::new());
+    set_progress_sink(Arc::new(|step| SEEN.lock().unwrap().push(step)));
+
+    let host = host_with_good_stream().await;
+    let failing = Arc::new(MockProvider::new("progress-failing", Err(AppError::Network("HTTP 500 from x".into()))));
+    let mut working = MockProvider::new("progress-working", Ok(vec![hls(host.url("/hls/master.m3u8"))]));
+    working.delay = Duration::from_millis(200);
+    let manager = manager_of(&[failing, Arc::new(working)]);
+    let result = sources(&manager, 2.0, "sub", None).await.expect("a source");
+    assert_eq!(result.provider.as_deref(), Some("progress-working"));
+
+    // Other tests of this file may report at the same time; only this lookup's steps count.
+    let steps: Vec<(String, &str)> = SEEN
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|s| s.episode == 2.0 && s.provider.starts_with("progress-"))
+        .map(|s| {
+            assert_eq!((s.anilist_id, s.category), (21, "sub"));
+            (s.provider.clone(), s.state)
+        })
+        .collect();
+    let of = |name: &str| steps.iter().filter(|(p, _)| p == name).map(|(_, s)| *s).collect::<Vec<_>>();
+    assert_eq!(of("progress-failing"), ["asking", "failed"]);
+    assert_eq!(of("progress-working"), ["asking", "found"]);
+}

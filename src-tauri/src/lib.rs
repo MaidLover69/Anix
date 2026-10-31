@@ -150,6 +150,11 @@ pub fn run() {
                     system::url_handler::register_for_appimage();
                     system::exit_on_signals(app.handle());
                     commands::updates::check_version_at_start(app.handle());
+                    let progress = app.handle().clone();
+                    providers::manager::set_progress_sink(std::sync::Arc::new(move |step| {
+                        use tauri::Emitter;
+                        let _ = progress.emit(providers::manager::EVENT_SOURCES_PROGRESS, step);
+                    }));
                     let stale = mpv_ipc::remove_stale_sockets(&mpv_ipc::socket_dir());
                     if stale > 0 {
                         tracing::info!("Removed {} mpv socket(s) left by an earlier session", stale);

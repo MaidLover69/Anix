@@ -1944,6 +1944,17 @@
   "watch.animeLoadFailed": "Cet animé n’a pas pu être chargé",
   "watch.askingProvider": "Interrogation de {provider}. Cela peut prendre jusqu’à une demi-minute.",
   "watch.askingProviders": "Interrogation des fournisseurs. Cela peut prendre jusqu’à une demi-minute.",
+  "watch.foundNothing": {
+    "one": "{count} n’avait rien pour cet épisode",
+    "many": "{count} n’avaient rien pour cet épisode",
+    "other": "{count} n’avaient rien pour cet épisode"
+  },
+  "watch.stillAsking": "Interrogation en cours : {names}",
+  "watch.stillAskingMore": {
+    "one": "Interrogation en cours : {names} et {count} autre",
+    "many": "Interrogation en cours : {names} et {count} autres",
+    "other": "Interrogation en cours : {names} et {count} autres"
+  },
   "watch.changeServer": "Changer de serveur",
   "watch.couldNotOpenExternal": "Impossible d’ouvrir le lecteur externe : {message}",
   "watch.episodeNotFound": "Épisode introuvable",

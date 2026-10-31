@@ -1944,6 +1944,17 @@
   "watch.animeLoadFailed": "Impossibile caricare questo anime",
   "watch.askingProvider": "Sto chiedendo a {provider}. Può volerci fino a mezzo minuto.",
   "watch.askingProviders": "Sto chiedendo ai provider. Può volerci fino a mezzo minuto.",
+  "watch.foundNothing": {
+    "one": "{count} non aveva questo episodio",
+    "many": "{count} non avevano questo episodio",
+    "other": "{count} non avevano questo episodio"
+  },
+  "watch.stillAsking": "Sto ancora chiedendo a {names}",
+  "watch.stillAskingMore": {
+    "one": "Sto ancora chiedendo a {names} e ad altri {count}",
+    "many": "Sto ancora chiedendo a {names} e ad altri {count}",
+    "other": "Sto ancora chiedendo a {names} e ad altri {count}"
+  },
   "watch.changeServer": "Cambia server",
   "watch.couldNotOpenExternal": "Impossibile aprire il lettore esterno: {message}",
   "watch.episodeNotFound": "Episodio non trovato",

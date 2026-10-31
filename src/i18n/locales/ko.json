@@ -1784,6 +1784,13 @@
   "watch.animeLoadFailed": "이 애니메이션을 불러오지 못했어요",
   "watch.askingProvider": "{provider}에 물어보는 중이에요. 최대 30초쯤 걸릴 수 있어요.",
   "watch.askingProviders": "제공처들에 물어보는 중이에요. 최대 30초쯤 걸릴 수 있어요.",
+  "watch.foundNothing": {
+    "other": "{count}개에는 이 에피소드가 없었어요"
+  },
+  "watch.stillAsking": "확인 중: {names}",
+  "watch.stillAskingMore": {
+    "other": "확인 중: {names} 외 {count}개"
+  },
   "watch.changeServer": "서버 변경",
   "watch.couldNotOpenExternal": "외부 플레이어를 열지 못했어요: {message}",
   "watch.episodeNotFound": "에피소드를 찾을 수 없어요",

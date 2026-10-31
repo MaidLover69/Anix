@@ -18,6 +18,8 @@ interface PlayerStatusProps {
   /** Technical text behind a "Details" disclosure, under `detail`. */
   moreDetail?: string | null;
   actions?: PlayerStatusAction[];
+  /** Short live lines under a loading state (which extensions are still being asked). */
+  progress?: string[];
   /** Dims a video frame that is still visible underneath. */
   scrim?: boolean;
 }
@@ -29,6 +31,7 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
   detail,
   moreDetail,
   actions = [],
+  progress = [],
   scrim = false,
 }) => (
   <div
@@ -56,6 +59,15 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
       <p className="max-h-32 max-w-xl overflow-y-auto break-words text-[13px] leading-5 text-text-secondary select-text">
         {detail}
       </p>
+    )}
+    {progress.length > 0 && (
+      <div aria-live="polite" className="max-w-xl text-[12px] leading-5 text-white/60">
+        {progress.map((line) => (
+          <p key={line} className="break-words">
+            {line}
+          </p>
+        ))}
+      </div>
     )}
     {moreDetail && (
       <details className="max-w-xl text-[12px] text-text-muted">

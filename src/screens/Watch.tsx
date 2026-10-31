@@ -35,6 +35,9 @@ import {
 } from '../hooks/useLocalMedia';
 import { usePlayerStore } from '../stores/playerStore';
 import { t } from '../i18n';
+import { listen } from '@tauri-apps/api/event';
+import { applyProgress, progressSummary } from '../lib/sourceProgress';
+import type { LookupProgress, ProgressList } from '../lib/sourceProgress';
 import type { CustomPlaylistItem, EpisodeItem } from '../types';
 
 type Category = 'sub' | 'dub';
@@ -258,6 +261,32 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     enabled: !!details && settingsReady && providers.settled && !noPlugins && !localRequested && !episodeMissing,
   });
   const sources = localRequested ? localQuery.data?.sources : sourcesQuery.data;
+  // Which extensions are still being asked, from the backend's progress events. Listening
+  // all the time on this screen, so the first events of a lookup are not missed.
+  const [lookup, setLookup] = useState<ProgressList>([]);
+  const lookingUp = sourcesQuery.isFetching;
+  useEffect(() => {
+    if (lookingUp) setLookup([]);
+  }, [lookingUp, anilistId, episodeNumber, category]);
+  useEffect(() => {
+    const key = { anilistId, episode: episodeNumber, category };
+    const stop = listen<LookupProgress>('sources-progress', (event) => setLookup((list) => applyProgress(list, event.payload, key)));
+    return () => {
+      stop.then((unlisten) => unlisten()).catch(() => undefined);
+    };
+  }, [anilistId, episodeNumber, category]);
+  const lookupSummary = progressSummary(lookup);
+  const lookupLines = [
+    lookupSummary.asking.length > 0
+      ? lookupSummary.more > 0
+        ? t('watch.stillAskingMore', {
+            names: lookupSummary.asking.map(providerLabel).join(', '),
+            count: lookupSummary.more,
+          })
+        : t('watch.stillAsking', { names: lookupSummary.asking.map(providerLabel).join(', ') })
+      : null,
+    lookupSummary.failed > 0 ? t('watch.foundNothing', { count: lookupSummary.failed }) : null,
+  ].filter((line): line is string => line !== null);
   const servingProvider = sources?.provider || null;
   // What each server's stream was like when it played in this visit, for the server list.
   const seenStreams = useRef<Record<string, string>>({});
@@ -594,6 +623,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
             ? t('watch.askingProvider', { provider: providerLabel(requestedProvider) })
             : t('watch.askingProviders')
         }
+        progress={lookupLines}
       />
     );
   } else if (!localRequested && sourcesQuery.isError) {

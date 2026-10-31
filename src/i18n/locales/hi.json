@@ -1864,6 +1864,15 @@
   "watch.animeLoadFailed": "यह एनीमे लोड नहीं हो सका",
   "watch.askingProvider": "{provider} से पूछा जा रहा है। इसमें आधा मिनट तक लग सकता है।",
   "watch.askingProviders": "प्रोवाइडर से पूछा जा रहा है। इसमें आधा मिनट तक लग सकता है।",
+  "watch.foundNothing": {
+    "one": "{count} के पास यह एपिसोड नहीं था",
+    "other": "{count} के पास यह एपिसोड नहीं था"
+  },
+  "watch.stillAsking": "अभी पूछ रहे हैं: {names}",
+  "watch.stillAskingMore": {
+    "one": "अभी पूछ रहे हैं: {names} और {count} और",
+    "other": "अभी पूछ रहे हैं: {names} और {count} और"
+  },
   "watch.changeServer": "सर्वर बदलें",
   "watch.couldNotOpenExternal": "बाहरी प्लेयर नहीं खुल सका: {message}",
   "watch.episodeNotFound": "एपिसोड नहीं मिला",

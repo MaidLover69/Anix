@@ -1190,23 +1190,33 @@ impl PluginRegistry {
             };
             match payload {
                 Ok((source, typescript)) => {
-                    plugin.stale = false;
-                    if existing.is_some() {
-                        let _ = std::fs::remove_file(self.payload_path(&plugin));
-                    }
-                    self.describe(&mut plugin, &want.manifest);
-                    plugin.typescript = typescript;
-                    plugin.revision = self.inner.revisions.fetch_add(1, Ordering::SeqCst) + 1;
-                    self.unload(&plugin.id);
-                    match Self::write_atomic(&self.payload_path(&plugin), source.as_bytes()) {
-                        Ok(()) => {
-                            if plugin.enabled {
-                                self.refresh_status(&mut plugin).await;
-                            } else {
-                                plugin.error = None;
-                            }
+                    // The new code is saved before the old file goes, so a full disk or a
+                    // read-only folder never costs the version that works.
+                    let old_path = self.payload_path(&plugin);
+                    let new_path = self.payload_path(&StoredPlugin { typescript, ..plugin.clone() });
+                    if let Err(reason) = Self::write_atomic(&new_path, source.as_bytes()) {
+                        if let Some(at) = existing {
+                            problems.push(format!("{} could not be updated: the plugin could not be saved: {}", want.id, reason));
+                            state.plugins[at].stale = true;
+                            continue;
                         }
-                        Err(reason) => plugin.error = Some(format!("the plugin could not be saved: {}", reason)),
+                        self.describe(&mut plugin, &want.manifest);
+                        plugin.typescript = typescript;
+                        plugin.error = Some(format!("the plugin could not be saved: {}", reason));
+                    } else {
+                        if existing.is_some() && old_path != new_path {
+                            let _ = std::fs::remove_file(&old_path);
+                        }
+                        plugin.stale = false;
+                        self.describe(&mut plugin, &want.manifest);
+                        plugin.typescript = typescript;
+                        plugin.revision = self.inner.revisions.fetch_add(1, Ordering::SeqCst) + 1;
+                        self.unload(&plugin.id);
+                        if plugin.enabled {
+                            self.refresh_status(&mut plugin).await;
+                        } else {
+                            plugin.error = None;
+                        }
                     }
                 }
                 Err(reason) if existing.is_some() => {

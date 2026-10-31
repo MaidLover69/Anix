@@ -1332,3 +1332,35 @@ async fn a_switch_flipped_while_plugins_start_at_launch_is_applied_at_once_and_k
     assert_eq!(by_id("slowpoke").servers, ["slow"]);
     assert_eq!(manager(&registry).provider_names(), ["slowpoke", "other"]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_update_that_cannot_be_saved_keeps_the_installed_version() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = drive_fixture().await;
+    let dir = scratch_dir("drive-save-fails");
+    let registry = fx.registry(&dir);
+    registry.add_repo(&fx.drive.url(&format!("/uc?id={}", FILE_ID))).await.unwrap();
+    let one = |registry: &PluginRegistry| registry.list_plugins().into_iter().find(|p| p.id == "drive-one").unwrap();
+    assert_eq!(one(&registry).servers, ["a"]);
+
+    // A new version arrives while nothing can be written (a full disk behaves the same way).
+    fx.set_file(drive_index(Some("Anix extensions"), "1.1.0", "'a', 'b'"));
+    let payloads = dir.join("payloads");
+    std::fs::set_permissions(&payloads, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let refreshed = registry.refresh_repos().await;
+    std::fs::set_permissions(&payloads, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = refreshed[0].error.clone().unwrap_or_default();
+    assert!(error.contains("drive-one could not be updated"), "{}", error);
+    let kept = one(&registry);
+    assert_eq!((kept.version.as_str(), kept.status.as_str()), ("1.0.0", "ready"), "the installed version still runs");
+    assert!(kept.stale, "and is marked as not up to date");
+    assert_eq!(kept.servers, ["a"]);
+    assert!(std::fs::read_to_string(payloads.join("drive-one.js")).unwrap().contains("'a'"), "its file is still there");
+
+    // Writable again: the next refresh installs the update.
+    registry.refresh_repos().await;
+    let updated = one(&registry);
+    assert_eq!((updated.version.as_str(), updated.stale), ("1.1.0", false));
+    assert_eq!(updated.servers, ["a", "b"]);
+}

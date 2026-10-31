@@ -424,8 +424,6 @@ pub async fn verify_streams_in_order(streams: Vec<StreamItem>, allow_private: bo
     Ok(streams)
 }
 
-/// Joins per-provider failure reasons into one line, listing providers that failed for the same
-/// reason together: `"Miruro, AniZone: timed out; AniBD: HTTP 403 from example.org"`.
 /// Sent as the `sources-progress` event while a source lookup runs, once per extension and
 /// state, so the player can show which ones are still being asked.
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -455,6 +453,8 @@ fn report(query: &AnimeQuery, episode: f64, category: &Category, provider: &str,
     }
 }
 
+/// Joins per-provider failure reasons into one line, listing providers that failed for the same
+/// reason together: `"Miruro, AniZone: timed out; AniBD: HTTP 403 from example.org"`.
 pub fn summarize_failures(failures: &[(String, String)]) -> String {
     let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
     for (name, reason) in failures {

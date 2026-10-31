@@ -1344,7 +1344,10 @@ async fn an_update_that_cannot_be_saved_keeps_the_installed_version() {
     assert_eq!(one(&registry).servers, ["a"]);
 
     // A new version arrives while nothing can be written (a full disk behaves the same way).
-    fx.set_file(drive_index(Some("Anix extensions"), "1.1.0", "'a', 'b'"));
+    // It also pauses the plugin, which must hold for the installed version too.
+    let mut index = drive_index(Some("Anix extensions"), "1.1.0", "'a', 'b'");
+    index["plugins"][0]["paused"] = json!("Player changed");
+    fx.set_file(index);
     let payloads = dir.join("payloads");
     std::fs::set_permissions(&payloads, std::fs::Permissions::from_mode(0o555)).unwrap();
     let refreshed = registry.refresh_repos().await;
@@ -1355,12 +1358,23 @@ async fn an_update_that_cannot_be_saved_keeps_the_installed_version() {
     let kept = one(&registry);
     assert_eq!((kept.version.as_str(), kept.status.as_str()), ("1.0.0", "ready"), "the installed version still runs");
     assert!(kept.stale, "and is marked as not up to date");
+    assert_eq!(kept.paused.as_deref(), Some("Player changed"), "the pause applies although the update failed");
+    assert!(registry.providers().into_iter().find(|p| p.name() == "drive-one").unwrap().paused());
     assert_eq!(kept.servers, ["a"]);
     assert!(std::fs::read_to_string(payloads.join("drive-one.js")).unwrap().contains("'a'"), "its file is still there");
+
+    // The repository lifts the pause with the version that fixes it, which still cannot be saved:
+    // the old code keeps its pause.
+    fx.set_file(drive_index(Some("Anix extensions"), "1.1.0", "'a', 'b'"));
+    std::fs::set_permissions(&payloads, std::fs::Permissions::from_mode(0o555)).unwrap();
+    registry.refresh_repos().await;
+    std::fs::set_permissions(&payloads, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(one(&registry).paused.as_deref(), Some("Player changed"), "the unfixed code stays paused");
 
     // Writable again: the next refresh installs the update.
     registry.refresh_repos().await;
     let updated = one(&registry);
     assert_eq!((updated.version.as_str(), updated.stale), ("1.1.0", false));
+    assert_eq!(updated.paused, None, "the fixed version is not paused");
     assert_eq!(updated.servers, ["a", "b"]);
 }

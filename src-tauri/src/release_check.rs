@@ -244,9 +244,14 @@ fn answers(provider: &dyn AnimeProvider, track: &Category) -> bool {
 }
 
 /// The order in which providers are asked for `track`, with the language each is asked in:
-/// the provider picked in settings first, then the language tiers.
+/// the provider picked in settings first, then the language tiers. Paused providers are left
+/// out unless no other one answers, as in an automatic source lookup.
 pub fn probe_order(providers: &[Arc<dyn AnimeProvider>], track: &Category, prefs: &LanguagePrefs) -> Vec<(usize, Option<String>)> {
-    let lineup: Vec<_> = providers.iter().map(|p| (p.languages(), answers(p.as_ref(), track))).collect();
+    let skip_paused = providers.iter().any(|p| answers(p.as_ref(), track) && !p.paused());
+    let lineup: Vec<_> = providers
+        .iter()
+        .map(|p| (p.languages(), answers(p.as_ref(), track) && !(skip_paused && p.paused())))
+        .collect();
     let wanted = prefs.for_category(track);
     let language_of = |idx: usize, tier: Option<String>| {
         tier.or_else(|| served_language(lineup[idx].0.as_ref(), track, wanted))

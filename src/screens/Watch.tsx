@@ -190,9 +190,12 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       ? key
       : null;
   const explicitProvider = knownProvider(searchParams.get('prov'));
+  // A server its repository paused is not asked first on its own; picking it by hand (`prov`) still works.
+  const unpaused = (key: string | null): string | null =>
+    key && providers.usable.some((plugin) => plugin.id === key && plugin.paused) ? null : key;
   const preferredProvider =
-    (remembered?.category === category ? knownProvider(remembered.provider) : null) ??
-    knownProvider(settings.preferred_provider);
+    unpaused(remembered?.category === category ? knownProvider(remembered.provider) : null) ??
+    unpaused(knownProvider(settings.preferred_provider));
   const requestedProvider = explicitProvider ?? preferredProvider;
   // "Your files": the episode plays from a file linked to the title, through the proxy.
   const localRequested = searchParams.get('prov') === LOCAL_PROVIDER;

@@ -564,7 +564,11 @@ impl PluginRegistry {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-        std::fs::write(&tmp, data).map_err(|e| e.to_string())?;
+        if let Err(e) = std::fs::write(&tmp, data) {
+            // A write cut short by a full disk would otherwise leave a partial file for good.
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
         std::fs::rename(&tmp, path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
             e.to_string()
@@ -1198,6 +1202,8 @@ impl PluginRegistry {
                         if let Some(at) = existing {
                             problems.push(format!("{} could not be updated: the plugin could not be saved: {}", want.id, reason));
                             state.plugins[at].stale = true;
+                            // A pause shipped with the new version applies to the old code; a lifted one does not, as only the new code was fixed.
+                            state.plugins[at].paused = paused_reason(&want.manifest).or(state.plugins[at].paused.take());
                             continue;
                         }
                         self.describe(&mut plugin, &want.manifest);
@@ -1224,6 +1230,7 @@ impl PluginRegistry {
                     problems.push(format!("{} could not be updated: {}", want.id, reason));
                     if let Some(at) = existing {
                         state.plugins[at].stale = true;
+                        state.plugins[at].paused = paused_reason(&want.manifest).or(state.plugins[at].paused.take());
                     }
                     continue;
                 }

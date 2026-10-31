@@ -201,6 +201,7 @@ struct FakeSite {
     sub_episodes: Vec<f64>,
     dub_episodes: Vec<f64>,
     meter: Arc<Meter>,
+    paused: bool,
 }
 
 #[async_trait]
@@ -215,6 +216,10 @@ impl AnimeProvider for FakeSite {
 
     fn languages(&self) -> Option<Languages> {
         Some(self.languages.clone())
+    }
+
+    fn paused(&self) -> bool {
+        self.paused
     }
 
     async fn get_episodes(&self, _query: &AnimeQuery) -> Result<ProviderData, AppError> {
@@ -242,6 +247,19 @@ fn site(name: &'static str, sub: &[&str], dub: &[&str], sub_eps: &[f64], dub_eps
         sub_episodes: sub_eps.to_vec(),
         dub_episodes: dub_eps.to_vec(),
         meter: meter.clone(),
+        paused: false,
+    })
+}
+
+fn paused_site(name: &'static str, sub: &[&str], sub_eps: &[f64], meter: &Arc<Meter>) -> Arc<dyn AnimeProvider> {
+    Arc::new(FakeSite {
+        name,
+        languages: Languages { sub: sub.iter().map(|s| s.to_string()).collect(), dub: vec![] },
+        dub: false,
+        sub_episodes: sub_eps.to_vec(),
+        dub_episodes: vec![],
+        meter: meter.clone(),
+        paused: true,
     })
 }
 
@@ -298,6 +316,24 @@ async fn the_provider_picked_in_settings_is_asked_first() {
     assert_eq!(order, vec![(1, Some("es".to_string())), (0, Some("en".to_string()))]);
     // A provider without a dub is never asked for one.
     assert!(release_check::probe_order(&providers, &Category::Dub, &prefs(&["en"], &["en"], None)).is_empty());
+}
+
+#[tokio::test]
+async fn a_paused_extension_is_not_asked_while_another_answers() {
+    let meter = Arc::new(Meter::default());
+    let providers = vec![
+        paused_site("paused", &["en"], &[5.0], &meter),
+        site("english", &["en"], &[], &[4.0], &[], &meter),
+    ];
+    // Even pinned in settings, the paused one is left out and cannot confirm the release alone.
+    let prefs = prefs(&["en"], &["en"], Some("paused"));
+    assert_eq!(release_check::probe_order(&providers, &Category::Sub, &prefs), vec![(1, Some("en".to_string()))]);
+    let query = AnimeQuery::new(7, None, Some("Show"));
+    let mut listings = vec![None; providers.len()];
+    assert_eq!(release_check::find_first(&providers, &query, 5, &Category::Sub, &prefs, &mut listings).await, None);
+    // When every one that answers is paused, they are still asked.
+    let alone = vec![providers[0].clone()];
+    assert_eq!(release_check::probe_order(&alone, &Category::Sub, &prefs), vec![(0, Some("en".to_string()))]);
 }
 
 // ---------------------------------------------------------------------------------------

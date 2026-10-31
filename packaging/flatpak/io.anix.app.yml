@@ -38,6 +38,8 @@ modules:
       - ar x anix.deb
       - tar -xf data.tar.*
       - install -Dm755 usr/bin/anix /app/bin/anix
+      # Tauri looks for its resources in ../lib/Anix next to the binary.
+      - mkdir -p /app/lib && cp -r usr/lib/Anix /app/lib/Anix
       - install -Dm644 usr/share/applications/*.desktop /app/share/applications/io.anix.app.desktop
       - desktop-file-edit --set-icon=io.anix.app --set-key=Exec --set-value='anix %U' /app/share/applications/io.anix.app.desktop
       - |

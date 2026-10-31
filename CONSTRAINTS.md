@@ -26,7 +26,7 @@ number here in the same change.
 |---|---|---|
 | Main JS chunk (`dist/assets/index-*.js`) | 1421944 bytes, must not grow | down |
 | Shell ready after launch, web player | at most 3.0 s (measured 2.4–2.6 s) | down |
-| Idle CPU on Home, web player | at most 1 % (measured ≈0 %) | down |
+| Idle CPU on Home, web player | at most 1 % (measured 9–12 %: the banner's slide change; 0 % paused), must fall | down |
 | Idle CPU on Home, embedded mpv | at most 15 % (measured 7–15 %), must fall | down |
 | Memory after a 2-minute browse, web player | at most 560 MB (measured ≈536 MB) | down |
 | Memory while playing, web player | at most 950 MB (measured 730–900 MB) | down |

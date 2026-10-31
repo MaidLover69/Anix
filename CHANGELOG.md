@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.4.0
+
+### Stability
+- Safe mode: after two starts in a row that did not end cleanly, Anix starts with the web player, without
+  graphics acceleration and without reopening the last screen. One clean exit ends it.
+- Going back after an update: an AppImage keeps the version it replaced, and Settings › System can put it back.
+  The website can mark a version as having a serious problem; Anix shows a notice and never installs it.
+- Playback that gets stuck offers another server, and while a stream is being found the player shows which
+  extensions are still being asked.
+- A repository can pause a broken extension; paused extensions are skipped by release checks.
+- An extension update that cannot be saved keeps the installed version.
+- Fullscreen goes through the window instead of WebKit's own fullscreen, which crashed with WebKitGTK 2.50
+  (Ubuntu 22.04 and 24.04). The embedded mpv picture stays visible in fullscreen.
+- Closing the terminal that started Anix closes it cleanly, together with its downloads (an external mpv or VLC
+  window stays open).
+- A full disk shows a clear warning instead of misleading errors.
+
+### Speed
+- Home no longer repaints while nothing changes: idle CPU in front is about half of before, and zero when the
+  window is in the background.
+- New Settings › Appearance › Fewer effects switch: no background glow, blur or animations, for slow machines.
+
+### Accounts
+- AniList and MyAnimeList sign-in use Anix's own app registrations.
+- Browser sign-in (Comick) says how to open the sign-in page again.
+
+### Every distribution
+- Two AppImages: the classic one (Ubuntu 22.04 base, runs on Ubuntu 22.04, Debian 12, Mint 21 and newer) and
+  one for newer systems (Ubuntu 24.04 base, newer WebKitGTK). The in-app updater picks the right one and can
+  move a classic install to the newer build when the system allows it.
+- The update window says how to update DEB, RPM, AUR and Flatpak installs.
+- Flatpak preview. Start at login and alerts while Anix is closed are not available in it yet.
+- NVIDIA hardware decoding (NVDEC) in the embedded player.
+- The first-run language setup no longer opens over the player.
+
+### Fixes
+- The Watch order row has its own scroll arrows.
+
 ## 1.3.2
 
 ### Video Player & Playback Engine

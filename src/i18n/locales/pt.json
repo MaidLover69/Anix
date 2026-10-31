@@ -1004,6 +1004,7 @@
   "notifyBell.titleOff": "Avisar sobre novos episódios",
   "notifyBell.titleOn": "Notificações ativadas: lembrete e desativar",
   "notifyBell.turnOff": "Desativar notificações",
+  "offlineBanner.diskFull": "Seu disco está cheio — o Anix não consegue salvar o progresso, as configurações nem as extensões. Libere espaço.",
   "offlineBanner.fallback": "O AniList está indisponível — mostrando dados do {name}",
   "offlineBanner.savedFrom": "Offline — mostrando dados salvos de {time}",
   "offlineBanner.unreachable": "Offline — o AniList não está acessível",

@@ -936,6 +936,7 @@
   "notifyBell.titleOff": "새 에피소드 알림 받기",
   "notifyBell.titleOn": "알림 켜짐: 미리 알림 및 끄기",
   "notifyBell.turnOff": "알림 끄기",
+  "offlineBanner.diskFull": "디스크가 가득 찼습니다 — Anix가 시청 기록, 설정, 확장 기능을 저장할 수 없습니다. 공간을 확보하세요.",
   "offlineBanner.fallback": "AniList를 쓸 수 없어요 — {name}의 데이터를 표시하는 중",
   "offlineBanner.savedFrom": "오프라인 — {time}에 저장된 데이터를 표시하는 중",
   "offlineBanner.unreachable": "오프라인 — AniList에 연결할 수 없어요",

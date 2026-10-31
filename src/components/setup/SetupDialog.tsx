@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useState, useSyncExternalStore } from 'react';
+import { router } from '../../router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -62,8 +63,11 @@ export const SetupDialog: React.FC = () => {
   // "Is the video player showing correctly?" counts down on its own; it goes first.
   const engineAsks = engine.isPending || engine.data?.ask_confirm === true;
 
+  // Not over the player: it would catch the player's keys. It opens once the user leaves it.
+  const onPlayer = useSyncExternalStore(router.subscribe, () => router.state.location.pathname.startsWith('/watch'));
+
   const open =
-    !dismissed && !engineAsks && !!settings && !!version && needsSetup(settings.setup_seen_version, version);
+    !dismissed && !engineAsks && !onPlayer && !!settings && !!version && needsSetup(settings.setup_seen_version, version);
 
   useEffect(() => {
     if (open && draft === null) {

@@ -272,6 +272,7 @@ pub fn run() {
             commands::save_settings,
             // System
             commands::get_desktop_status,
+            commands::data_disk_low,
             commands::get_hardware_report,
             commands::save_diagnostics_report,
             commands::open_log_folder,

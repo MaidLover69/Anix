@@ -47,6 +47,17 @@ export function useDesktopStatus() {
   });
 }
 
+/** Whether the disk holding Anix's data is full; checked every minute. */
+export function useDataDiskLow(): boolean {
+  const { data } = useQuery<boolean>({
+    queryKey: ['dataDiskLow'],
+    queryFn: () => invoke<boolean>('data_disk_low'),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  return data === true;
+}
+
 /** The hardware-acceleration check. It runs `vainfo`, so only when asked for. */
 export function useHardwareReport(enabled: boolean) {
   return useQuery<HardwareReport>({

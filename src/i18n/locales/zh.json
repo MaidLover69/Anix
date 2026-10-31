@@ -936,6 +936,7 @@
   "notifyBell.titleOff": "有新剧集时通知我",
   "notifyBell.titleOn": "通知已开启：设置提醒或关闭",
   "notifyBell.turnOff": "关闭通知",
+  "offlineBanner.diskFull": "磁盘已满 — Anix 无法保存观看进度、设置或扩展。请释放一些空间。",
   "offlineBanner.fallback": "AniList 不可用 — 正在显示来自 {name} 的数据",
   "offlineBanner.savedFrom": "离线 — 正在显示 {time} 保存的数据",
   "offlineBanner.unreachable": "离线 — 无法连接 AniList",

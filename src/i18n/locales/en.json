@@ -970,6 +970,7 @@
   "notifyBell.titleOff": "Notify me about new episodes",
   "notifyBell.titleOn": "Notifications on: reminder and turn off",
   "notifyBell.turnOff": "Turn notifications off",
+  "offlineBanner.diskFull": "Your disk is full — Anix can't save progress, settings or extensions. Free some space.",
   "offlineBanner.fallback": "AniList is unavailable — showing data from {name}",
   "offlineBanner.savedFrom": "Offline — showing saved data from {time}",
   "offlineBanner.unreachable": "Offline — AniList cannot be reached",

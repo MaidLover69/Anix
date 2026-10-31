@@ -970,6 +970,7 @@
   "notifyBell.titleOff": "Bei neuen Folgen benachrichtigen",
   "notifyBell.titleOn": "Benachrichtigungen an: Erinnerung und ausschalten",
   "notifyBell.turnOff": "Benachrichtigungen ausschalten",
+  "offlineBanner.diskFull": "Der Datenträger ist voll – Anix kann Fortschritt, Einstellungen und Erweiterungen nicht speichern. Gib Speicher frei.",
   "offlineBanner.fallback": "AniList ist nicht verfügbar — Daten von {name} werden angezeigt",
   "offlineBanner.savedFrom": "Offline — gespeicherte Daten von {time} werden angezeigt",
   "offlineBanner.unreachable": "Offline — AniList ist nicht erreichbar",

@@ -1,8 +1,8 @@
 import React from 'react';
-import { Info, WifiOff } from 'lucide-react';
+import { HardDrive, Info, WifiOff } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
-import { useOfflineStatus } from '../hooks/useSystem';
+import { useDataDiskLow, useOfflineStatus } from '../hooks/useSystem';
 import { locale, t } from '../i18n';
 
 function savedTime(savedAt: number): string {
@@ -17,11 +17,25 @@ export function showsCatalogue(pathname: string): boolean {
 /**
  * A thin strip under the title bar while saved data is shown because no catalogue can be
  * reached, or a quieter one on catalogue screens while another catalogue stands in for AniList.
+ * A full disk takes its place.
  */
 export const OfflineBanner: React.FC = () => {
   const { offline, saved_at, fallback } = useOfflineStatus();
+  const diskLow = useDataDiskLow();
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
+  // Comes first: with a full disk, extension and watch-progress saves fail and other errors mislead.
+  if (diskLow) {
+    return (
+      <div
+        role="alert"
+        className="flex h-7 w-full flex-shrink-0 items-center justify-center gap-2 bg-state-error/15 px-3 text-xs text-state-error"
+      >
+        <HardDrive aria-hidden="true" className="h-3.5 w-3.5" />
+        <span className="truncate">{t('offlineBanner.diskFull')}</span>
+      </div>
+    );
+  }
   if (!offline && fallback) {
     if (!showsCatalogue(pathname)) return null;
     return (

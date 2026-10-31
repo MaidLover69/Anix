@@ -1038,6 +1038,7 @@
   "notifyBell.titleOff": "Сообщать о новых сериях",
   "notifyBell.titleOn": "Уведомления включены: напоминание и отключение",
   "notifyBell.turnOff": "Отключить уведомления",
+  "offlineBanner.diskFull": "Диск заполнен — Anix не может сохранить прогресс, настройки и расширения. Освободите место.",
   "offlineBanner.fallback": "AniList недоступен — показаны данные из {name}",
   "offlineBanner.savedFrom": "Нет сети — показаны данные, сохранённые {time}",
   "offlineBanner.unreachable": "Нет сети — AniList недоступен",

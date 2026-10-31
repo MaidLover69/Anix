@@ -1106,6 +1106,7 @@
   "notifyBell.titleOff": "أشعرني بالحلقات الجديدة",
   "notifyBell.titleOn": "الإشعارات مفعّلة: التذكير والإيقاف",
   "notifyBell.turnOff": "أوقف الإشعارات",
+  "offlineBanner.diskFull": "القرص ممتلئ — لا يستطيع Anix حفظ التقدّم أو الإعدادات أو الإضافات. حرّر بعض المساحة.",
   "offlineBanner.fallback": "AniList غير متاح — تُعرض بيانات من {name}",
   "offlineBanner.savedFrom": "غير متصل — تُعرض بيانات محفوظة من {time}",
   "offlineBanner.unreachable": "غير متصل — يتعذّر الوصول إلى AniList",

@@ -936,6 +936,7 @@
   "notifyBell.titleOff": "新しいエピソードを通知",
   "notifyBell.titleOn": "通知オン: リマインダーとオフ",
   "notifyBell.turnOff": "通知をオフにする",
+  "offlineBanner.diskFull": "ディスクがいっぱいです — Anix は視聴進捗・設定・拡張機能を保存できません。空き容量を確保してください。",
   "offlineBanner.fallback": "AniList を利用できません — {name} のデータを表示しています",
   "offlineBanner.savedFrom": "オフライン — {time} に保存したデータを表示しています",
   "offlineBanner.unreachable": "オフライン — AniList に接続できません",

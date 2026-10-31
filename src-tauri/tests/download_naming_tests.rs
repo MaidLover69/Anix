@@ -766,3 +766,13 @@ fn deleting_refuses_anything_that_is_not_a_downloaded_video_file() {
     assert!(notes.exists() && dir.join("folder.mkv").is_dir() && dir.join("link.mp4").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_disk_counts_as_full_only_below_the_save_limit() {
+    use anix_lib::downloads::{disk_is_low, disk_space, LOW_DISK_BYTES};
+    let dir = std::env::temp_dir();
+    let (free, _) = disk_space(&dir).expect("temp dir has a disk");
+    assert_eq!(disk_is_low(&dir), free < LOW_DISK_BYTES);
+    // A folder that cannot be read is not reported as full.
+    assert!(!disk_is_low(std::path::Path::new("/no/such/anix/folder")));
+}

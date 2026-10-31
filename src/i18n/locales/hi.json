@@ -970,6 +970,7 @@
   "notifyBell.titleOff": "नए एपिसोड की सूचना दें",
   "notifyBell.titleOn": "सूचनाएँ चालू: रिमाइंडर और बंद करें",
   "notifyBell.turnOff": "सूचनाएँ बंद करें",
+  "offlineBanner.diskFull": "आपकी डिस्क भर गई है — Anix प्रगति, सेटिंग्स या एक्सटेंशन सहेज नहीं सकता। कुछ जगह खाली करें।",
   "offlineBanner.fallback": "AniList उपलब्ध नहीं है — {name} का डेटा दिखाया जा रहा है",
   "offlineBanner.savedFrom": "ऑफ़लाइन — {time} का सेव किया डेटा दिखाया जा रहा है",
   "offlineBanner.unreachable": "ऑफ़लाइन — AniList तक नहीं पहुँचा जा सकता",

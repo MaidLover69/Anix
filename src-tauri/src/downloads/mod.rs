@@ -165,6 +165,14 @@ pub fn disk_space(dir: &Path) -> Option<(i64, i64)> {
     Some(((stat.f_bavail as i64).saturating_mul(block), (stat.f_blocks as i64).saturating_mul(block)))
 }
 
+/// Below this much free space SQLite and the settings and extension files can no longer be saved.
+pub const LOW_DISK_BYTES: i64 = 64 * 1024 * 1024;
+
+/// Whether the disk holding `dir` is (nearly) full. Unknown counts as not full.
+pub fn disk_is_low(dir: &Path) -> bool {
+    disk_space(dir).is_some_and(|(free, _)| free < LOW_DISK_BYTES)
+}
+
 pub fn check_storage(quality: &str) -> Result<StorageCheck, AppError> {
     let dir = get_download_dir()?;
     let needed_bytes = match quality {

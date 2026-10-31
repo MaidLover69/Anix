@@ -11,6 +11,20 @@ pub async fn get_desktop_status(app: AppHandle) -> Result<DesktopStatus, String>
         .map_err(|e| e.to_string())
 }
 
+/// Whether the disk holding Anix's data or settings is full, so nothing can be saved. A full
+/// disk cannot be reported as a notice: notices are saved in the database.
+#[tauri::command]
+pub async fn data_disk_low() -> bool {
+    tokio::task::spawn_blocking(|| {
+        [crate::db::app_dir_path(), crate::db::get_config_dir().ok()]
+            .into_iter()
+            .flatten()
+            .any(|dir| crate::downloads::disk_is_low(&dir))
+    })
+    .await
+    .unwrap_or(false)
+}
+
 /// Whether the desktop shows the window fullscreen. Tauri's `is_fullscreen` only repeats the
 /// app's last request on Linux, so a window-manager key that ends fullscreen went unseen.
 /// Not async, so it runs on the main thread, where GTK must be used.

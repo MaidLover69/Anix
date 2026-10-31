@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { createPortal } from 'react-dom';
 import { X, CheckCircle, AlertTriangle, AlertCircle, Info } from 'lucide-react';
 import clsx from 'clsx';
@@ -6,6 +6,7 @@ import { useUIStore } from '../stores/uiStore';
 import type { ToastMessage } from '../stores/uiStore';
 import { Button } from './ui/Button';
 import { t } from '../i18n';
+import { useFullscreenElement } from '../hooks/useFullscreen';
 
 interface ToastContainerProps {
   /**
@@ -29,14 +30,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
   const resumeToast = useUIStore((s) => s.resumeToast);
 
   // Only the fullscreen element is painted while fullscreen, so toasts follow it.
-  const [fullscreenElement, setFullscreenElement] = useState<Element | null>(
-    () => document.fullscreenElement
-  );
-  useEffect(() => {
-    const sync = () => setFullscreenElement(document.fullscreenElement);
-    document.addEventListener('fullscreenchange', sync);
-    return () => document.removeEventListener('fullscreenchange', sync);
-  }, []);
+  const fullscreenElement = useFullscreenElement();
 
   // The live region stays mounted while empty so that additions are announced. It is the only
   // live region: a role on each toast as well would announce it twice.

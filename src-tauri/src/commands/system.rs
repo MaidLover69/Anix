@@ -11,6 +11,21 @@ pub async fn get_desktop_status(app: AppHandle) -> Result<DesktopStatus, String>
         .map_err(|e| e.to_string())
 }
 
+/// Whether the desktop shows the window fullscreen. Tauri's `is_fullscreen` only repeats the
+/// app's last request on Linux, so a window-manager key that ends fullscreen went unseen.
+/// Not async, so it runs on the main thread, where GTK must be used.
+#[tauri::command]
+pub fn window_is_fullscreen(window: tauri::WebviewWindow) -> bool {
+    use gtk::prelude::WidgetExt;
+    window
+        .gtk_window()
+        .ok()
+        .and_then(|w| w.window())
+        .map(|w| w.state().contains(gtk::gdk::WindowState::FULLSCREEN))
+        // Unknown: keep the player's fullscreen rather than drop it on a guess.
+        .unwrap_or(true)
+}
+
 /// The hardware-acceleration diagnostics. Read-only; runs `vainfo` when it is installed.
 #[tauri::command]
 pub async fn get_hardware_report() -> Result<hwaccel::HardwareReport, String> {

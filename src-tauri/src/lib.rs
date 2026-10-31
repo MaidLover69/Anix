@@ -276,6 +276,7 @@ pub fn run() {
             commands::save_diagnostics_report,
             commands::open_log_folder,
             commands::get_desktop_appearance,
+            commands::window_is_fullscreen,
             // Player
             commands::launch_external_player,
             commands::read_subtitle_file,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
 import clsx from 'clsx';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -7,6 +7,7 @@ import { useSettings } from '../hooks/useSettings';
 import { DEFAULT_DESKTOP_APPEARANCE, useDesktopAppearance } from '../hooks/useDesktopAppearance';
 import type { WindowButtonKind, WindowButtonsSetting } from '../types';
 import { t, type TKey } from '../i18n';
+import { useFullscreenElement } from '../hooks/useFullscreen';
 
 type WindowAction = 'minimize' | 'toggleMaximize' | 'close';
 
@@ -84,15 +85,9 @@ const ButtonGroup: React.FC<{ buttons: WindowButtonKind[] }> = ({ buttons }) =>
 
 /** Custom title bar; the window is created without native decorations. */
 export const TitleBar: React.FC = () => {
-  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement);
+  const isFullscreen = useFullscreenElement() !== null;
   const { data: settings } = useSettings();
   const { data: desktop = DEFAULT_DESKTOP_APPEARANCE } = useDesktopAppearance();
-
-  useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
-  }, []);
 
   if (isFullscreen) return null;
 

@@ -1,9 +1,10 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './Button';
 import { t } from '../../i18n';
+import { useFullscreenElement } from '../../hooks/useFullscreen';
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 
@@ -74,14 +75,7 @@ export const Modal: React.FC<ModalProps> = ({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  const [fullscreenElement, setFullscreenElement] = useState<Element | null>(
-    () => document.fullscreenElement
-  );
-  useEffect(() => {
-    const sync = () => setFullscreenElement(document.fullscreenElement);
-    document.addEventListener('fullscreenchange', sync);
-    return () => document.removeEventListener('fullscreenchange', sync);
-  }, []);
+  const fullscreenElement = useFullscreenElement();
 
   useEffect(() => {
     if (!isOpen) return;

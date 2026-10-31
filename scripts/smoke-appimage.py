@@ -198,7 +198,7 @@ try:
             key(win, "f")
             time.sleep(3)
             res["keys_seen"] = step("keys after f", lambda: driver.run("return window.__keys"))
-            res["fullscreen_element"] = step("fullscreen element", lambda: driver.run("return document.fullscreenElement ? document.fullscreenElement.tagName : null"))
+            res["player_fullscreen"] = step("player fullscreen", lambda: driver.run("return !!document.querySelector('.app-fullscreen')"))
             res["fullscreen_size"] = geometry(win)
             res["screen_size"] = screen()
             if res["fullscreen_size"] != res["screen_size"]:

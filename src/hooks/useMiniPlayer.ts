@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { usePlayerStore } from '../stores/playerStore';
-import { exitFullscreen } from './useFullscreen';
+import { exitFullscreen, getFullscreenElement } from './useFullscreen';
 
 /** The window's normal minimum size (tauri.conf.json). */
 const NORMAL_MIN = new LogicalSize(960, 600);
@@ -29,9 +29,28 @@ async function attempt<T>(step: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/** Resolves on the window's next resize, or after `ms` when the desktop sends none. */
+async function nextResize(ms: number): Promise<void> {
+  let stop: (() => void) | null = null;
+  await new Promise<void>((resolve) => {
+    const timer = window.setTimeout(resolve, ms);
+    getCurrentWindow()
+      .onResized(() => {
+        window.clearTimeout(timer);
+        resolve();
+      })
+      .then((unlisten) => (stop = unlisten), () => {});
+  });
+  (stop as (() => void) | null)?.();
+}
+
 async function enterMini(): Promise<void> {
   const win = getCurrentWindow();
-  exitFullscreen();
+  // The size to restore is the normal window's, so wait until fullscreen has ended.
+  if (getFullscreenElement()) {
+    await exitFullscreen();
+    await nextResize(1500);
+  }
   saved = {
     maximized: (await attempt(() => win.isMaximized())) ?? false,
     size: await attempt(() => win.innerSize()),

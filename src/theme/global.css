@@ -97,6 +97,18 @@ html.mpv-video .ui-app > .ui-titlebar {
   background-color: rgb(var(--bg-page));
 }
 
+/* Player fullscreen (hooks/useFullscreen.ts): the window is fullscreen, the player covers it and
+   nothing else is painted, as in browser fullscreen. */
+.app-fullscreen {
+  position: fixed !important;
+  inset: 0;
+  z-index: 1000;
+  visibility: visible;
+}
+html.player-fullscreen body *:not(.app-fullscreen, .app-fullscreen *) {
+  visibility: hidden;
+}
+
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

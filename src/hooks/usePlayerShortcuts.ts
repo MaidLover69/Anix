@@ -9,7 +9,6 @@ export interface PlayerShortcutActions {
   volumeBy: (delta: number) => void;
   toggleMute: () => void;
   toggleFullscreen: () => void;
-  exitFullscreen: () => void;
   nextEpisode: () => void;
   previousEpisode: () => void;
   skipSegment: () => void;
@@ -144,10 +143,8 @@ export function usePlayerShortcuts(actions: PlayerShortcutActions) {
           else if (!e.repeat) a.previousEpisode();
           break;
         case 'Escape':
-          // Cancels a skip countdown, else only ever leaves fullscreen; the webview usually
-          // handles this key itself.
+          // Cancels a skip countdown; otherwise useFullscreen's own listener leaves fullscreen.
           if (a.cancelSkip()) break;
-          a.exitFullscreen();
           handled = false;
           break;
         default:

@@ -26,7 +26,6 @@ import { useAutoHide } from '../../hooks/useAutoHide';
 import { useDialogueBoost } from '../../hooks/useDialogueBoost';
 import { sendMpv, useMpvEngine } from '../../hooks/useEmbeddedMpv';
 import { useLanguagePrefs } from '../../hooks/useLanguagePrefs';
-import { exitFullscreen } from '../../hooks/useFullscreen';
 import { useResumePosition } from '../../hooks/useLibrary';
 import { useMediaState } from '../../hooks/useMediaState';
 import { supportsPictureInPicture, useMiniPlayer } from '../../hooks/useMiniPlayer';
@@ -637,7 +636,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     volumeBy,
     toggleMute,
     toggleFullscreen: onToggleFullscreen,
-    exitFullscreen,
     nextEpisode: () => next?.onClick(),
     previousEpisode: () => previous?.onClick(),
     skipSegment: skip.active ? skip.skipActive : skip.skipFallback,

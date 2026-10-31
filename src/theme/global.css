@@ -92,7 +92,8 @@ html.mpv-video .ui-app,
 html.mpv-video ::backdrop {
   background: transparent !important;
 }
-html.mpv-video .ui-app > :first-child {
+/* By class, not :first-child: in fullscreen the title bar is gone and the content would be painted over the video. */
+html.mpv-video .ui-app > .ui-titlebar {
   background-color: rgb(var(--bg-page));
 }
 

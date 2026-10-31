@@ -91,19 +91,25 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
       {loginPending && <Spinner size="sm" label={t('authDialog.waitingForService', { service: label })} />}
       {loginPending
         ? inBrowser
-          ? t('authDialog.waitingBrowser')
+          ? t('authDialog.openPageAgain')
           : t('authDialog.waitingSignIn')
         : t('authDialog.connect')}
     </Button>
   );
 
   if (!(loginPending && inBrowser)) return connectButton;
+  // A service's login page may not lead back to the sign-in step after the user logs in there.
   return (
-    <div className="flex items-center gap-2">
-      {connectButton}
-      <Button variant="ghost" size="sm" onClick={() => cancelLogin(service)}>
-        {t('common.cancel')}
-      </Button>
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        {connectButton}
+        <Button variant="ghost" size="sm" onClick={() => cancelLogin(service)}>
+          {t('common.cancel')}
+        </Button>
+      </div>
+      <span className="max-w-[18rem] text-end text-xs text-text-muted">
+        {t('authDialog.browserHint', { service: label })}
+      </span>
     </div>
   );
 };

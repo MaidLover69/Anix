@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import clsx from 'clsx';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShimmerImage } from './ShimmerImage';
 import { Spinner } from './ui/Spinner';
+import { Button } from './ui/Button';
 import { mediaFormatLabel } from './library/format';
 import { MAX_ENTRIES, watchOrder, type OrderDetails } from '../lib/watchOrder';
 import type { AnimeDetails } from '../types';
@@ -21,6 +23,7 @@ function titleOf(node: OrderDetails): string {
  */
 export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => {
   const [ids, setIds] = useState<number[]>([]);
+  const scrollRef = useRef<HTMLOListElement>(null);
   const results = useQueries({
     queries: ids.map((id) => ({
       queryKey: ['animeDetails', id],
@@ -47,15 +50,36 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
 
   if (entries.length < 2) return null;
 
+  const heading = t('watchOrder.heading');
+  const scroll = (direction: 'left' | 'right') => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({
+      left: (direction === 'left' ? -1 : 1) * Math.max(el.clientWidth - 240, 240),
+      // An explicit behaviour overrides the CSS reduced-motion rule, so check it here.
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  };
+
   return (
-    <section aria-labelledby="watch-order-heading" className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <h2 id="watch-order-heading" className="text-xl font-semibold text-text-primary">
-          {t('watchOrder.heading')}
-        </h2>
-        {loading && <Spinner size="sm" label={t('watchOrder.findingMore')} className="text-text-muted" />}
+    <section aria-labelledby="watch-order-heading" className="group/rail flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <h2 id="watch-order-heading" className="text-xl font-semibold text-text-primary">
+            {heading}
+          </h2>
+          {loading && <Spinner size="sm" label={t('watchOrder.findingMore')} className="text-text-muted" />}
+        </div>
+        <div dir="ltr" className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
+          <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollLeft', { title: heading })} onClick={() => scroll('left')}>
+            <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+          </Button>
+          <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollRight', { title: heading })} onClick={() => scroll('right')}>
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
-      <ol className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 py-1 scroll-px-1 no-scrollbar">
+      <ol ref={scrollRef} className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 py-1 scroll-px-1 no-scrollbar">
         {entries.map(({ node, number, side, current }) => {
           const caption = [side ? t('watchOrder.sideStory') : null, mediaFormatLabel(node.format ?? null), node.seasonYear]
             .filter(Boolean)

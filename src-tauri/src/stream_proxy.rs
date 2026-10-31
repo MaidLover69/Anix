@@ -10,9 +10,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use once_cell::sync::{Lazy, OnceCell};
 use regex::Regex;
-use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -279,16 +277,6 @@ pub fn subtitle_to_vtt(body: &str) -> String {
     }
 }
 
-fn random_token() -> String {
-    // RandomState is seeded from the OS; two independent states give 128 unpredictable bits.
-    let part = || {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u128(std::process::id() as u128);
-        hasher.finish()
-    };
-    format!("{:016x}{:016x}", part(), part())
-}
-
 fn header(name: &str, value: &str) -> Option<Header> {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).ok()
 }
@@ -366,7 +354,9 @@ impl Read for BodyReader {
     }
 }
 
-async fn read_limited(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+/// Reads the body, refusing it once more than `limit` bytes arrive, with or without a
+/// `Content-Length`.
+pub async fn read_limited(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         if body.len() + chunk.len() > limit {
@@ -756,7 +746,8 @@ fn start_with(upstream: Upstream) -> Result<String, String> {
                 .to_ip()
                 .map(|addr| addr.port())
                 .ok_or_else(|| "Stream proxy has no TCP address".to_string())?;
-            let token = random_token();
+            let token = crate::system::random::hex(16)
+                .map_err(|e| format!("Failed to start stream proxy: {}", e))?;
             let base = format!("http://127.0.0.1:{}/{}", port, token);
 
             let server = Arc::new(server);

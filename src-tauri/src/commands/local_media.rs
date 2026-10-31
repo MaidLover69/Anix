@@ -201,12 +201,12 @@ pub async fn get_local_episode_source(
         return Ok(None);
     };
     let base = crate::stream_proxy::start()?;
-    Ok(Some(local_episode_source(&base, &path)))
+    local_episode_source(&base, &path).map(Some).map_err(|e| e.to_string())
 }
 
 /// Registers `video` and its sidecars with the proxy and describes them as sources.
-pub fn local_episode_source(proxy_base: &str, video: &std::path::Path) -> LocalEpisodeSource {
-    let key = register_playable(PlayableKind::Video, video);
+pub fn local_episode_source(proxy_base: &str, video: &std::path::Path) -> std::io::Result<LocalEpisodeSource> {
+    let key = register_playable(PlayableKind::Video, video)?;
     let stream_type = video
         .extension()
         .and_then(|e| e.to_str())
@@ -223,27 +223,29 @@ pub fn local_episode_source(proxy_base: &str, video: &std::path::Path) -> LocalE
 
     let subtitles = find_sidecars(video)
         .into_iter()
-        .map(|subtitle| SubtitleItem {
-            url: format!(
-                "{}/localsub/{}",
-                proxy_base,
-                register_playable(PlayableKind::Subtitle, &subtitle)
-            ),
-            language: sidecar_label(video, &subtitle),
-            format: subtitle
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase(),
-            is_default: None,
+        .map(|subtitle| {
+            Ok(SubtitleItem {
+                url: format!(
+                    "{}/localsub/{}",
+                    proxy_base,
+                    register_playable(PlayableKind::Subtitle, &subtitle)?
+                ),
+                language: sidecar_label(video, &subtitle),
+                format: subtitle
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase(),
+                is_default: None,
+            })
         })
-        .collect();
+        .collect::<std::io::Result<_>>()?;
 
     let mut sources = SourcesResult::new(vec![stream]);
     sources.subtitles = subtitles;
     sources.provider = Some(LOCAL_PROVIDER.to_string());
-    LocalEpisodeSource {
+    Ok(LocalEpisodeSource {
         sources,
         file_path: video.to_string_lossy().to_string(),
-    }
+    })
 }

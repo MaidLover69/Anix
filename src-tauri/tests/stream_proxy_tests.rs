@@ -378,3 +378,31 @@ async fn test_stream_proxy_serves_files_with_their_length_for_every_kind_of_rang
     assert_eq!(header_of(&head, "content-type").as_deref(), Some("video/mp4"));
     assert!(head.bytes().await.unwrap().is_empty());
 }
+
+/// Serves `body` once with no `Content-Length`; the body ends when the connection closes.
+fn serve_once_without_length(body: Vec<u8>) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        if let Ok((mut socket, _)) = listener.accept() {
+            let _ = socket.read(&mut [0u8; 2048]);
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+            let _ = socket.write_all(&body);
+        }
+    });
+    base
+}
+
+#[tokio::test]
+async fn a_body_without_a_length_is_refused_once_it_passes_the_limit() {
+    use anix_lib::stream_proxy::read_limited;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let big = client.get(serve_once_without_length(vec![b'a'; 64 * 1024])).send().await.unwrap();
+    assert!(big.content_length().is_none());
+    assert_eq!(read_limited(big, 16 * 1024).await, Err("Upstream response is too large".to_string()));
+
+    let small = client.get(serve_once_without_length(b"WEBVTT\n".to_vec())).send().await.unwrap();
+    assert_eq!(read_limited(small, 16 * 1024).await, Ok(b"WEBVTT\n".to_vec()));
+}

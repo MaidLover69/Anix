@@ -114,8 +114,18 @@ fn ranged(req: &Request, body: &[u8]) -> Response {
 }
 
 /// Serves every request with `handler` and records the requests it saw. Returns the base
-/// URL (`http://127.0.0.1:<port>`).
+/// URL (`http://127.0.0.1:<port>`), which downloads are allowed to reach.
 async fn serve<F>(handler: F) -> (String, Arc<Mutex<Vec<Request>>>)
+where
+    F: Fn(&Request) -> Response + Send + Sync + 'static,
+{
+    let (base, seen) = serve_unlisted(handler).await;
+    downloads::allow_private_origin_for_tests(&base);
+    (base, seen)
+}
+
+/// `serve` without the allowance: a private address that downloads must never reach.
+async fn serve_unlisted<F>(handler: F) -> (String, Arc<Mutex<Vec<Request>>>)
 where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
@@ -1099,4 +1109,191 @@ fn removing_a_download_deletes_only_its_own_kept_files() {
         assert!(!work_file_path(tmp.path(), &gone, role).exists(), "{} of the removed row is gone", role);
         assert!(work_file_path(tmp.path(), &other, role).exists(), "{} of another row stays", role);
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Private addresses
+// ---------------------------------------------------------------------------------------
+
+fn redirect_to(location: String) -> Response {
+    Response { extra: vec![format!("Location: {}", location)], ..Response::status(302) }
+}
+
+#[tokio::test]
+async fn an_hls_playlist_pointing_at_a_private_address_is_refused_without_reaching_it() {
+    english_ui();
+    let (private, reached) = serve_unlisted(|_| Response::ok("video/mp2t", vec![0x47u8; 188])).await;
+    let playlist = |lines: String| format!("#EXTM3U\n#EXT-X-TARGETDURATION:2\n{}#EXT-X-ENDLIST\n", lines);
+    let cases = [
+        ("loopback-segment", playlist(format!("#EXTINF:2.0,\n{}/seg0.ts\n", private))),
+        ("lan-segment", playlist("#EXTINF:2.0,\nhttp://10.0.0.1/seg0.ts\n".to_string())),
+        ("ipv6-loopback-segment", playlist("#EXTINF:2.0,\nhttp://[::1]:9/seg0.ts\n".to_string())),
+        ("loopback-key", playlist(format!("#EXT-X-KEY:METHOD=AES-128,URI=\"{}/k.key\"\n#EXTINF:2.0,\nseg0.ts\n", private))),
+        ("loopback-variant", format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n{}/media.m3u8\n", private)),
+    ];
+    let pool = db::init_db_in_memory().await.unwrap();
+    let tmp = TempDir::new("hls-private");
+
+    for (id, body) in cases {
+        let (base, _) = serve(move |req| match req.path.as_str() {
+            "/index.m3u8" => Response::ok("application/vnd.apple.mpegurl", body.clone()),
+            _ => Response::ok("video/mp2t", vec![0x47u8; 188]),
+        })
+        .await;
+        let rec = record(id);
+        db::create_download(&pool, &rec).await.unwrap();
+
+        let outcome = downloads::download_into(&pool, &rec, source(format!("{}/index.m3u8", base)), tmp.path()).await;
+
+        let DownloadOutcome::Failed(message) = outcome else {
+            panic!("{}: a private address in the playlist must fail the download, got {:?}", id, outcome);
+        };
+        if ffmpeg_available() {
+            assert!(message.contains("private network access denied"), "{}: {}", id, message);
+        } else {
+            assert!(message.contains("ffmpeg is not installed"), "{}: {}", id, message);
+        }
+        assert!(tmp.file_names().is_empty(), "{}: nothing may be left on disk: {:?}", id, tmp.file_names());
+    }
+    assert!(reached.lock().unwrap().is_empty(), "the private server must never be asked for anything");
+}
+
+#[tokio::test]
+async fn a_redirect_to_a_private_address_is_refused_without_reaching_it() {
+    english_ui();
+    let (private, reached) = serve_unlisted(|_| Response::ok("video/mp4", vec![1u8; 1000])).await;
+    let (base, _) = {
+        let private = private.clone();
+        serve(move |req| match req.path.as_str() {
+            "/loopback.mp4" => redirect_to(format!("{}/v.mp4", private)),
+            "/lan.mp4" => redirect_to("http://192.168.1.1/v.mp4".to_string()),
+            "/stream.m3u8" => redirect_to(format!("{}/index.m3u8", private)),
+            _ => Response::status(404),
+        })
+        .await
+    };
+    let pool = db::init_db_in_memory().await.unwrap();
+    let tmp = TempDir::new("redirect-private");
+
+    for (id, path, needs_ffmpeg) in
+        [("redirect-loopback", "/loopback.mp4", false), ("redirect-lan", "/lan.mp4", false), ("redirect-hls", "/stream.m3u8", true)]
+    {
+        let rec = record(id);
+        db::create_download(&pool, &rec).await.unwrap();
+
+        let outcome = downloads::download_into(&pool, &rec, source(format!("{}{}", base, path)), tmp.path()).await;
+
+        let DownloadOutcome::Failed(message) = outcome else {
+            panic!("{}: a redirect to a private address must fail the download, got {:?}", id, outcome);
+        };
+        if needs_ffmpeg && !ffmpeg_available() {
+            assert!(message.contains("ffmpeg is not installed"), "{}: {}", id, message);
+        } else {
+            assert!(message.starts_with("Download refused: private network access denied"), "{}: {}", id, message);
+        }
+        assert!(tmp.file_names().is_empty(), "{}: nothing may be left on disk: {:?}", id, tmp.file_names());
+    }
+    assert!(reached.lock().unwrap().is_empty(), "the private server must never be asked for anything");
+}
+
+#[tokio::test]
+async fn a_stream_or_subtitle_on_a_private_address_is_never_requested() {
+    english_ui();
+    let (private, reached) = serve_unlisted(|_| Response::ok("text/vtt", "WEBVTT\n\n00:00.000 --> 00:01.000\nHi\n")).await;
+    let body: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+    let served = body.clone();
+    let (base, _) = serve(move |_| Response::ok("video/mp4", served.clone())).await;
+    let pool = db::init_db_in_memory().await.unwrap();
+    let tmp = TempDir::new("private-links");
+
+    let rec = record("private-stream");
+    db::create_download(&pool, &rec).await.unwrap();
+    let outcome = downloads::download_into(&pool, &rec, source(format!("{}/v.mp4", private)), tmp.path()).await;
+    let DownloadOutcome::Failed(message) = outcome else {
+        panic!("a stream on a private address must be refused, got {:?}", outcome);
+    };
+    assert!(message.starts_with("Download refused: private network access denied"), "{}", message);
+
+    // A refused subtitle is skipped; the video itself still downloads.
+    let rec = record("private-subtitle");
+    db::create_download(&pool, &rec).await.unwrap();
+    let src = DownloadSource {
+        url: format!("{}/v.mp4", base),
+        subtitles: vec![SubtitleItem {
+            url: format!("{}/en.vtt", private),
+            language: "English".to_string(),
+            format: "vtt".to_string(),
+            is_default: Some(true),
+        }],
+        ..DownloadSource::default()
+    };
+    let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+
+    assert!(reached.lock().unwrap().is_empty(), "the private server must never be asked for anything");
+}
+
+/// Answers every request with `len` bytes and no `Content-Length`, the body ending when the
+/// connection closes. The flag turns true when the client hangs up before the end.
+async fn serve_without_length(len: usize) -> (String, Arc<std::sync::atomic::AtomicBool>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    downloads::allow_private_origin_for_tests(&base);
+    let cut_off = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cut_off.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let flag = flag.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/vtt\r\nConnection: close\r\n\r\nWEBVTT\n\n").await;
+                let chunk = vec![b'a'; 1024 * 1024];
+                for _ in 0..len / chunk.len() {
+                    if socket.write_all(&chunk).await.is_err() {
+                        flag.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                }
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+    (base, cut_off)
+}
+
+#[tokio::test]
+async fn an_oversized_subtitle_without_a_length_is_cut_off_and_the_video_still_downloads() {
+    english_ui();
+    let (subs, cut_off) = serve_without_length(64 * 1024 * 1024).await;
+    let body: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+    let served = body.clone();
+    let (base, _) = serve(move |_| Response::ok("video/mp4", served.clone())).await;
+    let tmp = TempDir::new("huge-subtitle");
+    let rec = record("huge-subtitle");
+    let pool = db_with(&rec).await;
+    let src = DownloadSource {
+        url: format!("{}/v.mp4", base),
+        subtitles: vec![SubtitleItem {
+            url: format!("{}/en.vtt", subs),
+            language: "English".to_string(),
+            format: "vtt".to_string(),
+            is_default: Some(true),
+        }],
+        ..DownloadSource::default()
+    };
+
+    let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;
+    assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
+    assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mp4"], "the oversized subtitle is not kept");
+
+    // The reader stops at the cap instead of taking all 64 MiB into memory.
+    for _ in 0..50 {
+        if cut_off.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the whole oversized subtitle was read");
 }

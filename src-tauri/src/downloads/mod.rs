@@ -7,7 +7,7 @@ use crate::models::downloads::{
 use crate::models::{DownloadRecord, SourcesResult, StreamItem, SubtitleItem};
 use crate::providers::manager::ProviderManager;
 use crate::state::AppState;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -44,14 +44,48 @@ const PROGRESS_WRITE_INTERVAL: Duration = Duration::from_secs(1);
 /// A direct download with no data for this long is treated as dead.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBTITLE_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_SUBTITLE_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_SUBTITLE_BYTES: usize = 10 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 4096;
 const ERROR_TAIL_CHARS: usize = 600;
 
-/// The HTTP client used for stream bodies and subtitles: no limit on the whole request, so
-/// a long body is not cut off.
-fn stream_client() -> reqwest::Client {
-    crate::clients::http::download_client()
+/// The HTTP client used for stream bodies, playlists and subtitles: no limit on the whole
+/// request, so a long body is not cut off. It reaches public addresses only and checks every
+/// redirect hop with `check_download_url`.
+fn stream_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceCell<reqwest::Client> = OnceCell::new();
+    CLIENT
+        .get_or_try_init(|| crate::clients::net_guard::guarded_download_client(check_download_url))
+        .cloned()
+        .map_err(|e| e.reason())
+}
+
+/// Origins of loopback test servers that downloads may reach. Empty in the app.
+static PRIVATE_ORIGINS_ALLOWED: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Lets downloads reach `origin` (`http://127.0.0.1:<port>`) although it is a private address,
+/// for tests whose servers run on loopback. Every other private address stays refused.
+#[doc(hidden)]
+pub fn allow_private_origin_for_tests(origin: &str) {
+    if let Ok(url) = reqwest::Url::parse(origin) {
+        lock(&PRIVATE_ORIGINS_ALLOWED).push(url.origin().ascii_serialization());
+    }
+}
+
+/// Ok for a URL the downloader may fetch itself: not written as a private address (names are
+/// checked by the client's resolver). Playlists, segments, keys and subtitles come from
+/// extensions, so they are checked like the extensions' own requests.
+fn check_download_url(url: &reqwest::Url) -> Result<(), String> {
+    if lock(&PRIVATE_ORIGINS_ALLOWED).contains(&url.origin().ascii_serialization()) {
+        return Ok(());
+    }
+    crate::clients::net_guard::check_public_url(url).map_err(|e| format!("Download refused: {}", e))
+}
+
+/// `validate_stream_url` plus `check_download_url`, for every URL the downloader requests.
+fn guarded_stream_url(raw: &str) -> Result<String, String> {
+    let url = validate_stream_url(raw)?;
+    check_download_url(&reqwest::Url::parse(&url).map_err(|e| format!("Invalid stream URL: {}", e))?)?;
+    Ok(url)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1098,7 +1132,7 @@ async fn fetch_subtitles(
     let mut fetched = Vec::new();
     for (idx, sub) in ordered.into_iter().enumerate() {
         let body = async {
-            let url = validate_stream_url(&sub.url)?;
+            let url = guarded_stream_url(&sub.url)?;
             let res = apply_headers(client.get(&url), headers)
                 .send()
                 .await
@@ -1109,7 +1143,7 @@ async fn fetch_subtitles(
             if res.content_length().is_some_and(|len| len > MAX_SUBTITLE_BYTES as u64) {
                 return Err("file is too large to be a subtitle".to_string());
             }
-            res.bytes().await.map_err(|e| e.to_string())
+            crate::stream_proxy::read_limited(res, MAX_SUBTITLE_BYTES).await
         };
 
         let body = match tokio::time::timeout(SUBTITLE_TIMEOUT, body).await {
@@ -1192,8 +1226,10 @@ pub fn parse_hls_playlist(text: &str, base: &str) -> Option<HlsPlaylist> {
 /// percentage.
 async fn hls_duration(url: &str, headers: &RequestHeaders) -> Option<f64> {
     let mut current = url.to_string();
+    let client = stream_client().ok()?;
     for _ in 0..3 {
-        let response = apply_headers(stream_client().get(&current), headers)
+        let target = guarded_stream_url(&current).ok()?;
+        let response = apply_headers(client.get(&target), headers)
             .timeout(Duration::from_secs(30))
             .send()
             .await
@@ -1349,33 +1385,49 @@ pub fn hls_source_stamp(plan: &HlsPlan) -> String {
 }
 
 /// Reads the stream's playlist, following a master playlist to its best variant, and plans
-/// the download. `None` when it cannot be read or planned; ffmpeg then reads it itself.
-async fn fetch_hls_plan(url: &str, headers: &RequestHeaders) -> Option<HlsPlan> {
+/// the download. `None` when it cannot be read or planned; ffmpeg then reads it itself. A
+/// private address (the variant, or a redirect hop) is an error instead, because handing the
+/// playlist to ffmpeg would reach that address anyway.
+async fn fetch_hls_plan(url: &str, headers: &RequestHeaders) -> Result<Option<HlsPlan>, String> {
+    let client = stream_client()?;
     let mut current = url.to_string();
     for _ in 0..3 {
-        let response = apply_headers(stream_client().get(&current), headers)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?;
+        let target = guarded_stream_url(&current)?;
+        let response = match apply_headers(client.get(&target), headers).timeout(Duration::from_secs(30)).send().await {
+            Ok(response) => response,
+            Err(e) if e.is_redirect() => return Err(redirect_refusal(&e)),
+            Err(_) => return Ok(None),
+        };
+        let Ok(response) = response.error_for_status() else { return Ok(None) };
         let final_url = response.url().to_string();
-        let text = response.text().await.ok()?;
+        let Ok(text) = response.text().await else { return Ok(None) };
         if text.contains("#EXT-X-STREAM-INF") {
-            current = best_hls_variant(&text, &final_url)?;
+            let Some(variant) = best_hls_variant(&text, &final_url) else { return Ok(None) };
+            current = variant;
             continue;
         }
-        return plan_hls_download(&text, &final_url);
+        return Ok(plan_hls_download(&text, &final_url));
     }
-    None
+    Ok(None)
+}
+
+/// Why a redirect was not followed: the hop's refusal from `check_download_url`, or too many
+/// hops. reqwest's own text names only the first URL.
+fn redirect_refusal(e: &reqwest::Error) -> String {
+    let reason = std::error::Error::source(e).map_or_else(|| e.to_string(), |r| r.to_string());
+    if reason.starts_with("Download refused") {
+        reason
+    } else {
+        format!("Download refused: {}", reason)
+    }
 }
 
 /// Fetches one file of an HLS stream to `path`. Returns its size.
 async fn fetch_hls_file(client: &reqwest::Client, url: &str, headers: &RequestHeaders, path: &Path) -> Result<i64, String> {
-    let url = validate_stream_url(url)?;
+    let url = guarded_stream_url(url)?;
     let mut res = match tokio::time::timeout(STALL_TIMEOUT, apply_headers(client.get(&url), headers).send()).await {
         Ok(Ok(res)) => res,
+        Ok(Err(e)) if e.is_redirect() => return Err(redirect_refusal(&e)),
         Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
         Err(_) => return Err("The stream host did not answer in time.".to_string()),
     };
@@ -1442,7 +1494,7 @@ async fn download_hls_files(
         info!("Resuming download {} from its saved segments", job.record.id);
     }
 
-    let client = stream_client();
+    let client = stream_client()?;
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
     let mut bytes: i64 = 0;
     let total = plan.files.len() as f64;
@@ -1646,7 +1698,7 @@ async fn download_stream_with_ffmpeg(
 ) -> Result<Finished, String> {
     let hls_options = probe_ffmpeg().await.map_err(|e| e.to_string())?;
     if kind == StreamKind::Hls {
-        if let Some(plan) = fetch_hls_plan(url, headers).await {
+        if let Some(plan) = fetch_hls_plan(url, headers).await? {
             return download_hls_files(job, &plan, headers, hls_options, subtitles).await;
         }
     }
@@ -1694,6 +1746,7 @@ async fn download_file(
         }
         let res = match tokio::time::timeout(STALL_TIMEOUT, request.send()).await {
             Ok(Ok(res)) => res,
+            Ok(Err(e)) if e.is_redirect() => return Err(redirect_refusal(&e)),
             Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
             Err(_) => return Err("The stream host did not answer in time.".to_string()),
         };
@@ -1836,7 +1889,7 @@ where
     S: Future<Output = Result<DownloadSource, String>>,
 {
     let source = source.await?;
-    let url = validate_stream_url(&source.url)?;
+    let url = guarded_stream_url(&source.url)?;
 
     let (audio, sub) = download_languages(&record.category, source.language.as_deref(), &source.subtitles);
     if let Err(e) = db::set_download_languages(pool, &record.id, audio.as_deref(), sub.as_deref()).await {
@@ -1874,7 +1927,7 @@ where
         warn!("Could not save download progress for {}: {}", record.id, e);
     }
 
-    let client = stream_client();
+    let client = stream_client()?;
     let headers = request_headers(&source);
     let subtitles = fetch_subtitles(&job, &client, &headers, &source.subtitles).await;
 

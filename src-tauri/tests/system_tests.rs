@@ -11,7 +11,7 @@ use anix_lib::models::AiringEntry;
 use anix_lib::notifier::{Airing, Bell};
 use anix_lib::offline::{self, Kind};
 use anix_lib::plugins::health;
-use anix_lib::system::{autostart, background, hwaccel, tray, SystemSettings};
+use anix_lib::system::{autostart, background, hwaccel, random, tray, SystemSettings};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -538,6 +538,24 @@ fn background_switch_writes_and_removes_its_files() {
 }
 
 #[test]
+fn a_hand_made_release_check_timer_is_neither_replaced_nor_removed() {
+    let dir = TempDir::new("background-foreign-timer");
+    let exec = Path::new(APPIMAGE);
+    let (_, timer) = background::unit_paths(&dir.0);
+    let mine = "[Timer]\nOnCalendar=daily\n";
+    std::fs::create_dir_all(timer.parent().unwrap()).unwrap();
+    std::fs::write(&timer, mine).unwrap();
+
+    let err = background::install_files(&dir.0, Some(exec), background::Starter::SystemdTimer).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read_to_string(&timer).unwrap(), mine);
+    assert!(!background::is_installed(&dir.0));
+
+    background::install_files(&dir.0, None, background::Starter::SystemdTimer).unwrap();
+    assert_eq!(std::fs::read_to_string(&timer).unwrap(), mine);
+}
+
+#[test]
 fn locks_are_exclusive_until_dropped() {
     let dir = TempDir::new("locks");
     let path = dir.0.join(background::BACKGROUND_LOCK);
@@ -748,4 +766,16 @@ fn registering_the_link_handler_writes_into_the_data_home_once() {
     std::fs::write(&path, b"[Desktop Entry]\nName=\xff\n").unwrap();
     assert!(!url_handler::register(&data_home.0, &appimage).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), b"[Desktop Entry]\nName=\xff\n");
+}
+
+#[test]
+fn random_tokens_have_the_asked_length_are_lowercase_hex_and_differ_each_time() {
+    assert_eq!(random::bytes(0).unwrap().len(), 0);
+    assert_eq!(random::bytes(65536).unwrap().len(), 65536);
+    let first = random::hex(16).unwrap();
+    let second = random::hex(16).unwrap();
+    assert_eq!(first.len(), 32);
+    assert!(first.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')), "{first}");
+    assert_ne!(first, second, "two tokens must not repeat");
+    assert_eq!(random::hex(8).unwrap().len(), 16);
 }

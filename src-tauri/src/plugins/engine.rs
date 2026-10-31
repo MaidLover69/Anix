@@ -644,14 +644,7 @@ fn install_host<'js>(ctx: &Ctx<'js>, state: Rc<HostState>) -> rquickjs::Result<O
         "randomBytes",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, count: f64| {
             let count = (count.max(0.0) as usize).min(65536);
-            let mut bytes = Vec::with_capacity(count);
-            while bytes.len() < count {
-                use std::hash::{BuildHasher, Hasher};
-                let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-                hasher.write_usize(bytes.len());
-                bytes.extend_from_slice(&hasher.finish().to_le_bytes());
-            }
-            bytes.truncate(count);
+            let bytes = crate::system::random::bytes(count).map_err(|e| js_error(&ctx, e.to_string()))?;
             to_array(&ctx, bytes)
         })?,
     )?;

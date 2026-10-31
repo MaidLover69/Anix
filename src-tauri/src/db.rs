@@ -1808,20 +1808,15 @@ pub async fn cache_filler_episodes(
 static PLAYLIST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// `pl-<ms since epoch>-<per-process counter>-<random>`, all in hex.
-fn new_playlist_id() -> String {
-    use std::hash::{BuildHasher, Hasher};
-
+fn new_playlist_id() -> std::io::Result<String> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let counter = PLAYLIST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // `RandomState` is seeded from the operating system's random source.
-    let random = std::collections::hash_map::RandomState::new()
-        .build_hasher()
-        .finish();
+    let random = crate::system::random::hex(8)?;
 
-    format!("pl-{:x}-{:x}-{:016x}", millis, counter, random)
+    Ok(format!("pl-{:x}-{:x}-{}", millis, counter, random))
 }
 
 pub async fn create_custom_playlist(
@@ -1830,7 +1825,7 @@ pub async fn create_custom_playlist(
     description: Option<&str>,
 ) -> Result<CustomPlaylist, AppError> {
     let now = current_unix_timestamp();
-    let id = new_playlist_id();
+    let id = new_playlist_id().map_err(|e| AppError::Other(e.to_string()))?;
     sqlx::query(
         r#"
         INSERT INTO custom_playlists (id, name, description, created_at, updated_at)

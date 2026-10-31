@@ -91,8 +91,11 @@ fn backup_message(error: &crate::error::AppError) -> String {
 
 /// Today's date as YYYY-MM-DD (UTC), for the suggested file name.
 fn today_utc() -> String {
-    let days = crate::db::current_unix_timestamp().div_euclid(86_400);
-    // Civil date from a count of days since 1970-01-01.
+    civil_date(crate::db::current_unix_timestamp().div_euclid(86_400))
+}
+
+/// YYYY-MM-DD for a count of days since 1970-01-01 (proleptic Gregorian).
+pub fn civil_date(days: i64) -> String {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;

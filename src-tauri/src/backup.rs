@@ -5,7 +5,7 @@
 //! (PBKDF2-HMAC-SHA256 → AES-256-CBC, then HMAC-SHA256 over the result). A file written by a
 //! newer backup format is refused rather than half-read.
 
-use crate::accounts::store::{account_keys, settings_lock};
+use crate::accounts::store::{account_keys, account_services, settings_lock};
 use crate::commands::settings::{read_settings_file, write_settings_file};
 use crate::error::AppError;
 use aes::cipher::block_padding::Pkcs7;
@@ -196,8 +196,8 @@ pub fn summary(backup: &Backup) -> Summary {
 }
 
 /// Writes a backup into the database and the settings file. Rows with the same key are
-/// updated (watch progress and playlists only by newer rows), other rows are kept. Logins are restored only with the matching passphrase; the
-/// current logins are kept otherwise. A wrong passphrase stops the restore before anything is
+/// updated (watch progress and playlists only by newer rows), other rows are kept. Logins are restored only with the matching passphrase, per
+/// service; the current logins of every other service are kept. A wrong passphrase stops the restore before anything is
 /// written.
 pub async fn restore(
     pool: &SqlitePool,
@@ -271,12 +271,20 @@ pub async fn restore(
         let stored = read_settings_file(settings_path).map_err(AppError::Other)?;
         let mut settings = backup.settings.clone();
         let object = settings.as_object_mut().expect("checked above");
+        // Logins only ever come from the sealed part, never from plain settings.
         for key in account_keys() {
-            // Logins only ever come from the sealed part, never from plain settings.
             object.remove(key);
-            let source = logins.as_ref().unwrap_or(&stored);
-            if let Some(value) = source.get(key) {
-                object.insert(key.to_string(), value.clone());
+        }
+        for service in account_services() {
+            // A service in the backup comes back whole; one it lacks keeps the current sign-in.
+            let source = match &logins {
+                Some(logins) if service.iter().any(|key| logins.get(*key).is_some()) => logins,
+                _ => &stored,
+            };
+            for key in service {
+                if let Some(value) = source.get(*key) {
+                    object.insert(key.to_string(), value.clone());
+                }
             }
         }
         write_settings_file(settings_path, &settings).map_err(AppError::Other)?;
@@ -317,11 +325,7 @@ fn keys(passphrase: &str, salt: &[u8], rounds: u32) -> ([u8; 32], [u8; 32]) {
 }
 
 fn random(bytes: usize) -> Result<Vec<u8>, AppError> {
-    let mut buffer = vec![0u8; bytes];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut source| source.read_exact(&mut buffer))
-        .map_err(|e| AppError::Other(format!("Could not read random bytes: {}", e)))?;
-    Ok(buffer)
+    crate::system::random::bytes(bytes).map_err(|e| AppError::Other(format!("Could not read random bytes: {}", e)))
 }
 
 pub fn seal(passphrase: &str, plain: &[u8]) -> Result<Sealed, AppError> {

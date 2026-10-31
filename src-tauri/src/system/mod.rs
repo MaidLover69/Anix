@@ -1,12 +1,13 @@
 //! Desktop integration: the tray and background mode, the autostart entry, the windowless
 //! `--background` release checks, the AppImage's `anix://` handler, restarts, and the
-//! hardware-acceleration diagnostics of Settings › System.
+//! hardware-acceleration diagnostics of Settings › System, and the OS random source for tokens.
 
 pub mod autostart;
 pub mod background;
 pub mod gnutls;
 pub mod hwaccel;
 pub mod page_crash;
+pub mod random;
 pub mod safe_mode;
 pub mod session_marker;
 pub mod tray;

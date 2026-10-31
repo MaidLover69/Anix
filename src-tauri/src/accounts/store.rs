@@ -75,6 +75,11 @@ const COMICK_KEYS: [&str; 7] = [
     COMICK_USER_AVATAR,
 ];
 
+/// The keys of each service, so that one sign-in is always handled as a whole.
+pub fn account_services() -> [&'static [&'static str]; 3] {
+    [&ANILIST_KEYS, &MAL_KEYS, &COMICK_KEYS]
+}
+
 /// Every key owned by this module.
 pub fn account_keys() -> impl Iterator<Item = &'static str> {
     ANILIST_KEYS.into_iter().chain(MAL_KEYS).chain(COMICK_KEYS)

@@ -12,9 +12,7 @@ use crate::error::AppError;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -446,26 +444,16 @@ pub enum PlayableKind {
 static PLAYABLE: Lazy<Mutex<HashMap<String, (PlayableKind, PathBuf)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn random_key() -> String {
-    // RandomState is seeded from the OS; two independent states give 128 unpredictable bits.
-    let part = || {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u128(current_unix_millis() as u128);
-        hasher.finish()
-    };
-    format!("{:016x}{:016x}", part(), part())
-}
-
 /// Allows the proxy to serve `path` and returns the key it is served under. The same file
 /// keeps its key for the session.
-pub fn register_playable(kind: PlayableKind, path: &Path) -> String {
+pub fn register_playable(kind: PlayableKind, path: &Path) -> std::io::Result<String> {
     let mut map = PLAYABLE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((key, _)) = map.iter().find(|(_, (k, p))| *k == kind && p == path) {
-        return key.clone();
+        return Ok(key.clone());
     }
-    let key = random_key();
+    let key = crate::system::random::hex(16)?;
     map.insert(key.clone(), (kind, path.to_path_buf()));
-    key
+    Ok(key)
 }
 
 /// The file registered under `key` for `kind`, if it is still a regular file of that kind.

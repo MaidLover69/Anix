@@ -74,14 +74,18 @@ pub fn desktop_entry(exec: &Path) -> String {
 /// Writes (when `exec` is given) or removes the entry under `config_home`. Only an entry this
 /// app wrote is removed or replaced. Writing an unchanged entry does nothing.
 pub fn set_enabled(config_home: &Path, exec: Option<&Path>) -> io::Result<()> {
-    let path = entry_path(config_home);
-    let existing = fs::read_to_string(&path).ok();
-    let ours = existing.as_deref().is_none_or(|text| text.contains(MARKER));
-    match exec {
-        Some(exec) => {
-            let wanted = desktop_entry(exec);
-            if existing.as_deref() == Some(wanted.as_str()) {
-                return Ok(());
+    write_ours(&entry_path(config_home), exec.map(desktop_entry).as_deref(), MARKER).map(|_| ())
+}
+
+/// Writes `wanted` to `path` (or removes the file with `None`); only a file that is missing or
+/// contains `marker` is replaced or removed. Returns whether anything changed.
+pub fn write_ours(path: &Path, wanted: Option<&str>, marker: &str) -> io::Result<bool> {
+    let existing = fs::read_to_string(path).ok();
+    let ours = existing.as_deref().is_none_or(|text| text.contains(marker));
+    match wanted {
+        Some(wanted) => {
+            if existing.as_deref() == Some(wanted) {
+                return Ok(false);
             }
             if !ours {
                 return Err(io::Error::new(
@@ -92,18 +96,20 @@ pub fn set_enabled(config_home: &Path, exec: Option<&Path>) -> io::Result<()> {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let tmp = path.with_extension(format!("desktop.tmp{}", std::process::id()));
+            let mut tmp = path.as_os_str().to_owned();
+            tmp.push(format!(".tmp{}", std::process::id()));
+            let tmp = PathBuf::from(tmp);
             fs::write(&tmp, wanted)?;
-            fs::rename(&tmp, &path).inspect_err(|_| {
+            fs::rename(&tmp, path).inspect_err(|_| {
                 let _ = fs::remove_file(&tmp);
-            })
+            })?;
+            Ok(true)
         }
-        None => {
-            if existing.is_some() && ours {
-                fs::remove_file(&path)?;
-            }
-            Ok(())
+        None if existing.is_some() && ours => {
+            fs::remove_file(path)?;
+            Ok(true)
         }
+        None => Ok(false),
     }
 }
 

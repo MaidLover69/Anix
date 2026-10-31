@@ -246,7 +246,7 @@ async fn external_players_get_local_sidecars_but_never_private_subtitle_links() 
     let sidecar = dir.join("Show - 01.en.srt");
     let cue = "1\n00:00:01,000 --> 00:00:02,000\nHello\n";
     std::fs::write(&sidecar, cue).unwrap();
-    let local = format!("{}/localsub/{}", base, register_playable(PlayableKind::Subtitle, &sidecar));
+    let local = format!("{}/localsub/{}", base, register_playable(PlayableKind::Subtitle, &sidecar).unwrap());
 
     let subtitle = |url: String| ExternalSubtitle { url, language: Some("English".to_string()) };
     let files = fetch_subtitle_files(

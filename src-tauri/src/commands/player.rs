@@ -277,7 +277,7 @@ pub async fn fetch_subtitle_files(subtitles: &[ExternalSubtitle], referer: Optio
         let (client, dir, sub, referer) = (client.clone(), dir.clone(), sub.clone(), referer.map(str::to_string));
         tasks.spawn(async move {
             let body = if let Some(local) = crate::stream_proxy::local_subtitle_path(&sub.url) {
-                tokio::fs::read(local).await.ok()?.into()
+                tokio::fs::read(local).await.ok()?
             } else {
                 let url = validate_media_url(&sub.url).ok()?;
                 crate::clients::net_guard::check_public_url(&url::Url::parse(&url).ok()?).ok()?;
@@ -285,7 +285,8 @@ pub async fn fetch_subtitle_files(subtitles: &[ExternalSubtitle], referer: Optio
                 if let Some(r) = referer {
                     request = request.header("Referer", r);
                 }
-                request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?
+                let response = request.send().await.ok()?.error_for_status().ok()?;
+                crate::stream_proxy::read_limited(response, crate::downloads::MAX_SUBTITLE_BYTES).await.ok()?
             };
             let format = crate::downloads::detect_subtitle_format(&body)?;
             let path = dir.join(subtitle_file_name(nonce, index, sub.language.as_deref(), format.extension()));

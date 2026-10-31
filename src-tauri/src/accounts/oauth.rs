@@ -16,7 +16,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::Read;
 use url::Url;
 
 const ANILIST_AUTHORIZE_URL: &str = "https://anilist.co/api/v2/oauth/authorize";
@@ -88,10 +87,7 @@ impl Service {
 
 /// `bytes` random bytes from the kernel, as unpadded base64url text.
 fn random_url_safe(bytes: usize) -> Result<String, String> {
-    let mut buffer = vec![0u8; bytes];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut source| source.read_exact(&mut buffer))
-        .map_err(|e| format!("Could not read random bytes: {}", e))?;
+    let buffer = crate::system::random::bytes(bytes).map_err(|e| format!("Could not read random bytes: {}", e))?;
     Ok(URL_SAFE_NO_PAD.encode(buffer))
 }
 

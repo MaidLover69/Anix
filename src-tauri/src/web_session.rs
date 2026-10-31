@@ -20,9 +20,7 @@ use base64::Engine as _;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, VecDeque};
-use std::hash::{BuildHasher, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -502,13 +500,8 @@ pub fn valid_request_path(path: &str) -> bool {
         && !path.chars().any(|c| c.is_control() || c == '#')
 }
 
-fn new_request_key() -> String {
-    let part = || {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u128(std::process::id() as u128);
-        hasher.finish()
-    };
-    format!("__anix_{:016x}{:016x}", part(), part())
+fn new_request_key() -> std::io::Result<String> {
+    Ok(format!("__anix_{}", crate::system::random::hex(16)?))
 }
 
 /// The script that makes the request. It keeps its state in one non-enumerable property of the
@@ -1710,7 +1703,10 @@ async fn collect_once(window: &WebviewWindow, script: &str) -> Collected {
 }
 
 async fn request(window: &WebviewWindow, origin: &str, asked: &WebRequest, deadline: Instant) -> Outcome {
-    let key = new_request_key();
+    let key = match new_request_key() {
+        Ok(key) => key,
+        Err(e) => return Outcome::Failed(e.to_string()),
+    };
     if window.eval(request_script(&key, origin, asked)).is_err() {
         return Outcome::Gone;
     }

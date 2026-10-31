@@ -242,13 +242,13 @@ fn test_local_media_allow_list_only_serves_registered_files() {
     let subtitle = dir.file("Show - 01.srt", b"sub");
     let text = dir.file("notes.txt", b"secret");
 
-    let key = register_playable(PlayableKind::Video, &video);
+    let key = register_playable(PlayableKind::Video, &video).unwrap();
     assert_eq!(key.len(), 32);
-    assert_eq!(register_playable(PlayableKind::Video, &video), key, "a file keeps its key");
+    assert_eq!(register_playable(PlayableKind::Video, &video).unwrap(), key, "a file keeps its key");
     assert_eq!(playable_path(PlayableKind::Video, &key), Some(video.clone()));
     // A video key is not a subtitle key.
     assert_eq!(playable_path(PlayableKind::Subtitle, &key), None);
-    let sub_key = register_playable(PlayableKind::Subtitle, &subtitle);
+    let sub_key = register_playable(PlayableKind::Subtitle, &subtitle).unwrap();
     assert_eq!(playable_path(PlayableKind::Subtitle, &sub_key), Some(subtitle));
 
     // Paths, traversal and unknown keys are refused.
@@ -265,7 +265,7 @@ fn test_local_media_allow_list_only_serves_registered_files() {
     }
 
     // Only video files are served as video, even when registered.
-    let text_key = register_playable(PlayableKind::Video, &text);
+    let text_key = register_playable(PlayableKind::Video, &text).unwrap();
     assert_eq!(playable_path(PlayableKind::Video, &text_key), None);
     // A registered file that is gone is not served.
     std::fs::remove_file(&video).unwrap();
@@ -301,7 +301,7 @@ async fn test_local_media_proxy_routes() {
     dir.file("Show - 01.en.srt", b"1\n00:00:01,000 --> 00:00:02,500\nHello\n");
     let secret = dir.file("secret.mp4", b"not linked");
 
-    let source = local_episode_source(&base, &video);
+    let source = local_episode_source(&base, &video).unwrap();
     assert_eq!(source.sources.provider.as_deref(), Some("local"));
     assert_eq!(source.sources.streams.len(), 1);
     assert_eq!(source.sources.subtitles.len(), 1);

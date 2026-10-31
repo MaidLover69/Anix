@@ -210,6 +210,37 @@ async fn backup_with_passphrase_seals_the_logins() {
 }
 
 #[tokio::test]
+async fn restoring_logins_keeps_a_sign_in_the_backup_does_not_have() {
+    let source = filled().await;
+    let made = backup::create(&source.pool, &source.settings_path(), json!([]), Some("correct horse")).await.unwrap();
+
+    // The target signed in to Comick and AniList after the backup; the backup has AniList and MAL.
+    let target = Profile::new().await;
+    let current = json!({
+        "comick_access_token": "current-comick",
+        "comick_user_name": "reader",
+        "anilist_token": "current-anilist",
+        "anilist_token_expires_at": 99,
+    });
+    std::fs::write(target.settings_path(), current.to_string()).unwrap();
+
+    // Without the passphrase every current login stays as it is.
+    backup::restore(&target.pool, &target.settings_path(), &made, None).await.unwrap();
+    assert_eq!(target.settings()["comick_access_token"], "current-comick");
+    assert_eq!(target.settings()["anilist_token"], "current-anilist");
+
+    let summary = backup::restore(&target.pool, &target.settings_path(), &made, Some("correct horse")).await.unwrap();
+    assert!(summary.logins_restored);
+    let settings = target.settings();
+    assert!(settings["comick_access_token"] == "current-comick", "the Comick sign-in was dropped");
+    assert_eq!(settings["comick_user_name"], "reader");
+    assert!(settings["anilist_token"] == "secret-anilist", "the backup's AniList sign-in was not restored");
+    assert!(settings["mal_refresh_token"] == "secret-refresh", "the backup's MAL sign-in was not restored");
+    // A service comes back whole: no expiry left over from the replaced AniList sign-in.
+    assert!(settings.get("anilist_token_expires_at").is_none());
+}
+
+#[tokio::test]
 async fn backup_refuses_newer_formats_and_other_files() {
     let source = filled().await;
     let made = backup::create(&source.pool, &source.settings_path(), json!([]), None).await.unwrap();
@@ -237,4 +268,22 @@ fn backup_pbkdf2_matches_the_rfc_7914_vector() {
     let key = backup::pbkdf2(b"passwd", b"salt", 1);
     let hex: String = key.iter().map(|b| format!("{:02x}", b)).collect();
     assert_eq!(hex, "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc");
+}
+
+#[test]
+fn backup_file_name_dates_land_on_the_right_civil_day() {
+    use anix_lib::commands::backup::civil_date;
+    assert_eq!(civil_date(0), "1970-01-01");
+    assert_eq!(civil_date(-1), "1969-12-31");
+    assert_eq!(civil_date(364), "1970-12-31");
+    assert_eq!(civil_date(365), "1971-01-01");
+    assert_eq!(civil_date(11_016), "2000-02-29");
+    assert_eq!(civil_date(11_017), "2000-03-01");
+    assert_eq!(civil_date(19_782), "2024-02-29");
+    assert_eq!(civil_date(19_783), "2024-03-01");
+    assert_eq!(civil_date(20_088), "2024-12-31");
+    assert_eq!(civil_date(20_089), "2025-01-01");
+    // 2100 is not a leap year: 28 February is followed by 1 March.
+    assert_eq!(civil_date(47_540), "2100-02-28");
+    assert_eq!(civil_date(47_541), "2100-03-01");
 }

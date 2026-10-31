@@ -348,50 +348,17 @@ pub fn timer_unit() -> String {
     )
 }
 
-/// Writes `wanted` to `path` (or removes the file with `None`); only files this app wrote are
-/// replaced or removed. Returns whether anything changed.
-fn write_ours(path: &Path, wanted: Option<&str>) -> io::Result<bool> {
-    let existing = std::fs::read_to_string(path).ok();
-    let ours = existing.as_deref().is_none_or(|text| text.contains(MARKER));
-    match wanted {
-        Some(wanted) => {
-            if existing.as_deref() == Some(wanted) {
-                return Ok(false);
-            }
-            if !ours {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("{} exists and was not made by Anix", path.display()),
-                ));
-            }
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-            std::fs::write(&tmp, wanted)?;
-            std::fs::rename(&tmp, path).inspect_err(|_| {
-                let _ = std::fs::remove_file(&tmp);
-            })?;
-            Ok(true)
-        }
-        None if existing.is_some() && ours => {
-            std::fs::remove_file(path)?;
-            Ok(true)
-        }
-        None => Ok(false),
-    }
-}
-
 /// Writes the files that start `exec --background` at login (`exec` given), or removes them.
 /// Only the files of `how` are written; the other kind is removed. Returns whether the
 /// systemd units changed, in which case systemd has to be told.
 pub fn install_files(config_home: &Path, exec: Option<&Path>, how: Starter) -> io::Result<bool> {
+    use super::autostart::write_ours;
     let (service, timer) = unit_paths(config_home);
     let systemd = exec.filter(|_| how == Starter::SystemdTimer);
     let autostart = exec.filter(|_| how == Starter::Autostart);
-    write_ours(&autostart_path(config_home), autostart.map(autostart_entry).as_deref())?;
-    let mut changed = write_ours(&service, systemd.map(service_unit).as_deref())?;
-    changed |= write_ours(&timer, systemd.map(|_| timer_unit()).as_deref())?;
+    write_ours(&autostart_path(config_home), autostart.map(autostart_entry).as_deref(), MARKER)?;
+    let mut changed = write_ours(&service, systemd.map(service_unit).as_deref(), MARKER)?;
+    changed |= write_ours(&timer, systemd.map(|_| timer_unit()).as_deref(), MARKER)?;
     Ok(changed)
 }
 

@@ -73,8 +73,15 @@ jobs:
         run: |
           node --test scripts/floor-guard-test.mjs
           if [ -n "$BASE_REF" ]; then base="origin/$BASE_REF"
-          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"
-          else base="HEAD~1"; fi
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            # After a force push the old tip is on no branch, so checkout did not fetch it.
+            git cat-file -e "$BEFORE^{commit}" 2>/dev/null || git fetch --no-tags -q origin "$BEFORE" \
+              || { echo "::error::cannot fetch the pushed-over commit $BEFORE; the floor guard would check only part of the push"; exit 2; }
+            base="$BEFORE"
+          else
+            echo "::warning::no push base (manual run or new branch): the floor guard checks only the last commit"
+            base="HEAD~1"
+          fi
           node scripts/floor-guard.mjs --base "$base"
 
       - name: Setup Rust toolchain

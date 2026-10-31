@@ -8,19 +8,23 @@ by editing this file. `npm run floor` (`scripts/floor-guard.mjs`) checks the dif
 A change may not add any of these. The floor guard flags them in added lines only, so old code is not blocked.
 
 - Silenced checkers: no new `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, `eslint-disable` or similar.
-- Rust `#[allow(...)]`: only with a reason on the same line, `#[allow(x)] // why`.
+- Rust `#[allow(...)]`: only with a reason on the same line, `#[allow(x)] // why` or `#[allow(x, reason = "why")]`;
+  the same for `#[expect(...)]`. A lint set to `"allow"` in `Cargo.toml` needs a `#` reason on its line or the one above.
 - Unfinished work: no `todo!()`, `unimplemented!()`, "not implemented" throws, empty `catch {}`, or `TODO` comments.
-- Tests made easier: no new `#[ignore]` (except tests that need the network, see AGENTS.md › Tests), `.skip(`, `.only(`.
+- Tests made easier: no new `#[ignore]` (except tests that need the network, marked `#[ignore = "needs network"]`,
+  see AGENTS.md › Tests), `.skip(`, `.only(`.
 - Tests removed: no deleted test file, and no net loss of assertions in a test file.
 - Secrets and personal data: none, anywhere (AGENTS.md › Security and privacy).
 - This file: no rule removed and no number loosened in the same change as the code that needed it.
 
-An exception needs a dated row below with a reason and an owner. The guard flags new rows so a reviewer sees them.
+An exception needs a dated row below with a reason and an owner; its Rule cell names the guard rule it lets through
+(the word in brackets in the guard's output, such as `threshold-loosened`). The guard prints new rows so a reviewer
+sees them, and lets through only that rule, only in the change that adds the row.
 
 ## Measured numbers (ratchets)
 
-Measured on 2026-10-31. A number may only move in its direction. When a change makes it better, write the new
-number here in the same change.
+Measured on 2026-10-31. A limit may only move in its direction. When a change makes it better, write the new
+number here in the same change. The guard reads the limit, not the `(measured …)` note, so the note can be updated freely.
 
 | Metric | Today | Direction |
 |---|---|---|

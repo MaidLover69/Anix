@@ -42,7 +42,9 @@ rpm="$(ls -t "$bundle"/rpm/*.rpm | head -1)"
 check="$work/pkg-check"
 rm -rf "$check" && mkdir -p "$check/deb" "$check/rpm"
 dpkg-deb -x "$deb" "$check/deb"
-(cd "$check/rpm" && rpm2cpio "$rpm" | cpio -idm --quiet)
+# Ubuntu 22.04's rpm2cpio (4.17.0) exits 1 even after writing the whole archive, so its status is
+# ignored; a short or broken archive still fails in cpio or in the usr/bin/anix check below.
+(cd "$check/rpm" && { rpm2cpio "$rpm" || true; } | cpio -idm --quiet)
 for root in "$check/deb" "$check/rpm"; do
   [ -x "$root/usr/bin/anix" ] || { echo "No usr/bin/anix in $root" >&2; exit 1; }
   if [ -e "$root/usr/lib/anix/libmpv.so.2" ]; then

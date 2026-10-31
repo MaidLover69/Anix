@@ -22,6 +22,7 @@ pub const SERVICE_TYPE: &str = "_anix-party._tcp.local.";
 const SKIPPED_PREFIXES: &[&str] = &[
     "lo", "tun", "tap", "wg", "utun", "ppp", "ipsec", "tailscale", "zt", "nordlynx", "proton", "mullvad", "docker",
     "br-", "virbr", "veth", "podman", "cni", "flannel", "cali", "vmnet", "vboxnet", "lxc", "lxd", "incus",
+    "waydroid", "anbox", "vpn",
 ];
 
 /// True for an interface the party never uses.

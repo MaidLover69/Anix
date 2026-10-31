@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { watchPath } from './watchProgress';
-import { ALIGN_LEAD_MS, DEAD_BAND_MS, hostPositionMs, isBufferedAhead, needsAlign } from '../lib/watchParty';
+import { ALIGN_LEAD_MS, DEAD_BAND_MS, hostPositionMs, isBufferedAhead, isNewHostState, needsAlign, pastEnd } from '../lib/watchParty';
 import type { HostSample } from '../lib/watchParty';
 
 export type PartyRole = 'none' | 'host' | 'guest';
@@ -70,8 +70,10 @@ export const NO_PARTY: PartyStatus = {
   rtt_ms: null,
 };
 
-/** Programmatic play/pause/seek events arriving within this window are not the user's. */
+/** A programmatic play/pause/seek's event arriving within this window is not the user's. */
 const QUIET_MS = 800;
+type QuietKind = 'play' | 'pause' | 'seeked' | 'ratechange';
+const QUIET_KINDS: QuietKind[] = ['play', 'pause', 'seeked', 'ratechange'];
 /** A pause the engine did not ask for counts as a real one after this long. */
 const HELD_PAUSE_MS = 2000;
 const HEARTBEAT_MS = 1000;
@@ -96,7 +98,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(r
 async function waitBuffered(media: HTMLVideoElement, ms: number): Promise<void> {
   const until = performance.now() + ms;
   while (performance.now() < until) {
-    if (media.readyState >= 3) return;
+    // The mpv stand-in reports 4 from load on, so only its buffered range counts.
+    if (media.readyState >= 3 && media instanceof HTMLMediaElement) return;
     const b = media.buffered;
     const ranges: Array<[number, number]> = [];
     for (let i = 0; i < b.length; i++) ranges.push([b.start(i), b.end(i)]);
@@ -118,24 +121,49 @@ function waitFor(target: EventTarget, names: string[], ms: number): Promise<void
   });
 }
 
-/** Takes a guest to the host's episode, from any screen. */
+/**
+ * Takes a guest to the host's episode, from any screen, and back to it when the guest opens
+ * another one. Ends a hosted party when the host leaves the player, and any party when the
+ * window is hidden to the tray: nobody would see it still running.
+ */
 export function usePartyFollow() {
   const navigate = useNavigate();
   const location = useLocation();
   const here = useRef(location);
   here.current = location;
-  useEffect(
-    () =>
-      onPartyEvent((event) => {
-        if (event.kind !== 'load') return;
-        const target = watchPath(event.anime_id, event.episode, event.category, null);
-        const now = here.current;
-        const sameEpisode = now.pathname === target.split('?')[0];
-        if (sameEpisode && new URLSearchParams(now.search).get('cat') === event.category) return;
-        navigate(target, { replace: now.pathname.startsWith('/watch/') });
-      }),
+  const follow = useCallback(
+    (load: PartyLoad) => {
+      const target = watchPath(load.anime_id, load.episode, load.category, null);
+      const now = here.current;
+      const sameEpisode = now.pathname === target.split('?')[0];
+      if (sameEpisode && new URLSearchParams(now.search).get('cat') === load.category) return;
+      navigate(target, { replace: now.pathname.startsWith('/watch/') });
+    },
     [navigate]
   );
+  useEffect(() => onPartyEvent((event) => event.kind === 'load' && follow(event)), [follow]);
+  const route = location.pathname + location.search;
+  useEffect(() => {
+    const watching = here.current.pathname.startsWith('/watch/');
+    invoke<Snapshot>('party_status')
+      .then(({ status, load }) => {
+        if (status.role === 'host' && !watching) return invoke('party_leave');
+        if (status.role === 'guest' && watching && load) follow(load);
+      })
+      .catch(() => {});
+  }, [route, follow]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    listen('main-window-hidden', () => void invoke('party_leave').catch(() => {})).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 }
 
 export interface PartyEpisode {
@@ -190,8 +218,12 @@ export function useWatchParty(
   onEndedRef.current = onEnded;
 
   const run = useRef({
-    quietUntil: 0,
+    quietUntil: { play: 0, pause: 0, seeked: 0, ratechange: 0 } as Record<QuietKind, number>,
     busy: false,
+    /** The Prepare this guest answered; its start keeps the same number. */
+    preparedSeq: -1,
+    /** The host paused its own player to start with the guests. */
+    hostStarting: false,
     token: 0,
     sample: null as HostSample | null,
     seq: -1,
@@ -204,10 +236,12 @@ export function useWatchParty(
     tick: { value: 0, at: 0 },
   });
 
-  const quiet = () => {
-    run.current.quietUntil = performance.now() + QUIET_MS;
+  /** Ignores the next events of `kinds` (all when none given) for a moment: this hook caused them. */
+  const quiet = (...kinds: QuietKind[]) => {
+    const until = performance.now() + QUIET_MS;
+    for (const kind of kinds.length ? kinds : QUIET_KINDS) run.current.quietUntil[kind] = until;
   };
-  const isQuiet = () => run.current.busy || performance.now() < run.current.quietUntil;
+  const isQuiet = (kind: QuietKind) => run.current.busy || performance.now() < run.current.quietUntil[kind];
 
   /** The playhead in ms; mpv reports it about five times a second, so it is extrapolated. */
   const livePositionMs = (media: HTMLVideoElement) => {
@@ -242,6 +276,7 @@ export function useWatchParty(
         quiet();
         if (!media.paused) controlsRef.current.pause();
         const target = sample.positionMs + offset;
+        if (pastEnd(target, media.duration)) return;
         if (Math.abs(media.currentTime * 1000 - target) > DEAD_BAND_MS) await seekTo(media, target);
         return;
       }
@@ -252,6 +287,18 @@ export function useWatchParty(
       let lead = ALIGN_LEAD_MS;
       for (let attempt = 0; attempt < 3; attempt++) {
         const target = hostPositionMs(sample, performance.now() + lead) + offset;
+        if (pastEnd(target, media.duration)) {
+          // A shorter copy waits at its end for the host's next episode.
+          if (pastEnd(hostPositionMs(sample, performance.now()) + offset, media.duration)) {
+            quiet();
+            if (!media.paused) controlsRef.current.pause();
+          } else if (media.paused) {
+            // Only the start lead is past the end: play on to the end with the host.
+            quiet();
+            controlsRef.current.play();
+          }
+          return;
+        }
         quiet();
         if (!media.paused) controlsRef.current.pause();
         if (Math.abs(media.currentTime * 1000 - target) > 50) await seekTo(media, target);
@@ -286,6 +333,7 @@ export function useWatchParty(
       if (!media) return;
       st.sample = { paused: true, positionMs, rate: media.playbackRate || 1, ageMs: 0, receivedAt: performance.now() };
       st.seq = seq;
+      st.preparedSeq = seq;
       const token = ++st.token;
       st.busy = true;
       try {
@@ -334,12 +382,14 @@ export function useWatchParty(
             // The prepared start, scheduled so the guests start with it.
             window.clearTimeout(st.hostTimer);
             st.hostTimer = window.setTimeout(() => {
-              quiet();
+              st.hostStarting = false;
+              quiet('play');
               controlsRef.current.play();
             }, Math.max(0, -event.age_ms));
             return;
           }
-          const changed = event.seq !== st.seq;
+          const changed = isNewHostState(st.seq, st.preparedSeq, event.seq);
+          st.preparedSeq = -1;
           st.sample = sample;
           st.seq = event.seq;
           if (changed) void align();
@@ -348,6 +398,9 @@ export function useWatchParty(
         case 'ended':
           st.sample = null;
           st.token += 1;
+          // An align or prepare cut short by the token leaves these set.
+          st.busy = false;
+          st.hostStarting = false;
           setStatus(NO_PARTY);
           setHostLoad(null);
           setOffsetMs(0);
@@ -393,7 +446,7 @@ export function useWatchParty(
       }).catch(() => {});
     const onPlay = () => {
       const role = statusRef.current.role;
-      if (role === 'none' || isQuiet()) return;
+      if (role === 'none' || isQuiet('play')) return;
       if (st.heldPause) {
         st.heldPause = false;
         window.clearTimeout(st.heldTimer);
@@ -401,16 +454,28 @@ export function useWatchParty(
       }
       if (role === 'guest') return void align();
       // The host starts with everyone: hold here until the guests are ready.
-      quiet();
-      controlsRef.current.pause();
+      holdForStart();
+    };
+    /** Host: pause this player until the prepared start, which the backend schedules. */
+    const holdForStart = () => {
+      // A start already scheduled would play this player before the guests are ready again.
+      window.clearTimeout(st.hostTimer);
+      if (!media.paused) {
+        quiet('pause');
+        controlsRef.current.pause();
+      }
+      st.hostStarting = true;
       void report(false);
     };
     const onPause = () => {
       const role = statusRef.current.role;
-      if (role === 'none' || isQuiet()) return;
+      if (role === 'none' || isQuiet('pause')) return;
       const settle = () => {
         if (statusRef.current.role === 'guest') return void align();
         window.clearTimeout(st.hostTimer);
+        st.hostStarting = false;
+        // The next play is the user's, even inside the scheduled start's quiet window.
+        st.quietUntil.play = 0;
         void report(true);
       };
       // Still wanted: the engine holds playback to buffer, or the stream ended. A pause that
@@ -429,15 +494,14 @@ export function useWatchParty(
     };
     const onSeeked = () => {
       const role = statusRef.current.role;
-      if (role === 'none' || isQuiet()) return;
+      if (role === 'none' || isQuiet('seeked')) return;
       if (role === 'guest') return void align();
-      if (media.paused) return void report(true);
-      quiet();
-      controlsRef.current.pause();
-      void report(false);
+      // Paused by the user, or only held for a start: then the seek still plays.
+      if (media.paused && !st.hostStarting) return void report(true);
+      holdForStart();
     };
     const onRate = () => {
-      if (statusRef.current.role === 'host' && !isQuiet() && !media.paused) void report(false, true);
+      if (statusRef.current.role === 'host' && !isQuiet('ratechange') && !media.paused) void report(false, true);
     };
     const onTime = () => {
       st.tick = { value: media.currentTime, at: performance.now() };
@@ -477,6 +541,9 @@ export function useWatchParty(
       media.removeEventListener('timeupdate', onTime);
       window.clearInterval(timer);
       window.clearTimeout(st.heldTimer);
+      // The host's player closes (Back, another episode): the guests stop with it.
+      if (statusRef.current.role === 'host') void report(true);
+      st.hostStarting = false;
     };
   }, [videoRef, align]);
 
@@ -494,8 +561,22 @@ export function useWatchParty(
         server: episode.server ? episode.server.slice(0, 64) : null,
         duration_ms: durationMs,
       },
-    }).catch(() => {});
+    })
+      .then(() => {
+        // Hosting mid-episode, or an episode that opened without playing: the guests learn
+        // where the host is. The backend ignores it once this episode has a report.
+        const media = videoRef.current;
+        if (!media) return;
+        return invoke('party_report', {
+          paused: media.paused,
+          positionMs: Math.round(media.currentTime * 1000),
+          rate: media.playbackRate || 1,
+          heartbeat: true,
+        });
+      })
+      .catch(() => {});
   }, [
+    videoRef,
     status.role,
     episode.anilistId,
     episode.episodeNumber,

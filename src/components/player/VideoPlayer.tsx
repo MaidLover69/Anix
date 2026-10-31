@@ -1085,7 +1085,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             onToggleMute={toggleMute}
             subtitlesOn={subtitles.selectedId !== SUBTITLES_OFF}
             onOpenSubtitles={() => setSubtitleSettingsOpen(true)}
-            onOpenEpisodes={onOpenEpisodes}
+            onOpenEpisodes={hostOnly(onOpenEpisodes)}
             queuedCount={queuedCount}
             onOpenServers={onOpenServers}
             onOpenSettings={() => setSettingsOpen(true)}
@@ -1110,7 +1110,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         selectedAudioTrackId={engine.audioTrack}
         onSelectAudioTrack={engine.selectAudioTrack}
         category={category}
-        onToggleCategory={onToggleCategory}
+        onToggleCategory={hostOnly(onToggleCategory)}
         container={container}
         engine={engineKind}
       />

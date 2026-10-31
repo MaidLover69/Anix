@@ -43,6 +43,14 @@ pub const READY_WAIT: Duration = Duration::from_secs(15);
 pub const START_LEAD_MS: u64 = 1000;
 /// Position repeats closer together than this are dropped.
 const HEARTBEAT_MIN_MS: u64 = 500;
+/// Reports closer together than this are merged into the latest one, so a held seek key
+/// stays well under the guests' inbound [`RateLimit`].
+const REPORT_GAP_MS: u64 = 200;
+/// Connections still in the join exchange, in all and from one address.
+const MAX_PRE_AUTH: usize = 32;
+const MAX_PRE_AUTH_PER_IP: usize = 4;
+/// Pause after a failed `accept` (out of file descriptors, a network blip) before the next.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(250);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTBOX: usize = 64;
 const WIRE_MAX: usize = MAX_MESSAGE_BYTES + TAG_BYTES;
@@ -222,6 +230,42 @@ struct HostState {
     seq: u64,
     pending: Option<Pending>,
     last_heartbeat_ms: u64,
+    last_report_ms: Option<u64>,
+    /// A report waiting for [`REPORT_GAP_MS`] to pass: (paused, position_ms, rate).
+    queued_report: Option<(bool, u64, f64)>,
+    /// Connections in the join exchange, by address.
+    pre_auth: HashMap<IpAddr, usize>,
+}
+
+/// One connection's place among those in the join exchange; given back when dropped.
+struct PreAuthSlot {
+    shared: Arc<HostShared>,
+    ip: IpAddr,
+}
+
+impl PreAuthSlot {
+    fn take(shared: &Arc<HostShared>, ip: IpAddr) -> Option<PreAuthSlot> {
+        let mut s = shared.lock();
+        let total: usize = s.pre_auth.values().sum();
+        let mine = s.pre_auth.get(&ip).copied().unwrap_or(0);
+        if total >= MAX_PRE_AUTH || mine >= MAX_PRE_AUTH_PER_IP {
+            return None;
+        }
+        *s.pre_auth.entry(ip).or_insert(0) += 1;
+        Some(PreAuthSlot { shared: shared.clone(), ip })
+    }
+}
+
+impl Drop for PreAuthSlot {
+    fn drop(&mut self) {
+        let mut s = self.shared.lock();
+        if let Some(count) = s.pre_auth.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                s.pre_auth.remove(&self.ip);
+            }
+        }
+    }
 }
 
 struct HostShared {
@@ -350,9 +394,20 @@ impl Host {
             .map(|listener| {
                 let shared = shared.clone();
                 tokio::spawn(async move {
-                    while let Ok((stream, _)) = listener.accept().await {
-                        let _ = stream.set_nodelay(true);
-                        tokio::spawn(handle_guest(shared.clone(), stream));
+                    loop {
+                        match listener.accept().await {
+                            Ok((stream, peer)) => {
+                                // Over the limit: dropping the stream closes it at once.
+                                let Some(slot) = PreAuthSlot::take(&shared, peer.ip()) else { continue };
+                                let _ = stream.set_nodelay(true);
+                                tokio::spawn(handle_guest(shared.clone(), stream, slot));
+                            }
+                            // The listener stays: the error passes (fds freed, network back).
+                            Err(e) => {
+                                tracing::debug!("Watch party: accept failed: {}", e);
+                                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                            }
+                        }
                     }
                 })
             })
@@ -384,11 +439,11 @@ impl Host {
         if s.load.as_ref() == Some(&load) {
             return Ok(());
         }
-        let same_episode = s.load.as_ref().is_some_and(|old| old.anime_id == load.anime_id && old.episode == load.episode && old.category == load.category);
-        if !same_episode {
+        if !s.load.as_ref().is_some_and(|old| old.same_episode(&load)) {
             s.seq += 1;
             s.last = None;
             s.pending = None;
+            s.queued_report = None;
         }
         HostShared::broadcast(&mut s, &Message::Load(load.clone()));
         s.load = Some(load);
@@ -403,51 +458,57 @@ impl Host {
             return Err(PartyError::Invalid);
         }
         let mut s = self.shared.lock();
-        s.seq += 1;
-        let seq = s.seq;
-        if paused {
-            s.pending = None;
-            let state = Message::State { seq, paused: true, position_ms, rate, at_ms: sync::now_ms() };
-            HostShared::broadcast(&mut s, &state);
-            s.last = Some(state);
-            self.shared.emit_status(&s);
+        if s.stopped {
             return Ok(());
         }
-        let waiting: HashSet<u32> = s.guests.keys().copied().collect();
-        s.pending = Some(Pending { seq, position_ms, rate, waiting });
-        HostShared::broadcast(&mut s, &Message::Prepare { seq, position_ms });
-        self.shared.emit_status(&s);
-        drop(s);
-        let shared = self.shared.clone();
-        tokio::spawn(async move {
-            let deadline = tokio::time::Instant::now() + READY_WAIT;
-            loop {
-                let done = match shared.lock().pending.as_ref() {
-                    Some(p) if p.seq == seq => p.waiting.is_empty(),
-                    _ => return,
-                };
-                if done || tokio::time::Instant::now() >= deadline {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+        let now = sync::now_ms();
+        // The clock starts near 0, so the first report must not wait on it.
+        let due = s.last_report_ms.map_or(0, |at| at + REPORT_GAP_MS);
+        if now < due || s.queued_report.is_some() {
+            // Only the latest of a quick run goes out (a held seek key repeats ~25 times a second).
+            if s.queued_report.replace((paused, position_ms, rate)).is_none() {
+                let shared = self.shared.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(due.saturating_sub(now))).await;
+                    let mut s = shared.lock();
+                    if let Some((paused, position_ms, rate)) = s.queued_report.take() {
+                        apply_report(&shared, &mut s, paused, position_ms, rate);
+                    }
+                });
             }
-            shared.start_playing(seq);
-        });
+            return Ok(());
+        }
+        apply_report(&self.shared, &mut s, paused, position_ms, rate);
         Ok(())
     }
 
-    /// Where the host's player is while it plays; repeated so guests can correct drift.
-    pub fn heartbeat(&self, position_ms: u64, rate: f64) -> Result<(), PartyError> {
+    /// Where the host's player is: repeated while it plays so guests can correct drift, and
+    /// the first report when nothing was reported for this episode yet (hosting started
+    /// mid-episode, or a new episode opened without playing).
+    pub fn heartbeat(&self, paused: bool, position_ms: u64, rate: f64) -> Result<(), PartyError> {
         if position_ms > protocol::MAX_POSITION_MS || !protocol::valid_rate(rate) {
             return Err(PartyError::Invalid);
         }
         let mut s = self.shared.lock();
         let now = sync::now_ms();
-        let Some(Message::State { seq, paused: false, rate: old_rate, .. }) = s.last else { return Ok(()) };
-        if s.pending.is_some() || (now < s.last_heartbeat_ms + HEARTBEAT_MIN_MS && old_rate == rate) {
+        if s.pending.is_some() || s.stopped {
             return Ok(());
         }
-        let state = Message::State { seq, paused: false, position_ms, rate, at_ms: now };
+        let seq = match s.last {
+            None => {
+                s.seq += 1;
+                s.seq
+            }
+            Some(Message::State { seq, paused: false, rate: old_rate, .. }) if !paused => {
+                let gap = if old_rate == rate { HEARTBEAT_MIN_MS } else { REPORT_GAP_MS };
+                if now < s.last_heartbeat_ms + gap {
+                    return Ok(());
+                }
+                seq
+            }
+            _ => return Ok(()),
+        };
+        let state = Message::State { seq, paused, position_ms, rate, at_ms: now };
         HostShared::broadcast(&mut s, &state);
         s.last = Some(state);
         s.last_heartbeat_ms = now;
@@ -461,9 +522,10 @@ impl Host {
             return;
         }
         s.stopped = true;
-        HostShared::broadcast(&mut s, &Message::Bye);
+        HostShared::broadcast(&mut s, &Message::Bye {});
         s.guests.clear();
         s.pending = None;
+        s.queued_report = None;
         drop(s);
         for task in &self.accept_tasks {
             task.abort();
@@ -475,6 +537,43 @@ impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Sends one report of the host's player (see [`Host::report`]).
+fn apply_report(shared: &Arc<HostShared>, s: &mut HostState, paused: bool, position_ms: u64, rate: f64) {
+    if s.stopped {
+        return;
+    }
+    s.last_report_ms = Some(sync::now_ms());
+    s.seq += 1;
+    let seq = s.seq;
+    if paused {
+        s.pending = None;
+        let state = Message::State { seq, paused: true, position_ms, rate, at_ms: sync::now_ms() };
+        HostShared::broadcast(s, &state);
+        s.last = Some(state);
+        shared.emit_status(s);
+        return;
+    }
+    let waiting: HashSet<u32> = s.guests.keys().copied().collect();
+    s.pending = Some(Pending { seq, position_ms, rate, waiting });
+    HostShared::broadcast(s, &Message::Prepare { seq, position_ms });
+    shared.emit_status(s);
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + READY_WAIT;
+        loop {
+            let done = match shared.lock().pending.as_ref() {
+                Some(p) if p.seq == seq => p.waiting.is_empty(),
+                _ => return,
+            };
+            if done || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        shared.start_playing(seq);
+    });
 }
 
 async fn bind_all(ips: &[IpAddr], first_port: u16, tries: u16) -> Result<Vec<TcpListener>, PartyError> {
@@ -496,19 +595,16 @@ async fn bind_all(ips: &[IpAddr], first_port: u16, tries: u16) -> Result<Vec<Tcp
     Err(PartyError::PortsBusy)
 }
 
-/// The join exchange on the host side. `replied` turns true once the host has answered with
-/// its key-exchange message: from then on a failure counts as a wrong code.
-async fn host_handshake(code: &str, stream: &mut TcpStream, replied: &mut bool) -> Option<(Channel, u64)> {
-    let inbound = read_frame(stream, PAKE_MESSAGE_BYTES).await.ok()?;
-    if inbound.len() != PAKE_MESSAGE_BYTES {
-        return None;
-    }
+/// The join exchange on the host side, after the guest's key-exchange message `inbound`.
+/// `replied` turns true once the host has answered with its own: from then on a failure
+/// counts as a wrong code.
+async fn host_handshake(code: &str, inbound: &[u8], stream: &mut TcpStream, replied: &mut bool) -> Option<(Channel, u64)> {
     let (pake, outbound) = Pake::start(Side::Host, code);
     let mut reply = vec![STATUS_OK];
     reply.extend_from_slice(&outbound);
     write_frame(stream, &reply).await.ok()?;
     *replied = true;
-    let mut channel = pake.finish(&inbound).ok()?;
+    let mut channel = pake.finish(inbound).ok()?;
     let frame = read_frame(stream, WIRE_MAX).await.ok()?;
     match open_message(&mut channel, &frame)? {
         Message::Hello { proto: PROTOCOL_VERSION, t1 } => Some((channel, t1)),
@@ -516,7 +612,7 @@ async fn host_handshake(code: &str, stream: &mut TcpStream, replied: &mut bool) 
     }
 }
 
-async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream) {
+async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream, slot: PreAuthSlot) {
     let refusal = |s: &HostState| {
         if s.locked || s.stopped {
             Some(STATUS_LOCKED)
@@ -531,6 +627,11 @@ async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream) {
         let _ = write_frame(&mut stream, &[status]).await;
         return;
     }
+    // Read before taking the join lock, so a connection that says nothing cannot hold it.
+    let Ok(Ok(inbound)) = timeout(HANDSHAKE_TIMEOUT, read_frame(&mut stream, PAKE_MESSAGE_BYTES)).await else { return };
+    if inbound.len() != PAKE_MESSAGE_BYTES {
+        return;
+    }
     let Ok(joining) = timeout(HANDSHAKE_TIMEOUT, shared.joining.lock()).await else { return };
     let refused = refusal(&shared.lock());
     if let Some(status) = refused {
@@ -538,7 +639,7 @@ async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream) {
         return;
     }
     let mut replied = false;
-    let result = timeout(HANDSHAKE_TIMEOUT, host_handshake(&shared.code, &mut stream, &mut replied)).await.ok().flatten();
+    let result = timeout(HANDSHAKE_TIMEOUT, host_handshake(&shared.code, &inbound, &mut stream, &mut replied)).await.ok().flatten();
     let Some((mut channel, t1)) = result else {
         if replied {
             let mut s = shared.lock();
@@ -574,6 +675,7 @@ async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream) {
         id
     };
     drop(joining);
+    drop(slot);
 
     let (reader, mut writer) = stream.into_split();
     let (mut frames, reader_task) = spawn_reader(reader);
@@ -601,7 +703,7 @@ async fn handle_guest(shared: Arc<HostShared>, mut stream: TcpStream) {
             }
             message = outbox.recv() => {
                 let Some(message) = message else { break };
-                let bye = message == Message::Bye;
+                let bye = message == Message::Bye {};
                 if !send_sealed(&mut writer, &mut channel, &message).await || bye {
                     break;
                 }
@@ -706,7 +808,7 @@ impl Guest {
 
     /// Leaves the party.
     pub fn leave(&self) {
-        let _ = self.outbox.try_send(Message::Bye);
+        let _ = self.outbox.try_send(Message::Bye {});
     }
 }
 
@@ -714,7 +816,7 @@ impl Drop for Guest {
     fn drop(&mut self) {
         // A guest dropped without `leave` just closes the connection.
         let outbox = self.outbox.clone();
-        if outbox.try_send(Message::Bye).is_err() {
+        if outbox.try_send(Message::Bye {}).is_err() {
             self.task.abort();
         }
     }
@@ -780,11 +882,15 @@ async fn run_guest(shared: Arc<GuestShared>, stream: TcpStream, mut channel: Cha
                 match message {
                     Message::Pong { t1, t2 } if t1 <= now => s.clock.add(ClockSample::new(t1, t2, now)),
                     Message::Load(load) => {
-                        s.last = None;
+                        // Only a new episode drops the host's last report; a load that just
+                        // adds the length keeps it, as on the host.
+                        if !s.load.as_ref().is_some_and(|old| old.same_episode(&load)) {
+                            s.last = None;
+                        }
                         s.load = Some(load.clone());
                         let _ = events.send(PartyEvent::Load(load));
                     }
-                    Message::Bye => break EndReason::HostLeft,
+                    Message::Bye {} => break EndReason::HostLeft,
                     message @ (Message::Prepare { .. } | Message::State { .. }) => {
                         if let Some(event) = play_event(&message, s.clock.offset_ms().unwrap_or(0), now) {
                             let _ = events.send(event);
@@ -796,7 +902,7 @@ async fn run_guest(shared: Arc<GuestShared>, stream: TcpStream, mut channel: Cha
             }
             message = outbox.recv() => {
                 let Some(message) = message else { break EndReason::Left };
-                let bye = message == Message::Bye;
+                let bye = message == Message::Bye {};
                 if !send_sealed(&mut writer, &mut channel, &message).await {
                     break EndReason::Lost;
                 }

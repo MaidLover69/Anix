@@ -48,6 +48,13 @@ pub struct Load {
     pub duration_ms: Option<u64>,
 }
 
+impl Load {
+    /// The same episode, whatever else is known about it.
+    pub fn same_episode(&self, other: &Load) -> bool {
+        self.anime_id == other.anime_id && self.episode == other.episode && self.category == other.category
+    }
+}
+
 /// One message of the party. `Hello`, `Ping` and `Ready` go from guest to host; `Welcome`,
 /// `Pong`, `Load`, `Prepare` and `State` from host to guest; `Bye` both ways.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,7 +73,8 @@ pub enum Message {
     Ready { seq: u64 },
     /// At host time `at_ms` (which may lie ahead), the host is at `position_ms`.
     State { seq: u64, paused: bool, position_ms: u64, rate: f64, at_ms: u64 },
-    Bye,
+    /// A struct variant, not a unit one: serde lets extra fields through on unit variants.
+    Bye {},
 }
 
 impl Message {
@@ -74,13 +82,13 @@ impl Message {
     pub fn is_from_host(&self) -> bool {
         matches!(
             self,
-            Message::Welcome { .. } | Message::Pong { .. } | Message::Load(_) | Message::Prepare { .. } | Message::State { .. } | Message::Bye
+            Message::Welcome { .. } | Message::Pong { .. } | Message::Load(_) | Message::Prepare { .. } | Message::State { .. } | Message::Bye {}
         )
     }
 
     /// True for the kinds only a guest sends.
     pub fn is_from_guest(&self) -> bool {
-        matches!(self, Message::Hello { .. } | Message::Ping { .. } | Message::Ready { .. } | Message::Bye)
+        matches!(self, Message::Hello { .. } | Message::Ping { .. } | Message::Ready { .. } | Message::Bye {})
     }
 }
 

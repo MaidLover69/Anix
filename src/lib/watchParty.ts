@@ -24,6 +24,25 @@ export function isBufferedAhead(ranges: ReadonlyArray<readonly [number, number]>
   return ranges.some(([start, end]) => start <= at + 0.05 && end >= want - 0.05);
 }
 
+/**
+ * True for a host report the guest has not acted on yet: a new one, or the start of the play
+ * it just prepared, which keeps the Prepare's number.
+ */
+export function isNewHostState(lastSeq: number, preparedSeq: number, seq: number): boolean {
+  return seq !== lastSeq || seq === preparedSeq;
+}
+
+/** A target this close to the end of the guest's copy counts as past it. */
+export const END_MARGIN_MS = 250;
+
+/**
+ * True when `targetMs` lies at or past the end of a copy `durationS` long (a guest's shorter
+ * copy). Seeking there ends the media, and playing an ended element restarts it from 0.
+ */
+export function pastEnd(targetMs: number, durationS: number): boolean {
+  return Number.isFinite(durationS) && durationS > 0 && targetMs >= durationS * 1000 - END_MARGIN_MS;
+}
+
 /** The manual offset a guest can set, and its step. */
 export const MAX_OFFSET_MS = 30_000;
 export const OFFSET_STEP_MS = 500;

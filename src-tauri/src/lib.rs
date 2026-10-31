@@ -355,6 +355,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 system::session_marker::end_current();
                 embedded_mpv::on_exit();
+                commands::party::on_exit(app);
                 system::restart_if_asked(app);
             }
         });

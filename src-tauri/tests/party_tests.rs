@@ -38,7 +38,7 @@ fn every_message_survives_encoding() {
         Message::Prepare { seq: 4, position_ms: 61_000 },
         Message::Ready { seq: 4 },
         Message::State { seq: 4, paused: false, position_ms: 61_000, rate: 1.5, at_ms: 123 },
-        Message::Bye,
+        Message::Bye {},
     ];
     for message in messages {
         assert_eq!(protocol::decode(&protocol::encode(&message)).unwrap(), message);
@@ -71,6 +71,7 @@ fn unknown_kinds_extra_fields_and_missing_fields_are_refused() {
         r#"{"t1":1}"#,
         r#"not json"#,
         r#"{"kind":"ping","t1":1}{"kind":"bye"}"#,
+        r#"{"kind":"bye","url":"https://example.com"}"#,
     ] {
         assert!(protocol::decode(raw.as_bytes()).is_err(), "accepted {raw}");
     }
@@ -105,7 +106,7 @@ fn each_side_sends_only_its_own_kinds() {
     assert!(Message::Ready { seq: 1 }.is_from_guest());
     assert!(!Message::Ready { seq: 1 }.is_from_host());
     assert!(!Message::Load(load()).is_from_guest());
-    assert!(Message::Bye.is_from_host() && Message::Bye.is_from_guest());
+    assert!(Message::Bye {}.is_from_host() && Message::Bye {}.is_from_guest());
 }
 
 #[test]
@@ -240,7 +241,7 @@ fn a_guest_connects_only_to_private_ipv4_addresses() {
 
 #[test]
 fn vpn_and_container_interfaces_are_skipped() {
-    for name in ["tun0", "wg0", "tap1", "utun3", "tailscale0", "docker0", "br-8b459da08e17", "virbr0", "veth12", "lo"] {
+    for name in ["tun0", "wg0", "tap1", "utun3", "tailscale0", "docker0", "br-8b459da08e17", "virbr0", "veth12", "lo", "waydroid0", "anbox0", "vpn_home"] {
         assert!(is_skipped_interface(name), "{name}");
     }
     for name in ["wlo1", "wlan0", "eth0", "enp3s0", "eno1"] {
@@ -329,7 +330,7 @@ async fn a_guest_with_the_right_code_follows_load_play_pause_and_the_end() {
 
     // Heartbeats are rate limited, then sent.
     tokio::time::sleep(Duration::from_millis(1600)).await;
-    host.heartbeat(62_500, 1.0).unwrap();
+    host.heartbeat(false, 62_500, 1.0).unwrap();
     let PartyEvent::State(beat) = next_matching(&mut rx, "heartbeat", |e| matches!(e, PartyEvent::State(_))).await else { unreachable!() };
     assert_eq!((beat.seq, beat.position_ms), (seq, 62_500));
     assert!(beat.age_ms >= 0 && beat.age_ms < 150, "age {}", beat.age_ms);
@@ -514,4 +515,103 @@ async fn a_guest_refuses_a_host_that_sends_a_guest_message() {
     let ended = next_matching(&mut rx, "end", |e| matches!(e, PartyEvent::Ended { .. })).await;
     assert_eq!(ended, PartyEvent::Ended { reason: EndReason::Lost });
     fake.abort();
+}
+
+#[tokio::test]
+async fn silent_connections_do_not_hold_up_a_join() {
+    let (host, _host_rx, addr) = host().await;
+    // Two peers that connect and say nothing: before, each held the join lock for 5 s.
+    let _idle = [TcpStream::connect(addr).await.unwrap(), TcpStream::connect(addr).await.unwrap()];
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let started = Instant::now();
+    assert!(join(addr, host.code()).await.is_ok());
+    assert!(started.elapsed() < Duration::from_secs(2), "join took {:?}", started.elapsed());
+    assert!(!host.status().locked);
+}
+
+#[tokio::test]
+async fn one_address_may_hold_only_a_few_connections_in_the_join_exchange() {
+    let (host, _host_rx, addr) = host().await;
+    let mut idle = Vec::new();
+    for _ in 0..4 {
+        idle.push(TcpStream::connect(addr).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The next one is closed at once instead of waiting out the handshake timeout.
+    let mut extra = TcpStream::connect(addr).await.unwrap();
+    let started = Instant::now();
+    assert!(closed_by_peer(&mut extra).await);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    // Once they go, joining works again.
+    drop(idle);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(join(addr, host.code()).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_run_of_quick_reports_is_merged_and_keeps_guests_connected() {
+    let (host, _host_rx, addr) = host().await;
+    let (_guest, mut rx) = join(addr, host.code()).await.unwrap();
+    wait_for_guests(&host, 1).await;
+    // A held arrow key while paused: far more than the guests' 10 a second.
+    for step in 0..100u64 {
+        host.report(true, step * 100, 1.0).unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let mut states = 0;
+    let last = loop {
+        match tokio::time::timeout(Duration::from_millis(800), rx.recv()).await {
+            Ok(Some(PartyEvent::Ended { reason })) => panic!("guest dropped: {reason:?}"),
+            Ok(Some(PartyEvent::State(state))) => {
+                states += 1;
+                if state.position_ms == 9_900 {
+                    break state;
+                }
+            }
+            Ok(Some(_)) => continue,
+            _ => panic!("the last report never arrived"),
+        }
+    };
+    assert!(last.paused);
+    assert!(states < 10, "{states} states sent");
+    assert_eq!(host.status().guests, 1);
+}
+
+#[tokio::test]
+async fn a_party_hosted_mid_episode_sends_where_the_host_is() {
+    let (host, _host_rx, addr) = host().await;
+    host.set_load(load()).unwrap();
+    let (guest, mut rx) = join(addr, host.code()).await.unwrap();
+    wait_for_guests(&host, 1).await;
+    // Nothing reported yet: the first heartbeat is the state, playing or paused.
+    host.heartbeat(false, 30_000, 1.0).unwrap();
+    let PartyEvent::State(state) = next_matching(&mut rx, "state", |e| matches!(e, PartyEvent::State(_))).await else { unreachable!() };
+    assert_eq!((state.paused, state.position_ms), (false, 30_000));
+    assert!(matches!(guest.last_play(), Some(PartyEvent::State(s)) if !s.paused));
+    // A new episode opened paused.
+    host.set_load(Load { episode: 4.0, ..load() }).unwrap();
+    host.heartbeat(true, 0, 1.0).unwrap();
+    let PartyEvent::State(state) = next_matching(&mut rx, "paused state", |e| matches!(e, PartyEvent::State(s) if s.paused)).await else { unreachable!() };
+    assert_eq!(state.position_ms, 0);
+    // Once there is a state, a paused heartbeat changes nothing.
+    host.heartbeat(true, 5_000, 1.0).unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(matches!(guest.last_play(), Some(PartyEvent::State(s)) if s.position_ms == 0));
+}
+
+#[tokio::test]
+async fn a_load_that_only_adds_the_length_keeps_the_guests_last_report() {
+    let (host, _host_rx, addr) = host().await;
+    host.set_load(Load { duration_ms: None, ..load() }).unwrap();
+    let (guest, mut rx) = join(addr, host.code()).await.unwrap();
+    wait_for_guests(&host, 1).await;
+    host.report(true, 12_000, 1.0).unwrap();
+    next_matching(&mut rx, "state", |e| matches!(e, PartyEvent::State(_))).await;
+    host.set_load(load()).unwrap();
+    next_matching(&mut rx, "load with length", |e| matches!(e, PartyEvent::Load(l) if l.duration_ms.is_some())).await;
+    assert!(matches!(guest.last_play(), Some(PartyEvent::State(s)) if s.position_ms == 12_000));
+    // Another episode does drop it.
+    host.set_load(Load { episode: 4.0, ..load() }).unwrap();
+    next_matching(&mut rx, "new episode", |e| matches!(e, PartyEvent::Load(l) if l.episode == 4.0)).await;
+    assert!(guest.last_play().is_none());
 }

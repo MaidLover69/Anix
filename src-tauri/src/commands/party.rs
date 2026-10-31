@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, Mutex};
 
 /// How long Join looks for parties on the network.
@@ -70,6 +70,21 @@ async fn end_current(slot: &mut Option<(u64, Active)>) {
         Some((_, Active::Guest(guest))) => guest.leave(),
         None => {}
     }
+}
+
+/// On quit: ends the party, so guests hear `Bye` (not a lost connection) and the mDNS entry
+/// is withdrawn. Gives up after a moment when a join is still holding the slot.
+pub fn on_exit(app: &AppHandle) {
+    let Some(party) = app.try_state::<PartyState>() else { return };
+    tauri::async_runtime::block_on(async {
+        let Ok(mut slot) = tokio::time::timeout(Duration::from_secs(1), party.active.lock()).await else { return };
+        if slot.is_none() {
+            return;
+        }
+        end_current(&mut slot).await;
+        // The connection tasks write the Bye on the runtime's threads.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    });
 }
 
 /// Hosts a party on the local network and returns its code and addresses.
@@ -145,7 +160,7 @@ pub async fn party_load(party: State<'_, PartyState>, load: Load) -> Result<(), 
 #[tauri::command]
 pub async fn party_report(party: State<'_, PartyState>, paused: bool, position_ms: u64, rate: f64, heartbeat: bool) -> Result<(), String> {
     match party.active.lock().await.as_ref() {
-        Some((_, Active::Host(host))) if heartbeat => host.heartbeat(position_ms, rate).map_err(err),
+        Some((_, Active::Host(host))) if heartbeat => host.heartbeat(paused, position_ms, rate).map_err(err),
         Some((_, Active::Host(host))) => host.report(paused, position_ms, rate).map_err(err),
         _ => Err(err(PartyError::NotInParty)),
     }

@@ -4,8 +4,8 @@
 //   node --experimental-strip-types scripts/party-test.mjs
 import assert from 'node:assert/strict';
 import {
-  ALIGN_LEAD_MS, DEAD_BAND_MS, MAX_OFFSET_MS, QUIET_AFTER_ALIGN_MS, durationDifferenceMs, hostPositionMs, isBufferedAhead,
-  needsAlign, normalizeCode, partyErrorKey, stepOffset,
+  ALIGN_LEAD_MS, DEAD_BAND_MS, END_MARGIN_MS, MAX_OFFSET_MS, QUIET_AFTER_ALIGN_MS, durationDifferenceMs, hostPositionMs,
+  isBufferedAhead, isNewHostState, needsAlign, normalizeCode, partyErrorKey, pastEnd, stepOffset,
 } from '../src/lib/watchParty.ts';
 
 // Host position: still while paused, moving with age and speed while playing.
@@ -51,6 +51,19 @@ assert.equal(isBufferedAhead([[10.5, 30]], 10, 60), false);
 assert.equal(isBufferedAhead([[0, 5], [9.98, 13]], 10, 60), true);
 assert.equal(isBufferedAhead([[50, 59]], 58.5, 59), true, 'near the end');
 assert.equal(isBufferedAhead([], 10, Number.NaN), false);
+
+// A host report to act on: a new number, or the start of the play just prepared (same number);
+// a heartbeat repeating the number is not.
+assert.equal(isNewHostState(4, -1, 5), true);
+assert.equal(isNewHostState(5, 5, 5), true, 'the prepared start');
+assert.equal(isNewHostState(5, -1, 5), false, 'a heartbeat');
+
+// Past the end of a shorter copy: never seek and play there (it would restart the episode).
+assert.equal(pastEnd(1_400_000, 1420), false);
+assert.equal(pastEnd(1_420_000 - END_MARGIN_MS, 1420), true);
+assert.equal(pastEnd(1_500_000, 1420), true);
+assert.equal(pastEnd(1_500_000, Number.NaN), false, 'length unknown');
+assert.equal(pastEnd(1_500_000, 0), false);
 
 // Codes and error keys.
 assert.equal(normalizeCode('123 456'), '123456');

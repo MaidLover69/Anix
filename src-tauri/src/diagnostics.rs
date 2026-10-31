@@ -77,7 +77,10 @@ fn env(name: &str) -> String {
 
 /// The last warnings and errors in the log file.
 fn log_failures(log: &Path) -> Vec<String> {
-    let text = std::fs::read_to_string(log).unwrap_or_default();
+    // The log moves to `<name>.1` when it fills up, so read that one first.
+    let mut previous = log.as_os_str().to_owned();
+    previous.push(".1");
+    let text = std::fs::read_to_string(&previous).unwrap_or_default() + &std::fs::read_to_string(log).unwrap_or_default();
     let mut lines: Vec<&str> = text.lines().filter(|l| l.contains(" WARN ") || l.contains(" ERROR ")).collect();
     let skip = lines.len().saturating_sub(LOG_LINES);
     lines.drain(..skip);
@@ -156,4 +159,20 @@ pub async fn build_report(pool: &SqlitePool) -> String {
 
     let home = dirs::home_dir().map(|h| h.to_string_lossy().into_owned());
     redact(&out, home.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failures_include_the_log_from_before_it_moved_aside() {
+        let dir = std::env::temp_dir().join(format!("anix-diag-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("anix.log");
+        std::fs::write(dir.join("anix.log.1"), "t  WARN old warning\nt  INFO fine\n").unwrap();
+        std::fs::write(&log, "t ERROR new error\n").unwrap();
+        assert_eq!(log_failures(&log), vec!["t  WARN old warning", "t ERROR new error"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

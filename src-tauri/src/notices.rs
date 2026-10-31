@@ -17,6 +17,8 @@ pub const DOWNLOAD: &str = "download";
 pub const TEST: &str = "test";
 /// The player went back to the web engine by itself.
 pub const PLAYER: &str = "player";
+/// Anix itself, such as "closed unexpectedly last time".
+pub const SYSTEM: &str = "system";
 
 /// Sent to the main window after a notice was added or marked read.
 pub const CHANGED_EVENT: &str = "notices-changed";

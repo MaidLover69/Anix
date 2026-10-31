@@ -46,13 +46,48 @@ pub struct ProgressEvent {
     pub running: bool,
 }
 
-/// Where mpv's socket goes: the user's runtime directory, or the temp directory without one.
-pub fn socket_path(nonce: u128) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+const SOCKET_PREFIX: &str = "anix-mpv-";
+
+/// The folder for mpv's sockets: the user's runtime directory, or the temp directory without one.
+pub fn socket_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|d| d.is_absolute() && d.is_dir())
-        .unwrap_or_else(std::env::temp_dir);
-    dir.join(format!("anix-mpv-{}.sock", nonce))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Where mpv's socket goes for one episode.
+pub fn socket_path(nonce: u128) -> PathBuf {
+    socket_dir().join(format!("{}{}.sock", SOCKET_PREFIX, nonce))
+}
+
+/// Removes the sockets an mpv left behind when Anix closed before it (a crash, a kill).
+/// A socket that still answers belongs to a running mpv and stays, and so does any file of
+/// another user (the temp-directory fallback is shared). Returns how many were removed.
+pub fn remove_stale_sockets(dir: &Path) -> usize {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let uid = unsafe { libc::getuid() };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(SOCKET_PREFIX) || !name.ends_with(".sock") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        if !meta.file_type().is_socket() || meta.uid() != uid {
+            continue;
+        }
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// The commands sent once connected: one property observer per value the sync needs.
@@ -432,6 +467,32 @@ mod tests {
             assert_eq!(value["command"][0], "observe_property");
         }
         assert!(commands.contains("\"time-pos\"") && commands.contains("\"eof-reached\""));
+    }
+
+    #[test]
+    fn removes_only_sockets_nobody_listens_on() {
+        let dir = std::env::temp_dir().join(format!("anix-sock-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live_path = dir.join("anix-mpv-1.sock");
+        let stale_path = dir.join("anix-mpv-2.sock");
+        let other_path = dir.join("other-2.sock");
+        let plain_path = dir.join("anix-mpv-3.sock");
+        let _ = std::fs::remove_file(&live_path);
+        let _ = std::fs::remove_file(&stale_path);
+        let _ = std::fs::remove_file(&other_path);
+        let live = std::os::unix::net::UnixListener::bind(&live_path).unwrap();
+        drop(std::os::unix::net::UnixListener::bind(&stale_path).unwrap());
+        drop(std::os::unix::net::UnixListener::bind(&other_path).unwrap());
+        std::fs::write(&plain_path, b"not a socket").unwrap();
+
+        assert_eq!(remove_stale_sockets(&dir), 1);
+        assert!(live_path.exists(), "a socket mpv still listens on stays");
+        assert!(!stale_path.exists(), "a dead socket is removed");
+        assert!(other_path.exists() && plain_path.exists(), "other files are left alone");
+        assert_eq!(remove_stale_sockets(&dir.join("missing")), 0);
+
+        drop(live);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

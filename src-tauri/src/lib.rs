@@ -42,25 +42,17 @@ pub fn env_var_os(name: &str, legacy_name: &str) -> Option<std::ffi::OsString> {
 /// Sends backend logs to stderr in development and to a log file in packaged builds,
 /// where nothing is attached to stderr.
 pub(crate) fn init_logging() {
-    let builder = tracing_subscriber::fmt().with_max_level(tracing::Level::INFO);
+    // A write that fails (stderr on a closed terminal, a full disk) must not panic: tracing would
+    // report it with `eprintln!`, which panics when stderr is gone.
+    let builder = tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).log_internal_errors(false);
 
     if cfg!(debug_assertions) {
         let _ = builder.with_writer(std::io::stderr).try_init();
         return;
     }
 
-    let log_file = db::get_app_dir().ok().and_then(|dir| {
-        let path = dir.join(migration::LOG_FILE_NAME);
-        // Start over once the file grows past 2 MB.
-        let too_big = std::fs::metadata(&path).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false);
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(!too_big)
-            .truncate(too_big)
-            .open(path)
-            .ok()
-    });
+    let log_file =
+        db::get_app_dir().ok().and_then(|dir| open_log(&dir.join(migration::LOG_FILE_NAME), LOG_MAX_BYTES));
 
     let _ = match log_file {
         Some(file) => builder
@@ -69,6 +61,31 @@ pub(crate) fn init_logging() {
             .try_init(),
         None => builder.with_writer(std::io::stderr).try_init(),
     };
+    log_panics();
+}
+
+const LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Opens the log for appending. Once it is past `max_bytes` it becomes `<name>.1` (replacing the
+/// older one) and a new file starts, so the lines before a crash survive the next start.
+pub fn open_log(path: &std::path::Path, max_bytes: u64) -> Option<std::fs::File> {
+    if std::fs::metadata(path).map(|m| m.len() > max_bytes).unwrap_or(false) {
+        let mut previous = path.as_os_str().to_owned();
+        previous.push(".1");
+        if let Err(e) = std::fs::rename(path, &previous) {
+            eprintln!("The log could not be moved aside: {}", e);
+        }
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+}
+
+/// Writes a panic's message and place to the log before the default handler runs.
+fn log_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("panic: {}", info);
+        default(info);
+    }));
 }
 
 pub fn run() {
@@ -108,9 +125,24 @@ pub fn run() {
                     accounts::spawn_sync(app.handle().clone());
                     downloads::spawn_queue_worker(app.handle().clone());
                     notices::init(app.handle().clone());
+                    if db::get_app_dir().is_ok_and(|dir| system::session_marker::begin(&dir)) {
+                        tracing::warn!("The last session did not exit cleanly");
+                        notices::push_translated(
+                            app.handle(),
+                            notices::SYSTEM,
+                            "unclean_exit_title",
+                            "unclean_exit_body",
+                            Some("/settings?section=system"),
+                        );
+                    }
                     notifier::start(app.handle().clone());
                     system::apply(app.handle(), system::SystemSettings::read());
                     system::url_handler::register_for_appimage();
+                    system::exit_on_signals(app.handle());
+                    let stale = mpv_ipc::remove_stale_sockets(&mpv_ipc::socket_dir());
+                    if stale > 0 {
+                        tracing::info!("Removed {} mpv socket(s) left by an earlier session", stale);
+                    }
                     let args: Vec<String> = std::env::args().collect();
                     system::tray::hide_if_started_minimised(app.handle(), &args);
                     let pool = app.state::<AppState>().pool.clone();
@@ -286,6 +318,7 @@ pub fn run() {
         .expect("error while running tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                system::session_marker::end_current();
                 embedded_mpv::on_exit();
                 system::restart_if_asked(app);
             }

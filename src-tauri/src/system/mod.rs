@@ -7,6 +7,7 @@ pub mod background;
 pub mod gnutls;
 pub mod hwaccel;
 pub mod page_crash;
+pub mod session_marker;
 pub mod tray;
 pub mod url_handler;
 
@@ -44,6 +45,7 @@ static RESTART_ASKED: AtomicBool = AtomicBool::new(false);
 /// launch arguments. Off the main thread it asks the event loop to exit, so the exit handlers
 /// run first; on the GTK main thread, which must not block, it restarts directly, as Tauri does.
 pub fn restart(app: &AppHandle) -> ! {
+    session_marker::end_current();
     if gtk::is_initialized_main_thread() {
         app.cleanup_before_exit();
         tauri::process::restart(&clean_env(app));
@@ -55,6 +57,34 @@ pub fn restart(app: &AppHandle) -> ! {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));
     }
+}
+
+/// Closing the terminal Anix was started from (SIGHUP), `kill` (SIGTERM) and Ctrl+C (SIGINT)
+/// end Anix like Quit does, so the exit handler runs (players stopped, session marker removed).
+/// A stuck app still ends: it is forced out a few seconds after the signal.
+pub fn exit_on_signals(app: &AppHandle) {
+    use tokio::signal::unix::{signal, SignalKind};
+    const FORCE_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (Ok(mut hup), Ok(mut term), Ok(mut int)) =
+            (signal(SignalKind::hangup()), signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
+        else {
+            tracing::warn!("Quit signals could not be watched; they end Anix without its exit steps");
+            return;
+        };
+        let name = tokio::select! {
+            _ = hup.recv() => "SIGHUP",
+            _ = term.recv() => "SIGTERM",
+            _ = int.recv() => "SIGINT",
+        };
+        // Quit first: the log line goes to a terminal that may just have closed.
+        app.exit(0);
+        tracing::info!("{} received, quitting", name);
+        tokio::time::sleep(FORCE_AFTER).await;
+        tracing::warn!("Anix did not quit within {:?} of {}; forcing it", FORCE_AFTER, name);
+        std::process::exit(1);
+    });
 }
 
 /// Called from the app's `RunEvent::Exit` handler: finishes a [`restart`].
@@ -143,7 +173,7 @@ pub fn desktop_status(app: &tauri::AppHandle) -> DesktopStatus {
         tray_supported: tray::indicator_library().is_some(),
         tray_host: tray::tray_host_present(),
         tray_active: app.tray_by_id(tray::TRAY_ID).is_some(),
-        autostart_installed: config_home.as_deref().map_or(false, autostart::is_installed),
+        autostart_installed: config_home.as_deref().is_some_and(autostart::is_installed),
         autostart_path: config_home
             .as_deref()
             .map(|dir| autostart::entry_path(dir).to_string_lossy().into_owned()),

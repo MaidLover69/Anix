@@ -4,6 +4,7 @@
 #   scripts/build-libmpv-lgpl.sh                  full build into $ANIX_LIBMPV_DIR/out/lib/anix
 #   scripts/build-libmpv-lgpl.sh --configure-only stops after every configure step succeeded
 #
+# NVDEC (NVIDIA) and VA-API (Intel, AMD) are the hardware decoders; both are LGPL-compatible.
 # Nothing GPL goes in: FFmpeg is configured without --enable-gpl/--enable-nonfree and with
 # --disable-autodetect (only the libraries named below), mpv with -Dgpl=false. The result is
 # checked: FFmpeg must report an LGPL licence and mpv's configuration must say gpl=false.
@@ -40,6 +41,8 @@ WAYLAND_PROTOCOLS_TAG=1.47
 LIBDISPLAY_INFO_TAG=0.2.0
 LIBASS_VERSION=0.17.4
 LIBPLACEBO_TAG=v7.351.0
+# NVIDIA's decoder headers (MIT). 12.1 needs driver 530 or newer; FFmpeg loads the driver at run time.
+NV_CODEC_HEADERS_TAG=n12.1.14.0
 FFMPEG_VERSION=8.0.1
 # FFmpeg releases matching each libavcodec soname a system's gst-libav may be linked against.
 gst_ffmpeg_for() { case "$1" in 58) echo 4.4.6 ;; 59) echo 5.1.6 ;; 60) echo 6.1.2 ;; 61) echo 7.1.1 ;; esac; }
@@ -108,6 +111,12 @@ clone https://code.videolan.org/videolan/libplacebo.git "$LIBPLACEBO_TAG" libpla
 meson_lib "$src/libplacebo" -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled -Dd3d11=disabled \
   -Dopengl=enabled -Dlcms=enabled -Dlibdovi=disabled -Dxxhash=disabled -Ddemos=false -Dtests=false
 
+# --- nv-codec-headers (MIT, headers only) -------------------------------------------------
+# For NVDEC on NVIDIA cards: FFmpeg opens libcuda/libnvcuvid at run time, so nothing NVIDIA is bundled.
+step "nv-codec-headers $NV_CODEC_HEADERS_TAG"
+clone https://github.com/FFmpeg/nv-codec-headers.git "$NV_CODEC_HEADERS_TAG" nv-codec-headers
+make -C "$src/nv-codec-headers" PREFIX="$prefix" install >/dev/null
+
 # --- FFmpeg (LGPL-2.1+) -------------------------------------------------------------------
 step "FFmpeg $FFMPEG_VERSION"
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" ffmpeg.tar.xz
@@ -115,7 +124,8 @@ unpack ffmpeg.tar.xz ffmpeg
 # Network protocols stay (mpv reads from Anix's loopback proxy); TLS is not needed for that.
 (cd "$src/ffmpeg" && ./configure --prefix="$prefix" --libdir="$prefix/lib" \
   --enable-shared --disable-static --enable-pic --disable-programs --disable-doc --disable-debug \
-  --disable-autodetect --enable-zlib --enable-vaapi --enable-libdrm --enable-libdav1d)
+  --disable-autodetect --enable-zlib --enable-vaapi --enable-libdrm --enable-libdav1d \
+  --enable-ffnvcodec --enable-nvdec)
 grep -q '^#define CONFIG_GPL 0' "$src/ffmpeg/config.h" || { echo "FFmpeg is configured as GPL; refusing." >&2; exit 1; }
 grep -q '^#define CONFIG_NONFREE 0' "$src/ffmpeg/config.h" || { echo "FFmpeg is configured as non-free; refusing." >&2; exit 1; }
 grep -q 'FFMPEG_LICENSE "LGPL version 2.1 or later"' "$src/ffmpeg/config.h" || { echo "FFmpeg is not LGPL 2.1+; refusing." >&2; exit 1; }
@@ -159,6 +169,7 @@ else
     -Dlua=disabled -Djavascript=disabled -Dlibarchive=disabled -Dlibbluray=disabled -Ddvdnav=disabled \
     -Dcdda=disabled -Duchardet=disabled -Drubberband=disabled -Dvapoursynth=disabled -Dzimg=disabled \
     -Dx11=disabled -Dwayland=auto -Degl=enabled -Dgl=enabled -Dvaapi=enabled -Dvulkan=disabled \
+    -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
     -Dpipewire=auto -Dpulse=enabled -Dalsa=enabled -Dlcms2=enabled \
     -Dmanpage-build=disabled -Dhtml-build=disabled -Dpdf-build=disabled
 fi
@@ -189,6 +200,8 @@ cp "$src/ffmpeg/COPYING.LGPLv2.1" "$out/share/licenses/FFmpeg-LGPL-2.1.txt"
 cp "$src/mpv/LICENSE.LGPL" "$out/share/licenses/mpv-LGPL-2.1.txt"
 cp "$src/libplacebo/LICENSE" "$out/share/licenses/libplacebo-LGPL-2.1.txt"
 cp "$src/libass/COPYING" "$out/share/licenses/libass-ISC.txt"
+# nv-codec-headers has no licence file; its MIT notice heads each header.
+sed -n '2,26p' "$src/nv-codec-headers/include/ffnvcodec/dynlink_loader.h" | sed 's/^ \* \{0,1\}//' > "$out/share/licenses/nv-codec-headers-MIT.txt"
 
 python3 -I - "$out/lib/anix" <<'PY'
 import ctypes, glob, os, sys

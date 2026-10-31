@@ -14,8 +14,8 @@ the private process in [SECURITY.md](SECURITY.md), not public issues.
   directly in a pull request.
 - **Suggest a feature:** open a **Feature request** first and wait for a reply before you write
   code. Anix prefers improving what exists over adding new features, so not every idea gets in.
-- **Source requests and extensions:** this repository is for the app only. Requests for a new
-  streaming site or source, and problems with the extensions maintained for Anix, go to the
+- **Source requests and extensions:** this repository is for the app only. Requests for new
+  provider extensions or metadata sources, and problems with the extensions maintained for Anix, go to the
   [extensions repository](https://github.com/MaidLover69/Anix_plugins/issues). Problems with a
   third-party extension go to its author.
 
@@ -51,8 +51,8 @@ And make sure that:
 
 ## Rules that are not up for discussion
 
-- **No streaming sites in this repository.** Sources come from extensions only. Do not add site
-  names, links or scrapers to the app.
+- **No streaming sources or scrapers in this repository.** Sources come from extensions only. Do not add
+  site integrations, streaming links or scrapers to the core app.
 - **No anti-bot bypasses:** no captcha solvers, faked browser fingerprints, or hidden challenge
   solving. Users pass checks themselves through the in-app **Verify** window.
 - **LGPL only** for the bundled libmpv and FFmpeg. Never enable GPL or nonfree options.

@@ -222,6 +222,11 @@ console.log('player tests passed');
   assert.ok(!run([...still(9, { phase: 'loading', time: 0 }), ...still(2, { time: 0 })]).some(Boolean));
   // A failed load is the error screen's job, not the watchdog's.
   assert.ok(!run(still(40, { phase: 'error' })).some(Boolean));
+  // A stall that clears itself, then a later freeze: the watchdog flags the second one too.
+  const twice = run([...still(limit + 1), ...Array.from({ length: 5 }, (_, i) => ({ time: 5 + i })), ...still(limit + 1, { time: 60 })]);
+  assert.equal(twice[limit], true);
+  assert.equal(twice[limit + 1 + 5 + limit], true);
+  assert.equal(twice[limit + 1 + 2], false, 'moving again is not stuck');
 }
 console.log('stall watchdog: ok');
 

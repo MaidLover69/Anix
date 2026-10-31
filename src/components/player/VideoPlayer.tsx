@@ -757,7 +757,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     let watch: StallWatch | null = null;
     const timer = window.setInterval(() => {
       const video = videoRef.current;
-      if (!video) return;
+      if (!video || stallOffered.current === loadId) return;
       const next = watchStall(watch, {
         now: Date.now(),
         time: video.currentTime,
@@ -767,13 +767,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         rebuffering: holdingNow.current,
       });
       watch = next.watch;
-      if (!next.stuck) return;
-      stallOffered.current = loadId;
-      setStuck(true);
-      window.clearInterval(timer);
+      // Keeps watching: a stall that clears itself must not use up the offer for a later one.
+      if (next.stuck) setStuck(true);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [loadId, enginePhase, openExternally, wantsPlay]);
+  // Only the user's answer to the bar spends this load's offer.
+  const spendStallOffer = () => {
+    stallOffered.current = loadId;
+    setStuck(false);
+  };
   // Moving again (or paused by the user) takes the offer away.
   useEffect(() => {
     if (!stuck) return;
@@ -886,13 +889,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {stuck && !failed && !miniPlayer.mini && (
         <div
           role="status"
+          // The player root is ltr for its controls; this sentence and its buttons follow the UI language.
+          dir={document.documentElement.dir || 'ltr'}
           className="absolute left-1/2 top-16 z-20 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-lg border border-white/20 bg-black/80 px-4 py-2 text-[13px] text-white"
         >
           <span>{t('videoPlayer.stuckTitle')}</span>
           <button
             type="button"
             onClick={() => {
-              setStuck(false);
+              spendStallOffer();
               (onTryOtherServers ?? onOpenServers)();
             }}
             className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
@@ -903,7 +908,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               type="button"
               onClick={() => {
-                setStuck(false);
+                spendStallOffer();
                 onEngineFail(t('videoPlayer.stuckReason'));
               }}
               className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
@@ -913,7 +918,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
           <button
             type="button"
-            onClick={() => setStuck(false)}
+            onClick={spendStallOffer}
             className="h-8 rounded-md px-2 text-white/80 cursor-pointer transition-colors hover:bg-white/15 hover:text-white"
           >
             {t('common.close')}

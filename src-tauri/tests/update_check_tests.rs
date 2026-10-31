@@ -4,7 +4,8 @@ mod plugin_support;
 
 use anix_lib::clients::update::{
     appimage_target, backup_path, default_download_url, download_and_install, fetch_update_info,
-    first_bad_version_warning, install_verified, is_bad_version, is_newer_version, offered_release, parse_bad_versions,
+    first_bad_version_warning, install_verified, is_bad_version, is_newer_version, offered_release, offers_build_switch,
+    parse_bad_versions, pick_appimage, system_glibc,
     parse_version_document, record_update, roll_back, rollback_available, sha256_file, version_document_url,
     AppImageAsset, UpdateInfo, ROLLBACK_FILE, SITE_URL,
 };
@@ -166,7 +167,10 @@ impl Drop for Install {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    let file = std::env::temp_dir().join(format!("anix-hash-{}-{}", std::process::id(), bytes.len()));
+    // One file per call: tests run in parallel and may hash different data of the same length.
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!("anix-hash-{}-{}", std::process::id(), call));
     std::fs::write(&file, bytes).unwrap();
     let hash = sha256_file(&file).unwrap();
     let _ = std::fs::remove_file(file);
@@ -184,7 +188,7 @@ fn the_manifest_lists_the_appimage_with_its_checksum() {
     .unwrap();
     assert_eq!(
         info.appimage,
-        Some(AppImageAsset { url: "https://dl.example/Anix_1.3.0.AppImage".into(), sha256: "ab".repeat(32), size: Some(9000) })
+        Some(AppImageAsset { url: "https://dl.example/Anix_1.3.0.AppImage".into(), sha256: "ab".repeat(32), size: Some(9000), min_glibc: None })
     );
     let shape = serde_json::to_value(&info).unwrap();
     assert_eq!(shape["appimage"]["sha256"], json!("ab".repeat(32)));
@@ -268,7 +272,7 @@ async fn the_update_is_downloaded_next_to_the_appimage_and_checked_before_it_rep
     })
     .await;
     let install = Install::new("download");
-    let good = AppImageAsset { url: site.url("/Anix_1.3.0.AppImage"), sha256: sha256(b"new version"), size: None };
+    let good = AppImageAsset { url: site.url("/Anix_1.3.0.AppImage"), sha256: sha256(b"new version"), size: None, min_glibc: None };
 
     // A file that does not match the manifest never replaces the AppImage.
     let tampered = AppImageAsset { sha256: HASH_OF_NEW.to_string(), ..good.clone() };
@@ -382,4 +386,52 @@ fn the_bad_version_notice_comes_once_per_version() {
     assert!(first_bad_version_warning(&install.0, "1.4.0"));
     assert!(!first_bad_version_warning(&install.0, "1.4.0"), "not again on the next start");
     assert!(first_bad_version_warning(&install.0, "1.4.1"), "a new listed version warns again");
+}
+
+fn two_builds(version: &str) -> UpdateInfo {
+    parse_version_document(
+        &json!({
+            "version": version,
+            "appimage": { "url": "https://dl.example/Anix.AppImage", "sha256": "aa".repeat(32) },
+            "appimage_modern": { "url": "https://dl.example/Anix-modern.AppImage", "sha256": "bb".repeat(32), "min_glibc": "2.39" }
+        }),
+        "https://site.example",
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_system_with_a_new_enough_glibc_gets_the_newer_base_appimage() {
+    let info = two_builds("1.4.0");
+    assert_eq!(info.appimage_modern.as_ref().unwrap().min_glibc.as_deref(), Some("2.39"));
+    let url = |modern, glibc| pick_appimage(&info, modern, glibc).map(|a| a.url.as_str());
+    assert_eq!(url(false, Some("2.39")), Some("https://dl.example/Anix-modern.AppImage"));
+    assert_eq!(url(false, Some("2.41")), Some("https://dl.example/Anix-modern.AppImage"));
+    // Older or unknown glibc keeps the classic build, which runs everywhere.
+    assert_eq!(url(false, Some("2.35")), Some("https://dl.example/Anix.AppImage"));
+    assert_eq!(url(false, None), Some("https://dl.example/Anix.AppImage"));
+    // A newer-base install stays on its build.
+    assert_eq!(url(true, None), Some("https://dl.example/Anix-modern.AppImage"));
+    // A site that lists only the classic build still updates everyone.
+    let classic = parse_version_document(&json!({ "version": "1.4.0", "appimage": { "url": "https://dl.example/Anix.AppImage", "sha256": "aa".repeat(32) } }), "https://s.example").unwrap();
+    assert_eq!(pick_appimage(&classic, true, None).map(|a| a.url.as_str()), Some("https://dl.example/Anix.AppImage"));
+    assert!(system_glibc().is_some_and(|v| v.starts_with("2.")));
+}
+
+#[test]
+fn a_classic_install_may_switch_builds_only_at_the_same_version() {
+    let info = two_builds("1.4.0");
+    assert!(offers_build_switch(&info, "1.4.0", false, Some("2.39")));
+    assert!(!offers_build_switch(&info, "1.4.0", false, Some("2.35")), "glibc too old");
+    assert!(!offers_build_switch(&info, "1.4.0", true, Some("2.39")), "already the newer base");
+    assert!(!offers_build_switch(&info, "1.3.2", false, Some("2.39")), "a newer version is an ordinary update");
+    assert!(!offers_build_switch(&two_builds("1.3.0"), "1.4.0", false, Some("2.39")), "never an older version");
+    // A malformed min_glibc means the newer build is never picked for a classic install.
+    let bad = parse_version_document(
+        &json!({ "version": "1.4.0", "appimage_modern": { "url": "https://dl.example/m", "sha256": "bb".repeat(32), "min_glibc": "two" } }),
+        "https://s.example",
+    )
+    .unwrap();
+    assert_eq!(bad.appimage_modern.as_ref().unwrap().min_glibc, None);
+    assert!(!offers_build_switch(&bad, "1.4.0", false, Some("2.41")));
 }

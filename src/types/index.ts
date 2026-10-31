@@ -403,6 +403,8 @@ export interface UpdateInfo {
   release_url: string;
   /** The release's AppImage, when the website lists it with a checksum. */
   appimage?: { url: string; sha256: string; size: number | null };
+  /** Same version, but the newer-base AppImage suits this system: the dialog offers a switch. */
+  switch_build?: boolean;
 }
 
 /** `get_rollback`: the version an update replaced, while its backup is kept. */
@@ -414,6 +416,8 @@ export interface RollbackInfo {
 export interface UpdateInstallSupport {
   appimage: boolean;
   reason: string | null;
+  /** How Anix was installed; decides how the dialog says to update without Install. */
+  kind: 'appimage' | 'flatpak' | 'package';
 }
 
 export interface HomeData {

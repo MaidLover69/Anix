@@ -31,21 +31,34 @@ pub struct UpdateInfo {
     pub changelog: String,
     pub published_at: String,
     pub release_url: String,
-    /// The release's AppImage, when the site lists one with its checksum.
+    /// The release's AppImage, when the site lists one with its checksum. Built on the oldest
+    /// supported base, so it runs everywhere; 1.3 installs read only this one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appimage: Option<AppImageAsset>,
+    /// The same release built on a newer base (newer WebKit), for systems whose glibc is at
+    /// least its `min_glibc` (`"appimage_modern"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appimage_modern: Option<AppImageAsset>,
+    /// Set by `check_for_update`: the release is this installation's version, and the
+    /// newer-base AppImage suits this system, so the update dialog offers to switch builds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub switch_build: bool,
     /// Versions the site marks as having a known serious problem (`"bad_versions"`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bad_versions: Vec<String>,
 }
 
-/// `"appimage": { "url", "sha256", "size" }` in `version.json`.
+/// `"appimage": { "url", "sha256", "size" }` in `version.json`; `"appimage_modern"` also has
+/// `"min_glibc"`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppImageAsset {
     pub url: String,
     /// Lower-case hex.
     pub sha256: String,
     pub size: Option<u64>,
+    /// The oldest glibc ("2.39") the file runs on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_glibc: Option<String>,
 }
 
 impl UpdateInfo {
@@ -56,6 +69,8 @@ impl UpdateInfo {
             published_at,
             release_url,
             appimage: None,
+            appimage_modern: None,
+            switch_build: false,
             bad_versions: Vec::new(),
         }
     }
@@ -95,7 +110,41 @@ pub fn parse_appimage_asset(json: &serde_json::Value) -> Option<AppImageAsset> {
     if !is_web_address(url) || sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    Some(AppImageAsset { url: url.to_string(), sha256, size: json["size"].as_u64().filter(|s| *s > 0) })
+    let min_glibc = json["min_glibc"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| (3..=12).contains(&v.len()) && v.contains('.') && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .map(String::from);
+    Some(AppImageAsset { url: url.to_string(), sha256, size: json["size"].as_u64().filter(|s| *s > 0), min_glibc })
+}
+
+/// True for the AppImage built on the newer base (`ANIX_APPIMAGE_BASE=modern` when building).
+pub fn running_modern_build() -> bool {
+    option_env!("ANIX_APPIMAGE_BASE") == Some("modern")
+}
+
+/// This system's glibc version ("2.39"). AppImages never bundle glibc, so it is the host's.
+pub fn system_glibc() -> Option<String> {
+    let version = unsafe { std::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
+    version.to_str().ok().map(String::from)
+}
+
+/// The AppImage this installation updates to: the newer-base one when the site lists it and
+/// this is already that build or the system's glibc is at least its `min_glibc`; otherwise the
+/// classic one, which runs everywhere.
+pub fn pick_appimage<'a>(info: &'a UpdateInfo, running_modern: bool, glibc: Option<&str>) -> Option<&'a AppImageAsset> {
+    let fits = |asset: &&AppImageAsset| {
+        running_modern
+            || matches!((asset.min_glibc.as_deref(), glibc), (Some(min), Some(have)) if !is_newer_version(min, have))
+    };
+    info.appimage_modern.as_ref().filter(fits).or(info.appimage.as_ref())
+}
+
+/// True when the site's release is `current` and a classic build may switch to the newer-base
+/// AppImage of the same version.
+pub fn offers_build_switch(info: &UpdateInfo, current: &str, running_modern: bool, glibc: Option<&str>) -> bool {
+    let same = !is_newer_version(&info.version, current) && !is_newer_version(current, &info.version);
+    !running_modern && same && info.appimage_modern.is_some() && pick_appimage(info, false, glibc) == info.appimage_modern.as_ref()
 }
 
 fn tidy_site(site: &str) -> &str {
@@ -180,6 +229,8 @@ pub fn parse_version_document(json: &serde_json::Value, site: &str) -> Option<Up
         published_at: json["published_at"].as_str().unwrap_or("").trim().to_string(),
         release_url,
         appimage: parse_appimage_asset(&json["appimage"]),
+        appimage_modern: parse_appimage_asset(&json["appimage_modern"]),
+        switch_build: false,
         bad_versions: parse_bad_versions(&json["bad_versions"]),
     })
 }

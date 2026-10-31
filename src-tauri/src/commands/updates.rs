@@ -3,9 +3,19 @@ use crate::state::AppState;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+/// The site's latest release, with `appimage` set to the file this installation should use.
 #[tauri::command]
 pub async fn check_for_update(state: State<'_, AppState>) -> Result<Option<UpdateInfo>, String> {
-    fetch_latest_release(&state.client).await.map(update::offered_release)
+    let info = fetch_latest_release(&state.client).await.map(update::offered_release)?;
+    Ok(info.map(for_this_install))
+}
+
+fn for_this_install(mut info: UpdateInfo) -> UpdateInfo {
+    let (modern, glibc) = (update::running_modern_build(), update::system_glibc());
+    info.switch_build = update::offers_build_switch(&info, env!("CARGO_PKG_VERSION"), modern, glibc.as_deref());
+    info.appimage = update::pick_appimage(&info, modern, glibc.as_deref()).cloned();
+    info.appimage_modern = None;
+    info
 }
 
 /// The project's website, where the downloads and the extension list link are published.
@@ -19,6 +29,20 @@ pub fn get_site_url() -> String {
 pub struct UpdateInstallSupport {
     pub appimage: bool,
     pub reason: Option<String>,
+    /// How Anix was installed: `appimage`, `flatpak` or `package` (DEB, RPM, AUR), so the
+    /// dialog can say how to update when Install is not offered.
+    pub kind: &'static str,
+}
+
+/// How this copy of Anix was installed.
+pub fn install_kind() -> &'static str {
+    if std::path::Path::new("/.flatpak-info").exists() {
+        "flatpak"
+    } else if std::env::var_os("APPIMAGE").is_some_and(|p| !p.is_empty()) {
+        "appimage"
+    } else {
+        "package"
+    }
 }
 
 fn running_appimage() -> Result<std::path::PathBuf, String> {
@@ -28,8 +52,8 @@ fn running_appimage() -> Result<std::path::PathBuf, String> {
 #[tauri::command]
 pub fn get_update_install_support() -> UpdateInstallSupport {
     match running_appimage() {
-        Ok(_) => UpdateInstallSupport { appimage: true, reason: None },
-        Err(reason) => UpdateInstallSupport { appimage: false, reason: Some(reason) },
+        Ok(_) => UpdateInstallSupport { appimage: true, reason: None, kind: install_kind() },
+        Err(reason) => UpdateInstallSupport { appimage: false, reason: Some(reason), kind: install_kind() },
     }
 }
 
@@ -45,8 +69,9 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
     // The address and checksum are read again here; the page cannot supply them.
     let latest = fetch_latest_release(&state.client).await?.ok_or("The website lists no release right now.")?;
     let info = update::offered_release(Some(latest.clone()))
+        .map(for_this_install)
         .ok_or_else(|| format!("Anix {} has a known problem, so it is not installed.", latest.version))?;
-    if !update::is_newer_version(&info.version, env!("CARGO_PKG_VERSION")) {
+    if !info.switch_build && !update::is_newer_version(&info.version, env!("CARGO_PKG_VERSION")) {
         return Err(format!("Anix {} is already the latest version.", env!("CARGO_PKG_VERSION")));
     }
     let asset = info

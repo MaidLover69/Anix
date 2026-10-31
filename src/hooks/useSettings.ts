@@ -135,7 +135,7 @@ export function useAppVersion() {
   });
 }
 
-/** The latest release if it is newer than the running app, otherwise null. */
+/** The latest release if it is newer than the running app (or offers a switch to the build for newer systems), otherwise null. */
 export function useCheckUpdate() {
   return useQuery<UpdateInfo | null>({
     queryKey: ['checkUpdate'],
@@ -144,7 +144,7 @@ export function useCheckUpdate() {
         invoke<UpdateInfo | null>('check_for_update'),
         getVersion(),
       ]);
-      return latest && isNewerVersion(latest.version, current) ? latest : null;
+      return latest && (isNewerVersion(latest.version, current) || latest.switch_build) ? latest : null;
     },
     staleTime: 60 * 60 * 1000,
     retry: 1,

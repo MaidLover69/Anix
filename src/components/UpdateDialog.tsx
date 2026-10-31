@@ -126,7 +126,11 @@ export const UpdateDialog: React.FC = () => {
     <Dialog
       isOpen={updateDialogOpen}
       onClose={close}
-      title={t('updateDialog.title', { version: updateInfo.version })}
+      title={
+        updateInfo.switch_build
+          ? t('updateDialog.switchTitle', { version: updateInfo.version })
+          : t('updateDialog.title', { version: updateInfo.version })
+      }
       maxWidth="max-w-md"
       footer={
         install.step === 'installed' ? (
@@ -165,8 +169,15 @@ export const UpdateDialog: React.FC = () => {
         <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md ui-card bg-bg-card p-3 text-[13px] leading-relaxed text-text-secondary select-text">
           {updateInfo.changelog || t('updateDialog.noNotes')}
         </div>
+        {updateInfo.switch_build && <p className="text-xs text-text-secondary">{t('updateDialog.switchHint')}</p>}
         {canInstall && install.step === 'idle' && (
           <p className="text-xs text-text-muted">{t('updateDialog.installHint')}</p>
+        )}
+        {!canInstall && support?.kind === 'package' && (
+          <p className="text-xs text-text-muted">{t('updateDialog.packageHint')}</p>
+        )}
+        {!canInstall && support?.kind === 'flatpak' && (
+          <p className="text-xs text-text-muted">{t('updateDialog.flatpakHint')}</p>
         )}
         {installing && (
           <div aria-live="polite" className="flex flex-col gap-1.5">

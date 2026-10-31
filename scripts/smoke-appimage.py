@@ -79,6 +79,12 @@ def screen():
     return int(w), int(h)
 
 
+def key(win, name):
+    # Through XTEST on the focused window: GTK ignores the synthetic events `xdotool key --window` sends.
+    sh("xdotool", "windowactivate", "--sync", win)
+    sh("xdotool", "key", name)
+
+
 def click_center(win):
     w, h = geometry(win)
     sh("xdotool", "mousemove", "--window", win, str(w // 2), str(h // 2), "click", "1")
@@ -152,7 +158,7 @@ try:
         # Real input: a click on whatever the page shows, then a key, while the page is live.
         click_center(win)
         time.sleep(2)
-        sh("xdotool", "key", "--window", win, "Escape")
+        key(win, "Escape")
         time.sleep(3)
         if not web_process_ok():
             fail("the app or its web process is gone after a real click")
@@ -177,14 +183,14 @@ try:
         else:
             time.sleep(15)
             # Real input while playing: fullscreen on and off with the key, a click on the video.
-            sh("xdotool", "key", "--window", win, "f")
+            key(win, "f")
             time.sleep(3)
             res["fullscreen_size"] = geometry(win)
             res["screen_size"] = screen()
             if res["fullscreen_size"] != res["screen_size"]:
                 fail(f"the f key did not make the window fullscreen: {res['fullscreen_size']} vs screen {res['screen_size']}")
             shot("fullscreen.png")
-            sh("xdotool", "key", "--window", win, "f")
+            key(win, "f")
             time.sleep(2)
             res["after_second_f"] = geometry(win)
             click_center(win)

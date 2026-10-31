@@ -1656,6 +1656,7 @@
   "systemSection.goBackNow": "लौटें और फिर से शुरू करें",
   "systemSection.goingBack": "लौट रहे हैं",
   "systemSection.goBackFailed": "लौटा नहीं जा सका",
+  "systemSection.goBackRestart": "Anix {version} वापस रख दिया गया है। लौटना पूरा करने के लिए Anix फिर से शुरू करें।",
   "systemSection.displayServer": "डिस्प्ले सर्वर",
   "systemSection.dmabuf": "DMA-BUF रेंडरर",
   "systemSection.dmabufOff": "बंद (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

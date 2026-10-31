@@ -1584,6 +1584,7 @@
   "systemSection.goBackNow": "戻して再起動",
   "systemSection.goingBack": "戻しています",
   "systemSection.goBackFailed": "戻せませんでした",
+  "systemSection.goBackRestart": "Anix {version} を元に戻しました。Anix を再起動すると完了します。",
   "systemSection.displayServer": "ディスプレイサーバー",
   "systemSection.dmabuf": "DMA-BUF レンダラー",
   "systemSection.dmabufOff": "オフ（WEBKIT_DISABLE_DMABUF_RENDERER={value}）",

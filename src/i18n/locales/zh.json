@@ -1584,6 +1584,7 @@
   "systemSection.goBackNow": "回退并重启",
   "systemSection.goingBack": "正在回退",
   "systemSection.goBackFailed": "无法回退",
+  "systemSection.goBackRestart": "已放回 Anix {version}。重新启动 Anix 即可完成回退。",
   "systemSection.displayServer": "显示服务器",
   "systemSection.dmabuf": "DMA-BUF 渲染器",
   "systemSection.dmabufOff": "关（WEBKIT_DISABLE_DMABUF_RENDERER={value}）",

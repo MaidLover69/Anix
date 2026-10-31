@@ -1944,6 +1944,7 @@
   "systemSection.goBackNow": "الرجوع وإعادة التشغيل",
   "systemSection.goingBack": "جارٍ الرجوع",
   "systemSection.goBackFailed": "تعذّر الرجوع",
+  "systemSection.goBackRestart": "أُعيد Anix {version} إلى مكانه. أعد تشغيل Anix لإكمال الرجوع.",
   "systemSection.displayServer": "خادم العرض",
   "systemSection.dmabuf": "عارض DMA-BUF",
   "systemSection.dmabufOff": "متوقف (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

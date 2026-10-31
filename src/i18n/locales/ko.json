@@ -1584,6 +1584,7 @@
   "systemSection.goBackNow": "되돌리고 다시 시작",
   "systemSection.goingBack": "되돌리는 중",
   "systemSection.goBackFailed": "되돌릴 수 없어요",
+  "systemSection.goBackRestart": "Anix {version}(으)로 되돌려 놓았어요. Anix를 다시 시작하면 마무리돼요.",
   "systemSection.displayServer": "디스플레이 서버",
   "systemSection.dmabuf": "DMA-BUF 렌더러",
   "systemSection.dmabufOff": "끔 (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

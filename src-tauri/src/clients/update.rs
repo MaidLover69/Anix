@@ -205,6 +205,28 @@ pub fn is_bad_version(info: &UpdateInfo, current: &str) -> bool {
     info.bad_versions.iter().any(|v| v == current.trim_start_matches(['v', 'V']))
 }
 
+/// The release `info` lists, unless the same document marks it as a version with a known
+/// problem: then there is nothing to offer.
+pub fn offered_release(info: Option<UpdateInfo>) -> Option<UpdateInfo> {
+    info.filter(|info| !is_bad_version(info, &info.version))
+}
+
+/// Remembers which version the bad-version notice was last shown for.
+pub const BAD_VERSION_WARNED_FILE: &str = "bad-version-warned";
+
+/// True the first time it is asked for `current`, so the bad-version notice comes once per
+/// version, not on every start.
+pub fn first_bad_version_warning(app_dir: &Path, current: &str) -> bool {
+    let file = app_dir.join(BAD_VERSION_WARNED_FILE);
+    if std::fs::read_to_string(&file).is_ok_and(|seen| seen.trim() == current) {
+        return false;
+    }
+    if let Err(e) = std::fs::write(&file, current) {
+        tracing::warn!("Could not remember the bad-version notice: {}", e);
+    }
+    true
+}
+
 // ---------------------------------------------------------------------------------------
 // Installing an AppImage update
 // ---------------------------------------------------------------------------------------
@@ -283,6 +305,8 @@ pub fn install_verified(downloaded: &Path, target: &Path, sha256: &str) -> Resul
         // A copied backup is synced like the update, so a crash cannot leave both truncated.
         let copied = std::fs::copy(target, &backup).and_then(|_| std::fs::File::open(&backup)?.sync_all());
         if let Err(e) = copied {
+            // A half-written copy must not stay behind as something to go back to.
+            let _ = std::fs::remove_file(&backup);
             return fail(format!("The current version could not be backed up, so nothing was changed: {}", e));
         }
     }
@@ -311,25 +335,42 @@ pub struct RollbackRecord {
     pub from: String,
     /// The version that was installed over it.
     pub to: String,
+    /// [`backup_fingerprint`] of the backup when the record was made.
+    pub backup: String,
 }
 
-/// Remembers that `to` was installed over `from`. A failure is only logged: the update itself
-/// is already in place.
-pub fn record_update(app_dir: &Path, from: &str, to: &str) {
-    let record = RollbackRecord { from: from.to_string(), to: to.to_string() };
+/// Size and modification time of `backup`: a backup made later (by an update that then
+/// failed, or by another copy of Anix) no longer matches the record.
+pub fn backup_fingerprint(backup: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(backup).ok().filter(|m| m.is_file())?;
+    // No inode: FAT and exFAT number inodes afresh after a remount, which would hide Go back.
+    Some(format!("{}:{}.{}", meta.size(), meta.mtime(), meta.mtime_nsec()))
+}
+
+/// Remembers that `to` was installed over `from`, which `backup` now holds. A failure is only
+/// logged: the update itself is already in place.
+pub fn record_update(app_dir: &Path, from: &str, to: &str, backup: &Path) {
+    let file = app_dir.join(ROLLBACK_FILE);
+    let Some(fingerprint) = backup_fingerprint(backup) else {
+        let _ = std::fs::remove_file(file);
+        return;
+    };
+    let record = RollbackRecord { from: from.to_string(), to: to.to_string(), backup: fingerprint };
     let written = serde_json::to_vec(&record)
         .map_err(std::io::Error::other)
-        .and_then(|bytes| std::fs::write(app_dir.join(ROLLBACK_FILE), bytes));
+        .and_then(|bytes| std::fs::write(file, bytes));
     if let Err(e) = written {
         tracing::warn!("The update record could not be saved: {}", e);
     }
 }
 
 /// The version Anix can go back to: there is a record of the update to `current`, and the
-/// backup of `target` it made is still there.
+/// backup of `target` it made is still there, unchanged.
 pub fn rollback_available(app_dir: &Path, current: &str, target: &Path) -> Option<RollbackRecord> {
     let record: RollbackRecord = serde_json::from_slice(&std::fs::read(app_dir.join(ROLLBACK_FILE)).ok()?).ok()?;
-    (record.to == current && backup_path(target).is_file()).then_some(record)
+    let same_backup = backup_fingerprint(&backup_path(target)).is_some_and(|now| now == record.backup);
+    (record.to == current && same_backup).then_some(record)
 }
 
 /// Puts the backup back in place of `target` in one rename, so `target` is always a whole

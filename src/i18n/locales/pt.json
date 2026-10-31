@@ -1728,6 +1728,7 @@
   "systemSection.goBackNow": "Voltar e reiniciar",
   "systemSection.goingBack": "Voltando",
   "systemSection.goBackFailed": "Não foi possível voltar",
+  "systemSection.goBackRestart": "O Anix {version} voltou ao lugar. Reinicie o Anix para concluir.",
   "systemSection.displayServer": "Servidor gráfico",
   "systemSection.dmabuf": "Renderizador DMA-BUF",
   "systemSection.dmabufOff": "Desligado (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

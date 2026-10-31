@@ -1656,6 +1656,7 @@
   "systemSection.goBackNow": "Zurückkehren und neu starten",
   "systemSection.goingBack": "Wird zurückgesetzt",
   "systemSection.goBackFailed": "Zurückkehren nicht möglich",
+  "systemSection.goBackRestart": "Anix {version} ist wieder eingesetzt. Starte Anix neu, um die Rückkehr abzuschließen.",
   "systemSection.displayServer": "Displayserver",
   "systemSection.dmabuf": "DMA-BUF-Renderer",
   "systemSection.dmabufOff": "Aus (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

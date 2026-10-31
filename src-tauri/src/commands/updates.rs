@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
 pub async fn check_for_update(state: State<'_, AppState>) -> Result<Option<UpdateInfo>, String> {
-    fetch_latest_release(&state.client).await
+    fetch_latest_release(&state.client).await.map(update::offered_release)
 }
 
 /// The project's website, where the downloads and the extension list link are published.
@@ -43,9 +43,9 @@ pub const UPDATE_PROGRESS_EVENT: &str = "update-progress";
 pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     let target = running_appimage()?;
     // The address and checksum are read again here; the page cannot supply them.
-    let info = fetch_latest_release(&state.client)
-        .await?
-        .ok_or("The website lists no release right now.")?;
+    let latest = fetch_latest_release(&state.client).await?.ok_or("The website lists no release right now.")?;
+    let info = update::offered_release(Some(latest.clone()))
+        .ok_or_else(|| format!("Anix {} has a known problem, so it is not installed.", latest.version))?;
     if !update::is_newer_version(&info.version, env!("CARGO_PKG_VERSION")) {
         return Err(format!("Anix {} is already the latest version.", env!("CARGO_PKG_VERSION")));
     }
@@ -53,7 +53,7 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
         .appimage
         .ok_or("This release has no AppImage for the in-app updater. Use the download page instead.")?;
     let mut last = 0.0;
-    update::download_and_install(&state.client, &asset, &target, |fraction| {
+    let backup = update::download_and_install(&state.client, &asset, &target, |fraction| {
         if fraction - last >= 0.01 || fraction >= 1.0 {
             last = fraction;
             let _ = app.emit(UPDATE_PROGRESS_EVENT, fraction);
@@ -61,7 +61,7 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
     })
     .await?;
     if let Ok(dir) = crate::db::get_app_dir() {
-        update::record_update(&dir, env!("CARGO_PKG_VERSION"), &info.version);
+        update::record_update(&dir, env!("CARGO_PKG_VERSION"), &info.version, &backup);
     }
     tracing::info!("Installed Anix {} into {}", info.version, target.display());
     Ok(target.to_string_lossy().into_owned())
@@ -122,7 +122,15 @@ pub fn check_version_at_start(app: &AppHandle) {
         match fetch_latest_release(&client).await {
             Ok(Some(info)) if update::is_bad_version(&info, env!("CARGO_PKG_VERSION")) => {
                 tracing::warn!("Anix {} is listed as a version with a known problem", env!("CARGO_PKG_VERSION"));
-                crate::notices::push_translated(&app, crate::notices::SYSTEM, "bad_version_title", "bad_version_body", Some("/settings?section=system"));
+                let first = crate::db::get_app_dir().is_ok_and(|dir| update::first_bad_version_warning(&dir, env!("CARGO_PKG_VERSION")));
+                if first {
+                    // Only point at Settings › System when the Go back row is there.
+                    let (body, link) = match get_rollback() {
+                        Some(_) => ("bad_version_body", Some("/settings?section=system")),
+                        None => ("bad_version_body_no_rollback", None),
+                    };
+                    crate::notices::push_translated(&app, crate::notices::SYSTEM, "bad_version_title", body, link);
+                }
             }
             Ok(_) => {}
             // Offline or the site is down: the regular update check reports it.

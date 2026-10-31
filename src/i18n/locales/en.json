@@ -1656,6 +1656,7 @@
   "systemSection.goBackNow": "Go back and restart",
   "systemSection.goingBack": "Going back",
   "systemSection.goBackFailed": "Could not go back",
+  "systemSection.goBackRestart": "Anix {version} is back in place. Restart Anix to finish going back.",
   "systemSection.displayServer": "Display server",
   "systemSection.dmabuf": "DMA-BUF renderer",
   "systemSection.dmabufOff": "Off (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

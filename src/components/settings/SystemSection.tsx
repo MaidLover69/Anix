@@ -125,6 +125,7 @@ const ReportView: React.FC<{ report: HardwareReport }> = ({ report }) => {
  * exists; the first click asks, the second one goes back.
  */
 const GoBackRow: React.FC = () => {
+  const queryClient = useQueryClient();
   const showToast = useUIStore((s) => s.showToast);
   const rollback = useQuery({
     queryKey: ['rollback'],
@@ -139,11 +140,20 @@ const GoBackRow: React.FC = () => {
     setBusy(true);
     try {
       await invoke('rollback_update');
-      await invoke('restart_after_update');
     } catch (err) {
       setBusy(false);
       setAsked(false);
       showToast({ type: 'error', title: t('systemSection.goBackFailed'), message: errorMessage(err) });
+      return;
+    }
+    try {
+      await invoke('restart_after_update');
+    } catch (err) {
+      // The earlier version is already in place; only the restart is left to do.
+      setBusy(false);
+      setAsked(false);
+      void queryClient.invalidateQueries({ queryKey: ['rollback'] });
+      showToast({ type: 'warning', title: t('systemSection.goBackRestart', { version }), message: errorMessage(err) });
     }
   };
   return (

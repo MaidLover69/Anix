@@ -1800,6 +1800,7 @@
   "systemSection.goBackNow": "Вернуться и перезапустить",
   "systemSection.goingBack": "Возврат",
   "systemSection.goBackFailed": "Не удалось вернуться",
+  "systemSection.goBackRestart": "Anix {version} возвращён на место. Перезапустите Anix, чтобы завершить возврат.",
   "systemSection.displayServer": "Дисплейный сервер",
   "systemSection.dmabuf": "Рендерер DMA-BUF",
   "systemSection.dmabufOff": "Выкл. (WEBKIT_DISABLE_DMABUF_RENDERER={value})",

@@ -171,7 +171,7 @@ pub fn pick_best<T>(query: &AnimeQuery, candidates: Vec<Candidate<T>>) -> Option
         if score < MIN_MATCH_SCORE {
             continue;
         }
-        if best.as_ref().map_or(true, |(top, _)| score > *top) {
+        if best.as_ref().is_none_or(|(top, _)| score > *top) {
             best = Some((score, candidate.item));
         }
     }

@@ -47,7 +47,7 @@ fn optional_selector(selector: &str) -> Result<Option<Selector>, String> {
 }
 
 fn accepts(filter: &Option<Selector>, element: &ElementRef) -> bool {
-    filter.as_ref().map_or(true, |selector| selector.matches(element))
+    filter.as_ref().is_none_or(|selector| selector.matches(element))
 }
 
 fn element_siblings<'a>(
@@ -251,7 +251,7 @@ impl DomStore {
                 "filter" | "not" => {
                     let selector = parse_selector(arg)?;
                     for node in &inputs {
-                        let matches = ElementRef::wrap(*node).map_or(false, |el| selector.matches(&el));
+                        let matches = ElementRef::wrap(*node).is_some_and(|el| selector.matches(&el));
                         if matches == (op == "filter") {
                             push(node.id());
                         }

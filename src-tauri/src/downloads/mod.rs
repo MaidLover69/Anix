@@ -665,7 +665,7 @@ pub struct HlsDemuxerOptions {
 pub fn parse_hls_demuxer_help(help: &str) -> HlsDemuxerOptions {
     let has = |option: &str| {
         help.lines()
-            .any(|line| line.trim_start().split_whitespace().next() == Some(option))
+            .any(|line| line.split_whitespace().next() == Some(option))
     };
     HlsDemuxerOptions {
         allowed_extensions: has("-allowed_extensions"),
@@ -1258,7 +1258,7 @@ pub fn best_hls_variant(text: &str, base: &str) -> Option<String> {
             .unwrap_or(0);
         let bandwidth = hls_attribute(attrs, "BANDWIDTH").and_then(|b| b.parse::<u64>().ok()).unwrap_or(0);
         let url = base.join(uri).ok()?.to_string();
-        if best.as_ref().map_or(true, |(rank, _)| (pixels, bandwidth) > *rank) {
+        if best.as_ref().is_none_or(|(rank, _)| (pixels, bandwidth) > *rank) {
             best = Some(((pixels, bandwidth), url));
         }
     }
@@ -2198,7 +2198,9 @@ async fn fetch_episode_sources(
         .await
 }
 
-static TITLE_CACHE: Lazy<Mutex<HashMap<i64, (Option<i64>, Option<String>)>>> =
+/// Per AniList id: the MAL id and the title used for file names.
+type TitleKeys = (Option<i64>, Option<String>);
+static TITLE_CACHE: Lazy<Mutex<HashMap<i64, TitleKeys>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// MyAnimeList id and romaji title of an anime, which providers search by. A download row

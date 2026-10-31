@@ -83,7 +83,7 @@ pub fn check_public_url(url: &Url) -> Result<(), String> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(format!("only http and https URLs can be fetched, not {}:", url.scheme()));
     }
-    if url.host_str().map_or(true, str::is_empty) {
+    if url.host_str().is_none_or(str::is_empty) {
         return Err("the URL has no host".to_string());
     }
     if private_target(url) {

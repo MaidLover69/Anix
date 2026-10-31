@@ -817,10 +817,10 @@ async fn a_download_stopped_with_the_app_continues_from_its_last_byte_after_a_re
 
     assert!(matches!(outcome, DownloadOutcome::Completed { .. }), "{:?}", outcome);
     assert_eq!(std::fs::read(tmp.path().join("Test Show - EP 03 [SUB 720p].mp4")).unwrap(), body);
+    assert_eq!(row(&pool, "relaunch").await.status, "COMPLETED");
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[1].header("range").map(str::to_string), Some(format!("bytes={}-", on_disk)));
-    assert_eq!(row(&pool, "relaunch").await.status, "COMPLETED");
 }
 
 #[tokio::test]

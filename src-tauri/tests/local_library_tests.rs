@@ -489,11 +489,11 @@ async fn match_cache_round_trip() {
     assert_eq!(confirmed.status, MatchStatus::Confirmed);
     assert_eq!(confirmed.candidates.len(), 2);
     assert!(confirmed.is_fresh(i64::MAX));
-    let loaded = local_library::load_matches(&pool, &[req.key.clone()]).await.unwrap();
+    let loaded = local_library::load_matches(&pool, std::slice::from_ref(&req.key)).await.unwrap();
     assert_eq!(loaded[&req.key].media.as_ref().map(|c| c.id), Some(2));
 
     local_library::clear_match(&pool, &req.key).await.unwrap();
-    assert!(local_library::load_matches(&pool, &[req.key.clone()]).await.unwrap().is_empty());
+    assert!(local_library::load_matches(&pool, std::slice::from_ref(&req.key)).await.unwrap().is_empty());
 }
 
 #[tokio::test]

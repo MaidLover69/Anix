@@ -76,7 +76,7 @@ pub fn desktop_entry(exec: &Path) -> String {
 pub fn set_enabled(config_home: &Path, exec: Option<&Path>) -> io::Result<()> {
     let path = entry_path(config_home);
     let existing = fs::read_to_string(&path).ok();
-    let ours = existing.as_deref().map_or(true, |text| text.contains(MARKER));
+    let ours = existing.as_deref().is_none_or(|text| text.contains(MARKER));
     match exec {
         Some(exec) => {
             let wanted = desktop_entry(exec);
@@ -109,5 +109,5 @@ pub fn set_enabled(config_home: &Path, exec: Option<&Path>) -> io::Result<()> {
 
 /// Whether this app's entry exists under `config_home`.
 pub fn is_installed(config_home: &Path) -> bool {
-    fs::read_to_string(entry_path(config_home)).map_or(false, |text| text.contains(MARKER))
+    fs::read_to_string(entry_path(config_home)).is_ok_and(|text| text.contains(MARKER))
 }

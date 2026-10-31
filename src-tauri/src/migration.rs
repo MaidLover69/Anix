@@ -268,7 +268,7 @@ fn rename_log(dir: &Path) -> Option<Step> {
 pub fn migrate(bases: &BaseDirs) -> Report {
     let mut report = Report::default();
     for (from, to) in bases.folders() {
-        let is_dir = fs::metadata(&from).map_or(false, |meta| meta.is_dir());
+        let is_dir = fs::metadata(&from).is_ok_and(|meta| meta.is_dir());
         if !is_dir {
             continue;
         }

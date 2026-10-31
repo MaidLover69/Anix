@@ -543,7 +543,7 @@ fn resumable_part_files_of_queued_downloads_survive_the_startup_cleanup() {
     std::fs::create_dir_all(name(&gone, "hls")).unwrap();
 
     // Everything of the deleted row goes, and of the queued row only what cannot resume.
-    assert_eq!(remove_stale_part_files(&dir, &[queued.clone()]), 7);
+    assert_eq!(remove_stale_part_files(&dir, std::slice::from_ref(&queued)), 7);
     for role in ["download", "resume", "hls"] {
         assert!(name(&queued, role).exists(), "{} is kept", role);
         assert!(!name(&gone, role).exists(), "{} of another row is removed", role);

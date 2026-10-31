@@ -518,7 +518,7 @@ async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppErr
     let has = |name: &str| columns.iter().any(|c| c == name);
 
     let up_to_date = key == ["anilist_id", "episode_number"]
-        && WATCH_HISTORY_COLUMNS.iter().all(|c| has(*c));
+        && WATCH_HISTORY_COLUMNS.iter().all(|c| has(c));
     if up_to_date {
         return Ok(());
     }

@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -54,8 +56,22 @@ jobs:
           npm run i18n:check
           npm run i18n:test
 
+      # CONSTRAINTS.md: no new suppressions, stubs, skipped tests, lost assertions or loosened numbers.
+      - name: Quality floor
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          node --test scripts/floor-guard-test.mjs
+          if [ -n "$BASE_REF" ]; then base="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then base="$BEFORE"
+          else base="HEAD~1"; fi
+          node scripts/floor-guard.mjs --base "$base"
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
@@ -72,6 +88,9 @@ jobs:
 
       - name: Cargo Check
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Run Backend Unit & Integration Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture

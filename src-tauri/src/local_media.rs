@@ -510,6 +510,7 @@ pub fn video_content_type(path: &Path) -> &'static str {
 /// A parsed `Range: bytes=…` header for a file of `size` bytes: the inclusive byte range to
 /// send, `Ok(None)` for the whole file (no header, or one this does not handle), and `Err(())`
 /// when the range cannot be satisfied.
+#[allow(clippy::result_unit_err)] // Err(()) only means "answer 416"
 pub fn parse_byte_range(header: Option<&str>, size: u64) -> Result<Option<(u64, u64)>, ()> {
     let Some(spec) = header.map(str::trim).and_then(|h| h.strip_prefix("bytes=")) else {
         return Ok(None);

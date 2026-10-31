@@ -180,7 +180,7 @@ impl ImdbClient {
         // IMDb ranks by popularity; a suggestion whose own title matches beats the first one.
         let best = series
             .iter()
-            .find(|s| s["l"].as_str().map_or(false, |l| title_similarity(l, title) >= 0.8))
+            .find(|s| s["l"].as_str().is_some_and(|l| title_similarity(l, title) >= 0.8))
             .or_else(|| series.first())?;
         Some(ImdbRatingResult {
             imdb_id: best["id"].as_str().map(String::from),

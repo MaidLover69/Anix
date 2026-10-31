@@ -70,3 +70,8 @@ tokio = { version = "1.38", features = ["test-util"] }
 [profile.release]
 strip = true
 lto = "thin"
+
+[lints.clippy]
+# Tauri commands take their arguments straight from the UI call, and the row constructors mirror
+# table columns; packing them into structs would change the IPC shape for no gain.
+too_many_arguments = "allow"

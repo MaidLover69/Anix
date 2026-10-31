@@ -78,8 +78,8 @@ pub fn is_newer_version(candidate: &str, current: &str) -> bool {
 }
 
 fn is_web_address(url: &str) -> bool {
-    reqwest::Url::parse(url).map_or(false, |parsed| {
-        matches!(parsed.scheme(), "http" | "https") && parsed.host_str().map_or(false, |host| !host.is_empty())
+    reqwest::Url::parse(url).is_ok_and(|parsed| {
+        matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some_and(|host| !host.is_empty())
     })
 }
 
@@ -190,7 +190,7 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 fn writable(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_or(false, |c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
+        .is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
 }
 
 /// The AppImage file the updater may replace: `$APPIMAGE` (`appimage`) names a file that can

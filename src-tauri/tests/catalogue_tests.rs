@@ -414,9 +414,12 @@ fn mal_broadcast_is_converted_from_jst() {
 
 // ---------------------------------------------------------------------------- fall-through
 
+/// One request the test server saw: method, path, headers.
+type Logged = (String, String, Vec<(String, String)>);
+
 struct TestServer {
     base: String,
-    log: Arc<Mutex<Vec<(String, String, Vec<(String, String)>)>>>,
+    log: Arc<Mutex<Vec<Logged>>>,
 }
 
 impl TestServer {
@@ -1054,7 +1057,7 @@ async fn a_myanimelist_page_gets_characters_banner_and_trailer_from_the_others()
     assert_eq!(served.source, Source::Mal);
     let json = served.value;
     assert_eq!(json["servedBy"], "MyAnimeList");
-    assert!(json["characters"]["edges"].as_array().unwrap().len() > 0, "characters from Shikimori");
+    assert!(!json["characters"]["edges"].as_array().unwrap().is_empty(), "characters from Shikimori");
     assert!(json["bannerImage"].is_string(), "banner from Kitsu");
     assert_eq!(json["trailer"]["id"], "qgQunxD0qCk", "trailer from Kitsu");
     assert_eq!(server.hits("/shiki"), 1);

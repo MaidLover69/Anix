@@ -727,8 +727,8 @@ class Provider {
     assert_eq!(out["same"].as_f64(), Some(1.0));
     assert_eq!(out["best"], json!("One Piece"));
     assert_eq!(out["smart"]["season"], json!(2));
-    assert!(out["smart"]["titles"].as_array().map_or(false, |titles| !titles.is_empty()), "{}", out["smart"]);
-    assert!(out["query"].as_str().map_or(false, |query| query.contains("shingeki")), "{}", out["query"]);
+    assert!(out["smart"]["titles"].as_array().is_some_and(|titles| !titles.is_empty()), "{}", out["smart"]);
+    assert!(out["query"].as_str().is_some_and(|query| query.contains("shingeki")), "{}", out["query"]);
     assert_eq!(
         out["normalized"],
         json!(["cleanBaseTitle", "denoisedTitle", "isExtra", "isMain", "normalized", "original", "part", "season", "tokens", "year"])

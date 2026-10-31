@@ -422,7 +422,7 @@ pub fn match_hid(results: &[ComickTitle], anilist_id: i32, mal_id: Option<i32>) 
         .or_else(|| {
             let mal_id = mal_id.filter(|id| *id > 0)?;
             results.iter().find(|title| {
-                title.external_ids.anilist.as_deref().map_or(true, |v| v.trim().is_empty())
+                title.external_ids.anilist.as_deref().is_none_or(|v| v.trim().is_empty())
                     && is(&title.external_ids.myanimelist, mal_id)
             })
         })
@@ -454,6 +454,7 @@ pub fn anilist_status_from_comick(status: i64) -> &'static str {
 /// Saved progress as a whole episode count: `Ok(0)` when nothing is saved, the whole part of a
 /// number such as "12.5", and `Err(())` for a label that is not a number, which must be left
 /// alone rather than overwritten.
+#[allow(clippy::result_unit_err)] // Err(()) only means "not a number, leave it alone"
 pub fn progress_episodes(progress: Option<&ComickProgress>) -> Result<i32, ()> {
     let Some(number) = progress.and_then(|p| p.number.as_deref()).map(str::trim) else {
         return Ok(0);

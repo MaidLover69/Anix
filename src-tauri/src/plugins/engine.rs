@@ -365,7 +365,7 @@ fn hmac(algorithm: &str, key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
 fn aes_apply(encrypt: bool, mode: &str, key: &[u8], iv: &[u8], data: &[u8], padded: bool) -> Result<Vec<u8>, String> {
     let bad_key = || "invalid AES key size".to_string();
     let bad_data = || "the data could not be decrypted with this key".to_string();
-    if !padded && data.len() % 16 != 0 {
+    if !padded && !data.len().is_multiple_of(16) {
         return Err("data length must be a multiple of 16 bytes without padding".to_string());
     }
     match mode {
@@ -405,9 +405,9 @@ fn aes_apply(encrypt: bool, mode: &str, key: &[u8], iv: &[u8], data: &[u8], padd
             let mut input = data.to_vec();
             if encrypt && padded {
                 let pad = 16 - input.len() % 16;
-                input.extend(std::iter::repeat(pad as u8).take(pad));
+                input.extend(std::iter::repeat_n(pad as u8, pad));
             }
-            if input.len() % 16 != 0 {
+            if !input.len().is_multiple_of(16) {
                 return Err(bad_data());
             }
             let mut out = Vec::with_capacity(input.len());

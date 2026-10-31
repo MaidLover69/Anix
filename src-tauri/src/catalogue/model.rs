@@ -75,11 +75,11 @@ impl SearchQuery {
     pub fn keeps(&self, media: &Media) -> bool {
         let has = |g: &String| media.genres.iter().any(|m| m.eq_ignore_ascii_case(g));
         let genre_ok = self.genres.iter().all(has) && !self.exclude_genres.iter().any(has);
-        let format_ok = self.format.as_deref().map_or(true, |f| media.format.as_deref() == Some(f));
-        let status_ok = self.status.as_deref().map_or(true, |s| media.status.as_deref() == Some(s));
-        let score_ok = self.min_score.map_or(true, |min| media.average_score.is_some_and(|s| s >= min));
-        let year_ok = self.year.map_or(true, |y| media.season_year == Some(y));
-        let season_ok = self.season.as_deref().map_or(true, |s| media.season.as_deref() == Some(s));
+        let format_ok = self.format.as_deref().is_none_or(|f| media.format.as_deref() == Some(f));
+        let status_ok = self.status.as_deref().is_none_or(|s| media.status.as_deref() == Some(s));
+        let score_ok = self.min_score.is_none_or(|min| media.average_score.is_some_and(|s| s >= min));
+        let year_ok = self.year.is_none_or(|y| media.season_year == Some(y));
+        let season_ok = self.season.as_deref().is_none_or(|s| media.season.as_deref() == Some(s));
         genre_ok && format_ok && status_ok && score_ok && year_ok && season_ok && !(self.hide_adult && media.is_adult)
     }
 }

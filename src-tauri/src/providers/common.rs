@@ -43,7 +43,7 @@ static PLAIN_BLOCKED: Lazy<Mutex<HashMap<&'static str, Instant>>> = Lazy::new(||
 
 pub fn plain_blocked_recently(site: &'static str) -> bool {
     let guard = PLAIN_BLOCKED.lock().unwrap_or_else(|p| p.into_inner());
-    guard.get(site).map_or(false, |at| at.elapsed() < PLAIN_BLOCK_MEMORY)
+    guard.get(site).is_some_and(|at| at.elapsed() < PLAIN_BLOCK_MEMORY)
 }
 
 pub fn note_plain_blocked(site: &'static str) {

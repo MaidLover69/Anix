@@ -1,0 +1,49 @@
+# CONSTRAINTS.md
+
+The quality bar for Anix. Read it before you write code. A change that cannot meet it is fixed, not let through
+by editing this file. `npm run floor` (`scripts/floor-guard.mjs`) checks the diff against it and runs in CI.
+
+## Floor (blocking)
+
+A change may not add any of these. The floor guard flags them in added lines only, so old code is not blocked.
+
+- Silenced checkers: no new `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, `eslint-disable` or similar.
+- Rust `#[allow(...)]`: only with a reason on the same line, `#[allow(x)] // why`.
+- Unfinished work: no `todo!()`, `unimplemented!()`, "not implemented" throws, empty `catch {}`, or `TODO` comments.
+- Tests made easier: no new `#[ignore]` (except tests that need the network, see AGENTS.md › Tests), `.skip(`, `.only(`.
+- Tests removed: no deleted test file, and no net loss of assertions in a test file.
+- Secrets and personal data: none, anywhere (AGENTS.md › Security and privacy).
+- This file: no rule removed and no number loosened in the same change as the code that needed it.
+
+An exception needs a dated row below with a reason and an owner. The guard flags new rows so a reviewer sees them.
+
+## Measured numbers (ratchets)
+
+Measured on 2026-10-31. A number may only move in its direction. When a change makes it better, write the new
+number here in the same change.
+
+| Metric | Today | Direction |
+|---|---|---|
+| Main JS chunk (`dist/assets/index-*.js`) | 1421944 bytes, must not grow | down |
+| Shell ready after launch, web player | at most 3.0 s (measured 2.4–2.6 s) | down |
+| Idle CPU on Home, web player | at most 1 % (measured ≈0 %) | down |
+| Idle CPU on Home, embedded mpv | at most 15 % (measured 7–15 %), must fall | down |
+| Memory after a 2-minute browse, web player | at most 560 MB (measured ≈536 MB) | down |
+| Memory while playing, web player | at most 950 MB (measured 730–900 MB) | down |
+| First frame of a stream, web player | at most 12 s (measured 8–11 s) | down |
+| Processes or mpv sockets left after closing | at most 0 | down |
+
+Numbers come from a debug build driven through WebKitWebDriver with a fresh profile, on the
+reference machine (4 cores, Intel UHD, Fedora, niri): one run of the measuring script plays an
+episode through the extensions for 60 s. Network-bound numbers (first frame) vary with the sites;
+compare medians of three runs.
+
+## External checks
+
+- Dependencies: `cargo audit` on `src-tauri/Cargo.lock` and `npm audit --omit=dev`, weekly in CI.
+- Licences: LGPL-only libmpv and FFmpeg (AGENTS.md › Embedded mpv and licensing).
+
+## Exceptions
+
+| Id | Date | Rule | Reason | Owner |
+|---|---|---|---|---|

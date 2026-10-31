@@ -120,7 +120,11 @@ pub fn open(path: &str) -> Result<*mut c_void, String> {
     Ok(handle)
 }
 
-pub fn symbol(handle: *mut c_void, name: &str) -> *mut c_void {
+/// Looks up `name` in a library opened with [`open`] (or `RTLD_DEFAULT`); null when missing.
+///
+/// # Safety
+/// `handle` must come from [`open`] and not be closed yet, or be `libc::RTLD_DEFAULT`.
+pub unsafe fn symbol(handle: *mut c_void, name: &str) -> *mut c_void {
     let c_name = CString::new(name).expect("symbol names have no NUL");
     unsafe { libc::dlsym(handle, c_name.as_ptr()) }
 }
@@ -130,16 +134,20 @@ impl Lib {
         let handle = open(path)?;
         macro_rules! sym {
             ($name:literal) => {{
-                let ptr = symbol(handle, $name);
+                // SAFETY: `handle` was just returned by `open`.
+                let ptr = unsafe { symbol(handle, $name) };
                 if ptr.is_null() {
                     return Err(format!("{} lacks {}", path, $name));
                 }
                 // SAFETY: the declaration above matches the libmpv 2.x prototype of this symbol.
-                unsafe { std::mem::transmute::<*mut c_void, _>(ptr) }
+                #[allow(clippy::missing_transmute_annotations)] // the target is the field's declared type
+                let f = unsafe { std::mem::transmute::<*mut c_void, _>(ptr) };
+                f
             }};
         }
-        let avcodec = symbol(handle, "avcodec_license");
-        let command_async = symbol(handle, "mpv_command_async");
+        // SAFETY: `handle` was just returned by `open`.
+        let (avcodec, command_async) =
+            unsafe { (symbol(handle, "avcodec_license"), symbol(handle, "mpv_command_async")) };
         Ok(Lib {
             create: sym!("mpv_create"),
             initialize: sym!("mpv_initialize"),

@@ -252,7 +252,7 @@ fn respond(remote: &Mutex<Remote>, request: &Recorded) -> (u16, String) {
     if path == "/comick/oauth2/revoke" {
         return (200, "{}".into());
     }
-    if request.authorization.as_deref().map_or(true, |a| !a.starts_with("Bearer ")) {
+    if request.authorization.as_deref().is_none_or(|a| !a.starts_with("Bearer ")) {
         return (401, json!({ "error": "unauthorized" }).to_string());
     }
     if path == "/comick/v1/me" {

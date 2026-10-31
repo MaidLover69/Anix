@@ -142,7 +142,7 @@ fn respond(remote: &Shared, request: &Recorded) -> (u16, String) {
             return (status, r#"{"error":"broken","message":"MAL is down"}"#.to_string());
         }
         let mal_id: i32 = rest
-            .split(|c| c == '/' || c == '?')
+            .split(['/', '?'])
             .next()
             .and_then(|id| id.parse().ok())
             .unwrap_or(0);

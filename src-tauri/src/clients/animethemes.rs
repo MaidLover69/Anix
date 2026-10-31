@@ -121,3 +121,9 @@ impl AnimeThemesClient {
         Ok(results)
     }
 }
+
+impl Default for AnimeThemesClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -41,8 +41,8 @@ pub(super) unsafe extern "C" fn get_proc_address(_ctx: *mut c_void, name: *const
 /// match the context GDK made current.
 fn gl_loader() -> Result<GetProc, String> {
     if let Ok(egl) = ffi::open("libEGL.so.1") {
-        let current = ffi::symbol(egl, "eglGetCurrentContext");
-        let get = ffi::symbol(egl, "eglGetProcAddress");
+        // SAFETY: `egl` was just returned by `ffi::open`.
+        let (current, get) = unsafe { (ffi::symbol(egl, "eglGetCurrentContext"), ffi::symbol(egl, "eglGetProcAddress")) };
         if !current.is_null() && !get.is_null() {
             let current: unsafe extern "C" fn() -> *mut c_void = unsafe { std::mem::transmute(current) };
             if !unsafe { current() }.is_null() {
@@ -52,7 +52,8 @@ fn gl_loader() -> Result<GetProc, String> {
         }
     }
     let glx = ffi::open("libGL.so.1")?;
-    let get = ffi::symbol(glx, "glXGetProcAddressARB");
+    // SAFETY: `glx` was just returned by `ffi::open`.
+    let get = unsafe { ffi::symbol(glx, "glXGetProcAddressARB") };
     if get.is_null() {
         return Err("No OpenGL loader was found".to_string());
     }
@@ -69,7 +70,8 @@ pub(super) fn display_param(area: &gtk::GLArea) -> Option<RenderParam> {
         "GdkX11Display" => ("gdk_x11_display_get_xdisplay", ffi::RENDER_PARAM_X11_DISPLAY),
         _ => return None,
     };
-    let get = ffi::symbol(libc::RTLD_DEFAULT, getter);
+    // SAFETY: RTLD_DEFAULT searches the libraries already loaded.
+    let get = unsafe { ffi::symbol(libc::RTLD_DEFAULT, getter) };
     if get.is_null() {
         return None;
     }

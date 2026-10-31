@@ -232,7 +232,7 @@ pub trait ReleaseProbe: Send + Sync {
 }
 
 fn dub_only(provider: &dyn AnimeProvider) -> bool {
-    provider.languages().map_or(false, |l| l.dub_only(provider.supports_dub()))
+    provider.languages().is_some_and(|l| l.dub_only(provider.supports_dub()))
 }
 
 /// Whether the provider can answer `track` at all.
@@ -307,7 +307,7 @@ async fn has_episode(
             }
         }
     }
-    listing.as_ref().map_or(false, |data| listed(provider, data, track, episode))
+    listing.as_ref().is_some_and(|data| listed(provider, data, track, episode))
 }
 
 /// The first provider in `order` with the episode, asking one provider at a time.

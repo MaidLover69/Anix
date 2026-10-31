@@ -785,7 +785,7 @@ pub async fn load_matches(pool: &SqlitePool, keys: &[String]) -> Result<HashMap<
 }
 
 pub async fn save_match(pool: &SqlitePool, m: &SeriesMatch) -> Result<(), AppError> {
-    let media = m.media.as_ref().map(|c| serde_json::to_string(c)).transpose()?;
+    let media = m.media.as_ref().map(serde_json::to_string).transpose()?;
     sqlx::query(
         r#"
         INSERT INTO local_library_matches

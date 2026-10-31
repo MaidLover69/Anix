@@ -162,7 +162,7 @@ pub const EVENT_HEALTH_CHANGED: &str = "plugin-health-changed";
 /// Whether a background round should start now: switched on, the last full round a day ago or
 /// more, and the app idle (no stream or episode lookup for `IDLE_FOR`).
 pub fn round_due(enabled: bool, last_round_ms: i64, now_ms: i64, since_lookup: Option<Duration>) -> bool {
-    let idle = since_lookup.map_or(true, |since| since >= IDLE_FOR);
+    let idle = since_lookup.is_none_or(|since| since >= IDLE_FOR);
     enabled && idle && now_ms.saturating_sub(last_round_ms) >= ROUND_EVERY.as_millis() as i64
 }
 
@@ -195,11 +195,11 @@ pub fn start_background(registry: PluginRegistry, announce: std::sync::Arc<dyn F
             let mut finished = true;
             for id in ids {
                 // Tested in this round already (a round interrupted earlier).
-                let fresh = peek_record(|record| record.results.get(&id).map_or(false, |h| h.checked_at_ms > due_before));
+                let fresh = peek_record(|record| record.results.get(&id).is_some_and(|h| h.checked_at_ms > due_before));
                 if fresh {
                     continue;
                 }
-                let busy = crate::providers::manager::since_last_lookup().map_or(false, |since| since < IDLE_FOR);
+                let busy = crate::providers::manager::since_last_lookup().is_some_and(|since| since < IDLE_FOR);
                 if busy || !background_enabled() {
                     finished = false;
                     break;
@@ -292,7 +292,7 @@ pub fn parse_directory(data: &[u8]) -> Result<Vec<DirectoryList>, String> {
             .map(|code| code.trim().to_ascii_lowercase())
             .filter(|code| (2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_lowercase()))
             .collect();
-        let https = reqwest::Url::parse(&list.url).map_or(false, |url| url.scheme() == "https" && url.host_str().is_some());
+        let https = reqwest::Url::parse(&list.url).is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some());
         if list.name.is_empty() || !https || out.iter().any(|known| known.url == list.url) {
             continue;
         }

@@ -129,6 +129,8 @@ Notes:
 
 ## Hard rules
 
+Read [CONSTRAINTS.md](CONSTRAINTS.md) before you write code. It holds the quality floor and the measured numbers that must not get worse. Never weaken it to make a change pass.
+
 ### Security and privacy
 - **No secrets or personal data** in code, tests, fixtures, logs or docs. That means no tokens, passwords, client secrets, emails, user names or home paths. The OAuth client ids already in `commands/auth.rs` / `commands/mal.rs` are public PKCE ids. Do not copy them anywhere else. Build-time ids come from env vars.
 - Account tokens live in `settings.json` (mode 0600). `get_settings` / `save_settings` (`commands/settings.rs`) call `redact_secrets` / `keep_stored_account_keys` in `accounts/store.rs`, so tokens are redacted on read and the stored ones are kept on save. Keep both paths intact when you add a secret key.
@@ -155,6 +157,7 @@ Notes:
 ### Database
 - **Migrations only add.** Add tables, columns and indexes (`CREATE … IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN`). Never drop or rename user data. All migrations run in one transaction in `db::run_migrations`. When a layout must change, copy the rows into the new layout and keep anything you cannot understand under another name (see `migrate_watch_history`).
 - Settings files are written atomically (tmp + rename). A file that cannot be read is moved aside as `*.corrupt`, never overwritten.
+- **A failure never deletes saved data.** A timeout, a 5xx, a 403 such as "API disabled", or a failed download never deletes, uninstalls or lowers stored state (progress, list status, installed extensions, finished files). Mark it stale and retry later.
 
 ### UI: themes, motion, access, layout
 - **All 9 themes** must look right: `dark`, `oled`, `light`, `mocha`, `hacker`, `dracula`, `tokyo-night`, `manga`, `comic`. Use the colour tokens (Tailwind `bg-*`, `border-*`, `accent-*` → CSS variables in `themes.css`). Never hard-code colours. Check contrast in `light` and `manga` as well as the dark themes.
@@ -203,7 +206,7 @@ New logic needs a test in the same change.
   - Name tests as sentences describing the behaviour (`loads_only_from_the_stream_proxy`).
   - Cover the refusal paths for anything at a trust boundary (proxy, plugin network, file paths, deep links, external players).
   - A test that checks backend text in English calls `english_ui()` (`tests/english_ui/mod.rs`) first. Otherwise the text follows the machine's locale and settings, and the test reads the real `~/.config/anix`.
-- **TypeScript:** there is no test runner. Keep logic in pure functions in `src/lib/` or `src/i18n/core.ts`, and add `node:assert/strict` cases to `scripts/i18n-test.mjs` (or a similar node script).
+- **TypeScript:** no test framework is installed. Keep logic in pure functions in `src/lib/` or `src/i18n/core.ts`, and add `node:assert/strict` cases to `scripts/i18n-test.mjs` (or a similar node script). New test files can use Node's built-in `node:test` (`node --test`).
 - **DB:** schema changes need a case in `db_tests.rs` that opens an older layout and checks that no rows are lost.
 
 ## Commits
@@ -223,6 +226,7 @@ One logical change per commit. Never commit secrets, build output (`dist/`, `tar
 - [ ] `npx --no-install tsc --noEmit -p tsconfig.json` passes
 - [ ] `cd src-tauri && cargo test --offline` passes (or the touched `--test` files, plus `cargo check`)
 - [ ] `npm run i18n:check` and `npm run i18n:test` pass; no raw user-visible strings
+- [ ] `npm run floor` is clean (no new suppressions, stubs, skipped tests, lost assertions or loosened numbers)
 - [ ] UI changes checked in all 9 themes, with reduced motion, with the keyboard, at 960 px and wide
 - [ ] New logic has tests, including refusal paths at trust boundaries
 - [ ] No GPL/nonfree options; `THIRD-PARTY-NOTICES.md` matches bundled versions

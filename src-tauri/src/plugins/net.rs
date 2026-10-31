@@ -264,7 +264,7 @@ impl NetContext {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(format!("only http and https URLs can be fetched, not {}:", url.scheme()));
         }
-        if url.host_str().map_or(true, str::is_empty) {
+        if url.host_str().is_none_or(str::is_empty) {
             return Err("the URL has no host".to_string());
         }
         if !self.allow_private && private_target(url) {
@@ -424,7 +424,7 @@ impl NetContext {
         if redirect != "follow" || !SESSION_METHODS.contains(&method.as_str()) {
             return None;
         }
-        if body.map_or(false, |body| body.len() > MAX_REQUEST_BODY_BYTES) {
+        if body.is_some_and(|body| body.len() > MAX_REQUEST_BODY_BYTES) {
             return None;
         }
         let body = body.filter(|_| !matches!(method.as_str(), "GET" | "HEAD"));

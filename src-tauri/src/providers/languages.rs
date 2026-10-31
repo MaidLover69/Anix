@@ -102,7 +102,7 @@ pub fn normalize_language(label: &str) -> Option<String> {
     }
     // A name followed by a note: "english (cc)", "spanish - latin america", "español [latino]".
     let head = text
-        .split(|c: char| matches!(c, '(' | '[' | '-' | ',' | '/' | '|'))
+        .split(['(', '[', '-', ',', '/', '|'])
         .next()
         .unwrap_or_default();
     if head.len() < text.len() {
@@ -300,7 +300,7 @@ pub fn plan_tiers(
             if taken[idx] || !usable {
                 continue;
             }
-            if langs.as_ref().map_or(false, |langs| langs.for_category(category).contains(wanted)) {
+            if langs.as_ref().is_some_and(|langs| langs.for_category(category).contains(wanted)) {
                 taken[idx] = true;
                 members.push(idx);
             }
@@ -355,7 +355,7 @@ pub fn served_language(langs: Option<&Languages>, category: &Category, wanted: &
 /// Puts subtitle tracks in the wanted languages first (most wanted first, the rest in their
 /// order) and makes the first of them the default. Tracks are left as they are when none is
 /// in a wanted language.
-pub fn prefer_subtitles(tracks: &mut Vec<SubtitleItem>, wanted: &[String]) {
+pub fn prefer_subtitles(tracks: &mut [SubtitleItem], wanted: &[String]) {
     let rank = |track: &SubtitleItem| -> usize {
         normalize_language(&track.language)
             .and_then(|code| wanted.iter().position(|w| *w == code))

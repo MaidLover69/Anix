@@ -241,7 +241,7 @@ async fn a_guarded_site_plays_once_the_user_verified_each_of_its_origins() {
     let label = registry.site_label(&api_key, &api_key);
     assert_eq!(label, format!("Guarded Plugin ({})", api_key));
     let pending = vec![SiteVerification { site: api_key.clone(), label: label.clone(), origin: api.clone() }];
-    let entries = verification_entries(pending, |site| plugins_for_site(site));
+    let entries = verification_entries(pending, plugins_for_site);
     assert_eq!(entries.len(), 1);
     assert_eq!((entries[0].site.as_str(), entries[0].label.as_str()), (api_key.as_str(), label.as_str()));
     assert_eq!(entries[0].providers, ["guarded"]);

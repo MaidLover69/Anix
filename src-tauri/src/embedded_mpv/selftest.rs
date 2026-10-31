@@ -67,7 +67,9 @@ macro_rules! gl_fn {
             return None;
         }
         // SAFETY: the field's type is the GL prototype of this entry point.
-        unsafe { std::mem::transmute::<*mut c_void, _>(ptr) }
+        #[allow(clippy::missing_transmute_annotations)] // the target is the field's declared type
+        let f = unsafe { std::mem::transmute::<*mut c_void, _>(ptr) };
+        f
     }};
 }
 

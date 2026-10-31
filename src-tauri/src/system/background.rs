@@ -352,7 +352,7 @@ pub fn timer_unit() -> String {
 /// replaced or removed. Returns whether anything changed.
 fn write_ours(path: &Path, wanted: Option<&str>) -> io::Result<bool> {
     let existing = std::fs::read_to_string(path).ok();
-    let ours = existing.as_deref().map_or(true, |text| text.contains(MARKER));
+    let ours = existing.as_deref().is_none_or(|text| text.contains(MARKER));
     match wanted {
         Some(wanted) => {
             if existing.as_deref() == Some(wanted) {

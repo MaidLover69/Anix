@@ -202,9 +202,7 @@ pub fn session_kind(
         Some(b) if b.starts_with("wayland") && wayland_display.is_some() => return "wayland",
         _ => {}
     }
-    if wayland_display.is_some() {
-        "wayland"
-    } else if session_type == Some("wayland") {
+    if wayland_display.is_some() || session_type == Some("wayland") {
         "wayland"
     } else if display.is_some() || session_type == Some("x11") {
         "x11"
@@ -250,7 +248,7 @@ fn first_render_node() -> Option<PathBuf> {
     let mut nodes: Vec<PathBuf> = std::fs::read_dir("/dev/dri")
         .ok()?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.starts_with("renderD")))
+        .filter(|path| path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("renderD")))
         .collect();
     nodes.sort();
     nodes.into_iter().next()
@@ -457,7 +455,7 @@ pub async fn report() -> HardwareReport {
         xdg_session_type,
         desktop: env("XDG_CURRENT_DESKTOP"),
         webkitgtk_version: webkitgtk_version(),
-        dmabuf_disabled: dmabuf_value.as_deref().map_or(false, |v| v != "0"),
+        dmabuf_disabled: dmabuf_value.as_deref().is_some_and(|v| v != "0"),
         dmabuf_value,
         dmabuf_set_by_app: DMABUF_SET_BY.load(Ordering::SeqCst) == 1,
         gpu_vendor: render_node.as_deref().and_then(gpu),

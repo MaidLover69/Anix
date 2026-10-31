@@ -190,7 +190,7 @@ async fn languages_are_tried_in_preference_order() {
 async fn strict_preferences_refuse_other_languages() {
     english_ui();
     let italian = Arc::new(site("animeworld", &["it"], &[]));
-    let strict = manager(&[italian.clone()], prefs(&["hi"], &["en"], true));
+    let strict = manager(std::slice::from_ref(&italian), prefs(&["hi"], &["en"], true));
     let refused = message(play(&strict, "sub", None).await);
     assert!(refused.contains("Hindi subtitles"), "{}", refused);
     assert!(refused.contains("Settings › Sources"), "{}", refused);
@@ -214,7 +214,7 @@ async fn loose_preferences_fall_back_to_other_languages() {
     assert_eq!(english.calls().len(), 1, "the English site goes first");
 
     // No match at all, but other languages are allowed.
-    let only_italian = manager(&[italian.clone()], prefs(&["hi"], &["hi"], false));
+    let only_italian = manager(std::slice::from_ref(&italian), prefs(&["hi"], &["hi"], false));
     assert_eq!(play(&only_italian, "sub", None).await.unwrap().provider.as_deref(), Some("animeworld"));
 }
 
@@ -249,7 +249,7 @@ async fn dub_only_sites_serve_dubs_in_their_language() {
 
     // A site without a dub of its own and with subtitles is not a dub site.
     let italian = Arc::new(site("animeworld", &["it"], &["it"]).without_dub());
-    let none = message(play(&manager(&[italian.clone()], prefs(&["en"], &["it"], true)), "dub", None).await);
+    let none = message(play(&manager(std::slice::from_ref(&italian), prefs(&["en"], &["it"], true)), "dub", None).await);
     assert!(none.contains("Italian audio"), "{}", none);
     assert!(italian.calls().is_empty());
 }

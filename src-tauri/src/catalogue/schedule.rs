@@ -37,7 +37,7 @@ pub fn weekly(at: i64, episode: i32, total: Option<i32>, weekly: bool, from: i64
             break;
         }
         let ep = episode as i64 + k;
-        if ep >= 1 && total.map_or(true, |t| ep <= t as i64) {
+        if ep >= 1 && total.is_none_or(|t| ep <= t as i64) {
             out.push((time, ep as i32));
         }
         k += 1;
@@ -144,7 +144,7 @@ pub fn from_mal(json: &Value, from: i64, to: i64) -> Vec<Slots> {
 /// Each fallback lists only part of the week, so the schedule is built from both.
 pub fn merge(mut primary: Vec<Slots>, extra: Vec<Slots>) -> Vec<Slots> {
     let known: std::collections::HashSet<i64> = primary.iter().filter_map(|(f, _)| f.ids.mal).collect();
-    primary.extend(extra.into_iter().filter(|(f, _)| f.ids.mal.map_or(true, |mal| !known.contains(&mal))));
+    primary.extend(extra.into_iter().filter(|(f, _)| f.ids.mal.is_none_or(|mal| !known.contains(&mal))));
     primary
 }
 

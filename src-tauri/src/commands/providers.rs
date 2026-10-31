@@ -23,7 +23,7 @@ pub fn episode_key(number: f64) -> i64 {
 pub fn released_episode_cap(status: Option<&str>, next_airing_episode: Option<i32>) -> Option<i64> {
     match next_airing_episode {
         Some(next) => Some((next as i64 - 1).max(0)),
-        None if status.map_or(false, |s| s.eq_ignore_ascii_case("NOT_YET_RELEASED")) => Some(0),
+        None if status.is_some_and(|s| s.eq_ignore_ascii_case("NOT_YET_RELEASED")) => Some(0),
         None => None,
     }
 }
@@ -126,7 +126,7 @@ pub async fn get_anime_catalog_episodes(
         .unwrap_or(0);
     let is_releasing = status
         .as_deref()
-        .map_or(false, |s| s.eq_ignore_ascii_case("RELEASING"));
+        .is_some_and(|s| s.eq_ignore_ascii_case("RELEASING"));
 
     // Placeholders are added only for episodes known to exist: never past what has aired, and
     // for an airing show with no schedule never past the last episode some source lists.

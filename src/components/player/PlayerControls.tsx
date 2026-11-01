@@ -70,7 +70,10 @@ interface PlayerControlsProps {
   locked?: boolean;
 }
 
-/** A control-bar button with its name written next to the icon. */
+/**
+ * One of the four big control-bar buttons, with its name written next to the icon. The name
+ * drops on narrow windows (the 960 px minimum), where the icon and its tooltip remain.
+ */
 const LabelledButton: React.FC<{
   label: string;
   title?: string;
@@ -80,7 +83,7 @@ const LabelledButton: React.FC<{
 }> = ({ label, title, onClick, active, children }) => (
   <IconButton label={label} title={title} active={active} onClick={onClick} className="gap-1.5">
     {children}
-    <span aria-hidden="true">{label}</span>
+    <span aria-hidden="true" className="hidden min-[1120px]:inline">{label}</span>
   </IconButton>
 );
 
@@ -117,8 +120,9 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   return (
     <div
       // The scrim is already dense behind the seek bar, so the controls stay readable over a bright frame.
-      className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-16 transition-opacity duration-200 ${
-        visible ? 'opacity-100' : 'opacity-0'
+      // Hidden, it fades and slides down a little; it only moves when it shows or hides, never while idle.
+      className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-16 transition-[opacity,transform] duration-200 ease-out ${
+        visible ? 'opacity-100' : 'translate-y-3 opacity-0'
       }`}
     >
       {/* A mouse press must not move focus onto a control, or Space would press it again. */}
@@ -130,7 +134,8 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         <PlayerTimeline videoRef={videoRef} duration={duration} onSeek={onSeek} locked={locked} />
 
         <div className="flex items-center justify-between gap-2">
-          {/* Three groups on each side: episode and play, seek, volume | panels, playback options. */}
+          {/* Three groups on each side: episode and play, seek, volume | the four big panels (Episodes,
+              Subtitles, Server, Settings), playback options. */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <IconButton
@@ -204,9 +209,6 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
-              <LabelledButton label={t('playerControls.server')} title={t('playerControls.changeServer')} onClick={onOpenServers}>
-                <Server aria-hidden="true" className="h-4 w-4" />
-              </LabelledButton>
               <LabelledButton
                 label={t('common.episodes')}
                 title={queuedCount > 0 ? t('playerControls.episodesQueued', { count: queuedCount }) : t('common.episodes')}
@@ -222,6 +224,9 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                 onClick={onOpenSubtitles}
               >
                 <Captions aria-hidden="true" className="h-4 w-4" />
+              </LabelledButton>
+              <LabelledButton label={t('playerControls.server')} title={t('playerControls.changeServer')} onClick={onOpenServers}>
+                <Server aria-hidden="true" className="h-4 w-4" />
               </LabelledButton>
               <LabelledButton label={t('common.settings')} title={t('playerControls.settingsHint')} onClick={onOpenSettings}>
                 <Settings aria-hidden="true" className="h-4 w-4" />

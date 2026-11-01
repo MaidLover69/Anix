@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import clsx from 'clsx';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
+import { Chip } from './ui/Chip';
 import { Spinner } from './ui/Spinner';
 import { ShimmerImage } from './ShimmerImage';
 import { errorMessage } from './ui/ErrorState';
@@ -95,7 +96,7 @@ const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }
 
   return (
     <div onKeyDown={onKeyDown} className="flex flex-col gap-4">
-      <div className="relative flex min-h-[300px] items-center justify-center overflow-hidden">
+      <div className="relative flex min-h-[320px] items-center justify-center overflow-hidden p-2">
         {error ? (
           <p role="alert" className="text-center text-[13px] text-state-error">
             {t('surpriseCard.couldNotPick', { error: errorMessage(error) })}
@@ -130,7 +131,7 @@ const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }
               opacity: flinging ? 0 : 1,
             }}
             className={clsx(
-              'ui-card flex w-full max-w-sm cursor-grab touch-none select-none gap-4 rounded-xl border border-border bg-bg-card p-3 active:cursor-grabbing',
+              'ui-card grid w-full cursor-grab touch-none select-none grid-cols-[minmax(8rem,12rem)_1fr] items-center gap-6 rounded-2xl border border-border bg-bg-card p-5 active:cursor-grabbing',
               // Following the pointer has no delay; letting go eases back or away.
               drag.current === null && !reducedMotion && 'transition-[transform,opacity] duration-200 ease-out'
             )}
@@ -138,15 +139,21 @@ const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }
             <ShimmerImage
               src={pick.cover_image.large || pick.cover_image.extra_large}
               alt=""
-              className="pointer-events-none aspect-[2/3] w-28 flex-shrink-0 rounded-md"
+              className="ui-surprise-poster pointer-events-none aspect-[2/3] w-full rounded-lg shadow-pop"
             />
-            <div className="flex min-w-0 flex-col gap-1">
-              <h3 className="text-[15px] font-semibold leading-5 text-text-primary line-clamp-3">
+            <div className="flex min-w-0 flex-col gap-2">
+              <h3 className="text-2xl font-black leading-tight text-text-primary line-clamp-3">
                 {pick.title.english || pick.title.user_preferred || pick.title.romaji || t('surpriseCard.untitled')}
               </h3>
-              {caption && <p className="text-xs text-text-muted">{caption}</p>}
-              {pick.genres.length > 0 && <p className="text-xs text-text-secondary">{pick.genres.slice(0, 3).join(', ')}</p>}
-              <p className="mt-1 text-xs leading-[18px] text-text-muted line-clamp-5">{plainText(pick.description)}</p>
+              {(caption || pick.genres.length > 0) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {caption && <Chip>{caption}</Chip>}
+                  {pick.genres.slice(0, 3).map((genre) => (
+                    <Chip key={genre}>{genre}</Chip>
+                  ))}
+                </div>
+              )}
+              <p className="text-[13px] leading-5 text-text-muted line-clamp-5">{plainText(pick.description)}</p>
             </div>
           </div>
         )}
@@ -171,7 +178,7 @@ const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }
 
 /** "Surprise me": one random pick at a time; skip it (←, drag left) or open it (→, drag right). */
 export const SurpriseCard: React.FC<SurpriseCardProps> = ({ isOpen, onClose, draw }) => (
-  <Modal isOpen={isOpen} onClose={onClose} title={t('surpriseCard.title')} size="md">
+  <Modal isOpen={isOpen} onClose={onClose} title={t('surpriseCard.title')} size="xl">
     {/* Mounted only while open, so each visit starts with a new pick. */}
     {isOpen && <CardBody onClose={onClose} draw={draw} />}
   </Modal>

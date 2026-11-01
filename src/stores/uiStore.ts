@@ -7,6 +7,8 @@ export interface ToastMessage {
   title: string;
   message?: string;
   duration?: number;
+  /** Fun mode's decoration drawn on the toast (aria-hidden). */
+  art?: 'levelUp';
 }
 
 const DEFAULT_TOAST_MS = 3000;

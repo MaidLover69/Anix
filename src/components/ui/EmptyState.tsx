@@ -27,7 +27,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 }) => {
   const playful = usePlayful();
   return (
-    <div className={clsx('flex flex-col items-center justify-center px-6 py-16 text-center', className)}>
+    // One dashed card for every empty screen: mascot or icon, title, one line, one button.
+    <div
+      className={clsx(
+        'ui-empty flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border-strong bg-bg-card/50 px-6 py-12 text-center',
+        className
+      )}
+    >
       {mood && playful ? (
         <Mascot mood={mood} className="mb-3 text-text-secondary" />
       ) : (

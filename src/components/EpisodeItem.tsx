@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, HardDrive, ListPlus, MoreHorizontal } from 'lucide-react';
+import { Check, HardDrive, ListPlus, MoreHorizontal, Play } from 'lucide-react';
 import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
 import { Button } from './ui/Button';
@@ -75,9 +75,9 @@ const ProgressBar: React.FC<{ percent: number }> = ({ percent }) => (
     aria-valuemin={0}
     aria-valuemax={100}
     aria-valuenow={Math.round(percent)}
-    className="absolute bottom-0 start-0 end-0 h-1 bg-ink/20"
+    className="ui-hp absolute bottom-0 start-0 end-0 h-1 bg-ink/20"
   >
-    <div className="h-full bg-accent-500" style={{ width: `${percent}%` }} />
+    <div className="ui-hp-fill h-full bg-accent-500" style={{ width: `${percent}%` }} />
   </div>
 );
 
@@ -87,7 +87,9 @@ const Thumbnail: React.FC<{
   className?: string;
   hasDub?: boolean;
   blurArt?: boolean;
-}> = ({ episode, percent, className, hasDub = false, blurArt = false }) => (
+  /** The card look (grid layout): big number, Up next ribbon, watched tick, play button on hover. */
+  card?: { isWatched: boolean; isCurrent: boolean };
+}> = ({ episode, percent, className, hasDub = false, blurArt = false, card }) => (
   <div className={clsx('relative aspect-video flex-shrink-0 overflow-hidden rounded-md bg-bg-elevated', className)}>
     {episode.image ? (
       <ShimmerImage
@@ -97,6 +99,7 @@ const Thumbnail: React.FC<{
         // soft edges stay inside the frame.
         className={clsx(
           'h-full w-full transition-transform duration-300 ease-out motion-reduce:transition-none',
+          card?.isWatched && 'opacity-50 grayscale-[50%]',
           blurArt
             ? 'scale-110 blur-md'
             : 'group-hover:scale-105 group-focus-within:scale-105 motion-reduce:group-hover:scale-100 motion-reduce:group-focus-within:scale-100'
@@ -109,12 +112,54 @@ const Thumbnail: React.FC<{
         aria-hidden="true"
         className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br ui-plate from-ink/[0.07] to-transparent ring-1 ring-inset ring-ink/[0.06]"
       >
-        <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
-          {episode.number}
-        </span>
+        {!card && (
+          <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
+            {episode.number}
+          </span>
+        )}
       </div>
     )}
-    {hasDub && <DubBadge className="absolute start-1.5 top-1.5 shadow-pop" />}
+    {card && (
+      <>
+        <span
+          aria-hidden="true"
+          className={clsx(
+            'absolute bottom-1 start-2 text-[26px] font-black italic leading-none tabular-nums',
+            episode.image ? 'ui-ep-num text-white' : 'text-text-disabled'
+          )}
+        >
+          {episode.number}
+        </span>
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 m-auto flex h-10 w-10 scale-75 items-center justify-center rounded-full bg-accent-600 text-on-accent opacity-0 shadow-pop transition duration-200 group-hover:scale-100 group-hover:opacity-100 group-focus-within:scale-100 group-focus-within:opacity-100"
+        >
+          <Play className="h-4 w-4 fill-current" />
+        </span>
+        {card.isWatched && (
+          // Gives way to the row's action buttons, which show in the same corner on hover and focus.
+          <span
+            aria-hidden="true"
+            className="absolute end-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-state-success text-bg-page transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+          >
+            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          </span>
+        )}
+      </>
+    )}
+    {(card?.isCurrent || hasDub) && (
+      <span className="absolute start-0 top-1.5 flex flex-col items-start gap-1">
+        {card?.isCurrent && (
+          <span
+            aria-hidden="true"
+            className="rounded-e-sm bg-accent-600 px-2 py-0.5 text-[11px] font-black uppercase leading-[14px] tracking-wider text-on-accent shadow-pop"
+          >
+            {t('episodeItem.upNext')}
+          </span>
+        )}
+        {hasDub && <DubBadge className="ms-1.5 shadow-pop" />}
+      </span>
+    )}
     {percent > 0 && <ProgressBar percent={percent} />}
   </div>
 );
@@ -140,6 +185,7 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
     title ? t('episodeItem.playEpisodeTitled', { number: episode.number, title }) : t('episodeItem.playEpisode', { number: episode.number }),
     isLocal && t('episodeItem.localFileNote'),
     isCurrent && t('episodeItem.upNextNote'),
+    isWatched && t('episodeItem.watchedNote'),
     hasDub && t('episodeItem.dubListedNote'),
   ]
     .filter(Boolean)
@@ -241,11 +287,18 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
           aria-current={isCurrent ? 'step' : undefined}
           className="flex cursor-pointer flex-col rounded-md text-start"
         >
-          <Thumbnail episode={episode} percent={percent} hasDub={hasDub} blurArt={blurArt} className="w-full" />
+          <Thumbnail
+            episode={episode}
+            percent={percent}
+            hasDub={hasDub}
+            blurArt={blurArt}
+            card={{ isWatched, isCurrent }}
+            className="w-full"
+          />
           <span className="mt-2 flex items-center gap-2">
             <span
               className={clsx(
-                'min-w-0 flex-1 truncate text-[13px] font-medium',
+                'min-w-0 flex-1 truncate text-[13px] font-semibold',
                 isWatched ? 'text-text-muted' : 'text-text-primary'
               )}
             >
@@ -255,7 +308,6 @@ export const EpisodeItem: React.FC<EpisodeItemProps> = ({
             {isLocal && <LocalBadge />}
           </span>
           {title && <span className="mt-0.5 truncate text-xs text-text-muted">{title}</span>}
-          {isWatched && <WatchedMark className="mt-1" />}
         </button>
         <span className="absolute end-3 top-3 flex gap-1">
           {renderPlaylistButton('dark-scope bg-black/70')}

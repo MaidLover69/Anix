@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 
 export type MascotMood = 'sleepy' | 'confused' | 'dizzy';
 
@@ -8,8 +9,10 @@ const FACES: Record<MascotMood, React.ReactNode> = {
     <>
       <path d="M21 34q4-4 8 0M35 34q4-4 8 0" />
       <path d="M30 42q2 2 4 0" />
-      <polyline points="52,4 58,4 52,10 58,10" />
-      <polyline points="58,14 62,14 58,18 62,18" />
+      <g className="ui-mascot-zz">
+        <polyline points="52,4 58,4 52,10 58,10" />
+        <polyline points="58,14 62,14 58,18 62,18" />
+      </g>
     </>
   ),
   confused: (
@@ -31,7 +34,8 @@ const FACES: Record<MascotMood, React.ReactNode> = {
 
 /**
  * The line-art mascot of empty and error screens. One stroke in currentColor and no fill, so
- * it is ink in Manga and Comic and takes the text colour everywhere else.
+ * it is ink in Manga and Comic and takes the text colour everywhere else. It breathes slowly and
+ * its Zzz drift (themes.css › .ui-mascot); both stop with reduced motion.
  */
 export const Mascot: React.FC<{ mood: MascotMood; className?: string }> = ({ mood, className }) => (
   <svg
@@ -45,7 +49,7 @@ export const Mascot: React.FC<{ mood: MascotMood; className?: string }> = ({ moo
     strokeWidth={2}
     strokeLinecap="round"
     strokeLinejoin="round"
-    className={className}
+    className={clsx('ui-mascot', className)}
   >
     <circle cx="32" cy="34" r="20" />
     <path d="M16.5 21.5L15 8L26 15M47.5 21.5L49 8L38 15" />

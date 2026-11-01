@@ -140,4 +140,12 @@ const shownKey = errorKeys(bell, false).find((k) => k in catalogs.en);
 assert.ok((shownKey ? catalogs.fr[shownKey] : bell).includes('Turn on the bell'), 'fr toast keeps the reason');
 assert.deepEqual(errorKeys('Network error: AniList HTTP 403: disabled', false), ['errors.CAT-403', 'errors.CAT-4xx', 'errors.CAT-ERR']);
 
+// Settings search highlight: every query word is marked, in any case, and nothing is lost.
+const { markParts } = await import('../src/lib/textMarks.ts');
+assert.deepEqual(markParts('Skip intros', ''), [{ text: 'Skip intros', hit: false }]);
+assert.deepEqual(markParts('Skip intros', 'INTRO'), [{ text: 'Skip ', hit: false }, { text: 'intro', hit: true }, { text: 's', hit: false }]);
+assert.deepEqual(markParts('Buffer (MB)', '(mb'), [{ text: 'Buffer ', hit: false }, { text: '(MB', hit: true }, { text: ')', hit: false }], 'regex characters are plain text');
+assert.equal(markParts('Hide adult content', 'con adu').filter((p) => p.hit).length, 2);
+assert.equal(markParts('Hide adult content', 'con adu').map((p) => p.text).join(''), 'Hide adult content');
+
 console.log('i18n tests passed');

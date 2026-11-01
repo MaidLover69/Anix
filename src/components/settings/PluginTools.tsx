@@ -68,6 +68,22 @@ export const HealthBadge: React.FC<{ state: HealthState | undefined }> = ({ stat
   );
 };
 
+/** A small dot in the colour of the last test's outcome (the badge beside it says it in words). */
+export const HealthDot: React.FC<{ state: HealthState | undefined }> = ({ state }) => {
+  if (!state || state === 'testing') return null;
+  const [tone, key] =
+    state.status === 'ok'
+      ? ['bg-state-success', 'pluginTools.ok' as const]
+      : state.status === 'empty'
+        ? ['bg-state-warning', 'pluginTools.noResults' as const]
+        : state.status === 'verification'
+          ? ['bg-state-warning', 'pluginTools.needsVerification' as const]
+          : state.status === 'timeout'
+            ? ['bg-state-error', 'pluginTools.timedOut' as const]
+            : ['bg-state-error', 'pluginTools.error' as const];
+  return <span aria-hidden="true" title={t(key)} className={`inline-block h-2 w-2 flex-shrink-0 self-center rounded-full ${tone}`} />;
+};
+
 /** "Update available"; with release notes it opens them. */
 export const UpdateBadge: React.FC<{ update: PluginUpdate | undefined; name?: string }> = ({ update, name }) => {
   const [open, setOpen] = useState(false);

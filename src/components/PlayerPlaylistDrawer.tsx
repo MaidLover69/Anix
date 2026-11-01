@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Layers, Play, Search, Square, SquareCheck, Trash2, X } from 'lucide-react';
 import { Button } from './ui/Button';
 import { sameEpisode } from './player/format';
+import { SIDE_PANEL_BACKDROP_CLASS, SIDE_PANEL_CLASS } from './player/PlayerSidePanel';
 import type { EpisodeItem } from '../types';
 import { t } from '../i18n';
 
@@ -98,11 +99,11 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
       tabIndex={-1}
       dir={document.documentElement.dir || 'ltr'}
       onClick={(e) => e.stopPropagation()}
-      className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-pop outline-none animate-slide-left"
+      className={SIDE_PANEL_CLASS}
     >
-      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
+      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-5">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-text-primary">{t('common.episodes')}</h2>
+          <h2 className="text-lg font-extrabold text-text-primary">{t('common.episodes')}</h2>
           <p className="text-xs text-text-muted">
             {t('common.episodeCount', { count: episodes.length })}
           </p>
@@ -126,7 +127,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
       </div>
 
       {multiSelect && (
-        <div className="flex items-center justify-between gap-2 bg-accent-tint px-4 py-2">
+        <div className="flex items-center justify-between gap-2 bg-accent-tint px-5 py-2">
           <span className="text-xs font-medium text-accent-300">{t('playerPlaylistDrawer.queuedCount', { count: queuedEpisodes.length })}</span>
           <div className="flex items-center gap-1">
             <Button
@@ -156,7 +157,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
         </div>
       )}
 
-      <div className="px-4 pb-2 pt-1">
+      <div className="px-5 pb-2 pt-1">
         <div className="relative">
           <Search
             aria-hidden="true"
@@ -173,7 +174,7 @@ const DrawerPanel: React.FC<DrawerPanelProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4 pt-1">
+      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-5 pb-5 pt-1">
         {filteredEpisodes.length === 0 ? (
           <p className="py-10 text-center text-[13px] text-text-muted">
             {episodes.length === 0 ? t('playerPlaylistDrawer.listUnavailable') : t('playerPlaylistDrawer.noMatch')}
@@ -243,7 +244,7 @@ export const PlayerPlaylistDrawer: React.FC<PlayerPlaylistDrawerProps> = ({
     // Left to right like the player, so the panel sits on its right in every language.
     <div
       dir="ltr"
-      className="absolute inset-0 z-[60] flex justify-end bg-black/60 animate-fade-in"
+      className={SIDE_PANEL_BACKDROP_CLASS}
       onClick={panelProps.onClose}
     >
       <DrawerPanel {...panelProps} />

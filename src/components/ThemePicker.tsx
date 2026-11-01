@@ -20,24 +20,27 @@ const ThemePreview: React.FC<{ theme: ThemeId }> = ({ theme }) => (
   <span
     aria-hidden="true"
     data-theme-scope={theme}
-    className="flex h-[68px] w-full overflow-hidden rounded-md border border-border-strong bg-bg-page"
+    className="flex h-[76px] w-full overflow-hidden rounded-md border border-border-strong bg-bg-page"
   >
     <span className="flex h-full w-4 flex-shrink-0 flex-col items-center gap-1 border-e border-border bg-bg-deepest pt-2">
       <span className="h-1 w-2 rounded-full bg-accent-500" />
       <span className="h-1 w-2 rounded-full bg-ink/25" />
       <span className="h-1 w-2 rounded-full bg-ink/25" />
     </span>
-    <span className="flex min-w-0 flex-1 flex-col justify-between p-1.5">
+    <span className="flex min-w-0 flex-1 flex-col gap-1 p-1.5">
       <span className="flex items-center justify-between gap-1 rounded-sm border border-border bg-bg-card px-1.5 py-1">
         <span className="text-[13px] font-semibold leading-none text-text-primary">Aa</span>{/* i18n-ignore */}
         <span className="h-1 flex-1 rounded-full bg-[var(--text-muted)]" />
         <span className="h-1.5 w-1.5 rounded-full bg-state-success" />
       </span>
-      <span className="flex items-center gap-1">
-        <span className="flex h-3.5 flex-1 items-center justify-center rounded-sm bg-accent-600">
-          <span className="h-0.5 w-4 rounded-full bg-on-accent" />
-        </span>
-        <span className="h-3.5 flex-1 rounded-sm border border-border-strong bg-bg-elevated" />
+      {/* A banner in the accent, then a rail of three cards. */}
+      <span className="flex h-3 items-center rounded-sm bg-gradient-to-r from-accent-600 to-bg-card ps-1 rtl:bg-gradient-to-l">
+        <span className="h-0.5 w-4 rounded-full bg-on-accent" />
+      </span>
+      <span className="flex flex-1 gap-1">
+        <span className="flex-1 rounded-sm border border-border bg-bg-elevated" />
+        <span className="flex-1 rounded-sm border border-border bg-bg-elevated" />
+        <span className="flex-1 rounded-sm border border-border bg-bg-elevated" />
       </span>
     </span>
   </span>
@@ -67,7 +70,7 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({ value, onChange, ...ar
       role="radiogroup"
       aria-labelledby={aria['aria-labelledby']}
       aria-describedby={aria['aria-describedby']}
-      className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3"
+      className="grid w-full grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2"
     >
       {THEMES.map((theme, index) => {
         const selected = theme.id === value;
@@ -84,7 +87,7 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({ value, onChange, ...ar
             onClick={() => onChange(theme.id)}
             onKeyDown={(e) => handleKeyDown(e, index)}
             className={clsx(
-              'ui-theme-card flex min-w-0 flex-col gap-2 rounded-lg border p-1.5 text-start cursor-pointer transition-colors',
+              'ui-theme-card flex min-w-0 flex-col gap-2 rounded-lg border p-1.5 text-start cursor-pointer transition-[color,background-color,border-color,transform] motion-safe:hover:-translate-y-0.5',
               selected
                 ? 'border-accent-500 bg-accent-tint'
                 : 'border-border bg-bg-surface hover:border-border-strong hover:bg-bg-input'

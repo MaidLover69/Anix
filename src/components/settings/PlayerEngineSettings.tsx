@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import clsx from 'clsx';
 import { useLocation } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { RefreshCw, Trash2 } from 'lucide-react';
@@ -14,11 +15,65 @@ import { useUIStore } from '../../stores/uiStore';
 import { locale, t, type TKey } from '../../i18n';
 import type { AppSettings, HwdecModeSetting, PlayerEngineSetting } from '../../types';
 
-const ENGINE_OPTIONS: { value: PlayerEngineSetting; labelKey: TKey }[] = [
-  { value: 'mpv', labelKey: 'playerEngineSettings.engineMpv' },
-  { value: 'web', labelKey: 'playerEngineSettings.engineWeb' },
-  { value: 'external', labelKey: 'playerEngineSettings.engineExternal' },
+const ENGINE_OPTIONS: { value: PlayerEngineSetting; labelKey: TKey; lineKey: TKey }[] = [
+  { value: 'mpv', labelKey: 'playerEngineSettings.engineMpv', lineKey: 'playerEngineSettings.engineMpvLine' },
+  { value: 'web', labelKey: 'playerEngineSettings.engineWeb', lineKey: 'playerEngineSettings.engineWebLine' },
+  { value: 'external', labelKey: 'playerEngineSettings.engineExternal', lineKey: 'playerEngineSettings.engineExternalLine' },
 ];
+
+/** The three engines as choice cards with one plain line each. Behaves as a radio group. */
+const EngineCards: React.FC<{
+  value: PlayerEngineSetting;
+  onChange: (engine: PlayerEngineSetting) => void;
+  labelId: string;
+  hintId?: string;
+}> = ({ value, onChange, labelId, hintId }) => {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
+    // Right to left, the next card is drawn on the left: swap the two horizontal arrows.
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    const key = rtl && e.key === 'ArrowLeft' ? 'ArrowRight' : rtl && e.key === 'ArrowRight' ? 'ArrowLeft' : e.key;
+    const step = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = (index + step + ENGINE_OPTIONS.length) % ENGINE_OPTIONS.length;
+    onChange(ENGINE_OPTIONS[next].value);
+    refs.current[next]?.focus();
+  };
+  return (
+    <div
+      role="radiogroup"
+      aria-labelledby={labelId}
+      aria-describedby={hintId}
+      className="grid w-full grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-2"
+    >
+      {ENGINE_OPTIONS.map((option, index) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            ref={(el) => {
+              refs.current[index] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(option.value)}
+            onKeyDown={(e) => handleKeyDown(e, index)}
+            className={clsx(
+              'ui-theme-card flex flex-col items-start gap-0.5 rounded-lg border p-3 text-start cursor-pointer transition-colors',
+              selected ? 'border-accent-500 bg-accent-tint' : 'border-border-strong bg-bg-elevated hover:bg-bg-input'
+            )}
+          >
+            <span className="text-[13px] font-semibold text-text-primary">{t(option.labelKey)}</span>
+            <span className="text-xs text-text-muted">{t(option.lineKey)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const HWDEC_OPTIONS: { value: HwdecModeSetting; labelKey: TKey }[] = [
   { value: 'auto', labelKey: 'playerEngineSettings.hwdecAuto' },
@@ -101,20 +156,18 @@ export const PlayerEngineSettings: React.FC<PlayerEngineSettingsProps> = ({ sett
 
   return (
     <>
-      <Row label={t('playerEngineSettings.playerEngine')} hint={engineHint}>
+      <Row label={t('playerEngineSettings.playerEngine')} hint={engineHint} stacked>
         {({ labelId, hintId }) => (
-          <CustomSelect
-            aria-labelledby={labelId}
-            aria-describedby={hintId}
-            className="w-56"
+          <EngineCards
+            labelId={labelId}
+            hintId={hintId}
             value={engine}
             onChange={(next) => {
-              if (!isOneOf(next, ENGINE_OPTIONS)) return;
+              if (next === engine) return;
               onChange('player_engine', next);
               setRestartLater(false);
               invoke('embedded_mpv_engine_changed', { engine: next }).catch(() => {});
             }}
-            options={labelled(ENGINE_OPTIONS)}
           />
         )}
       </Row>

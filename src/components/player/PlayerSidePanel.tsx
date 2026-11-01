@@ -15,6 +15,15 @@ interface PlayerSidePanelProps {
   container?: HTMLElement | null;
 }
 
+/**
+ * The one roomy side panel of the player, shared by Settings, Subtitles and Episodes: full height
+ * on the right, edged on the picture side. The backdrop only lightly dims the picture.
+ */
+export const SIDE_PANEL_CLASS =
+  'flex h-full w-full max-w-[26rem] flex-col border-l border-border bg-bg-elevated shadow-pop outline-none animate-slide-left motion-reduce:animate-none';
+export const SIDE_PANEL_BACKDROP_CLASS =
+  'absolute inset-0 z-[60] flex justify-end bg-black/30 animate-fade-in motion-reduce:animate-none';
+
 const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -73,11 +82,11 @@ const Panel: React.FC<Omit<PlayerSidePanelProps, 'isOpen' | 'container'>> = ({ o
       // Panel text reads in the page direction; only the player's bar and seek zones stay left to right.
       dir={document.documentElement.dir || 'ltr'}
       onClick={(e) => e.stopPropagation()}
-      className="flex h-full w-full max-w-sm flex-col bg-bg-elevated shadow-pop outline-none animate-slide-left motion-reduce:animate-none"
+      className={SIDE_PANEL_CLASS}
     >
-      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
+      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-5">
         <div className="min-w-0">
-          <h2 id={titleId} className="text-base font-semibold text-text-primary">
+          <h2 id={titleId} className="text-lg font-extrabold text-text-primary">
             {title}
           </h2>
           {subtitle && <p className="truncate text-xs text-text-muted">{subtitle}</p>}
@@ -86,7 +95,7 @@ const Panel: React.FC<Omit<PlayerSidePanelProps, 'isOpen' | 'container'>> = ({ o
           <X aria-hidden="true" className="h-4 w-4" />
         </Button>
       </div>
-      <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4 pt-1">{children}</div>
+      <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-5 pb-5 pt-1">{children}</div>
     </div>
   );
 };
@@ -98,7 +107,7 @@ export const PlayerSidePanel: React.FC<PlayerSidePanelProps> = ({ isOpen, contai
     // Left to right like the player, so the panel sits on its right in every language.
     <div
       dir="ltr"
-      className="absolute inset-0 z-[60] flex justify-end bg-black/60 animate-fade-in motion-reduce:animate-none"
+      className={SIDE_PANEL_BACKDROP_CLASS}
       onClick={panelProps.onClose}
     >
       <Panel {...panelProps} />
@@ -111,7 +120,7 @@ export const PanelSection: React.FC<{ title: string; children: React.ReactNode }
   const id = useId();
   return (
     <section aria-labelledby={id} className="flex flex-col gap-2">
-      <h3 id={id} className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+      <h3 id={id} className="text-[11px] font-extrabold uppercase tracking-widest text-text-muted">
         {title}
       </h3>
       {children}

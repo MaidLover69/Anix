@@ -1,0 +1,115 @@
+/**
+ * Library, Schedule, Downloads and Notifications looks: the watch-streak tile, charts that grow in
+ * once, the day pills, striped download progress and the unread wash. Colours come only from theme
+ * tokens. Every resting state is right without motion: global.css cuts animation and transitions
+ * under reduced motion and Settings › Appearance › Fewer effects, so the flame and the stripes stand
+ * still and the bars appear at full size.
+ */
+
+/* Stats › watch streak: the hero tile, with a glow of the accent behind the flame. */
+.ui-streak {
+  background-image: radial-gradient(circle at 85% 20%, rgb(var(--accent-500) / 0.28), transparent 55%);
+}
+:root[dir="rtl"] .ui-streak {
+  background-image: radial-gradient(circle at 15% 20%, rgb(var(--accent-500) / 0.28), transparent 55%);
+}
+.ui-flame-flicker {
+  transform-origin: 50% 100%;
+  animation: ui-flick 2.4s ease-in-out infinite;
+}
+@keyframes ui-flick {
+  50% { transform: scale(1.05, 0.96); }
+}
+
+/* Stats bars and meters grow in once, one after the other. */
+.ui-grow-y {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: ui-grow-y 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+@keyframes ui-grow-y {
+  from { transform: scaleY(0); }
+}
+/* The stagger delay would still pop the bars in one by one, so it goes with the motion. */
+:root[data-effects="fewer"] .ui-grow-y {
+  animation-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-grow-y {
+    animation-delay: 0s;
+  }
+}
+.ui-grow-x {
+  transform-origin: left;
+  animation: ui-grow-x 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+:root[dir="rtl"] .ui-grow-x {
+  transform-origin: right;
+}
+@keyframes ui-grow-x {
+  from { transform: scaleX(0); }
+}
+
+/* Schedule day pills: weekday (or Today), date and count stacked, on the shared segmented control. */
+:root .ui-day-pills.ui-seg {
+  /* Beats the outlined themes' .ui-seg frame: each pill carries its own border. */
+  border: 0;
+}
+.ui-day-pills {
+  gap: 0.375rem;
+  padding: 0;
+  background: none;
+}
+.ui-day-pills > button {
+  height: auto;
+  min-width: 4.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid rgb(var(--border-rgb) / calc(var(--border-alpha) * var(--contrast-border, 1)));
+  border-radius: var(--radius-lg);
+  background: rgb(var(--bg-card));
+}
+.ui-day-pills > button[aria-checked="true"] {
+  border-color: transparent;
+  background: rgb(var(--accent-600));
+  color: rgb(var(--on-accent));
+}
+.ui-day-pills > button[aria-checked="true"] * {
+  color: inherit;
+}
+
+/* Downloads: stripes that move along a running download. */
+.ui-stripes {
+  background-image: repeating-linear-gradient(-45deg, rgb(var(--accent-500)) 0 10px, rgb(var(--accent-300)) 10px 20px);
+  background-size: 28px 28px;
+  animation: ui-stripes 1s linear infinite;
+}
+:root[dir="rtl"] .ui-stripes {
+  animation-direction: reverse;
+}
+@keyframes ui-stripes {
+  to { background-position: 28px 0; }
+}
+
+/* Notifications: an unread one has an accent wash from the start edge, which fades on Mark read. */
+.ui-note {
+  position: relative;
+  isolation: isolate;
+}
+.ui-note::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(to right, var(--accent-tint), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+  pointer-events: none;
+}
+:root[dir="rtl"] .ui-note::before {
+  background: linear-gradient(to left, var(--accent-tint), transparent 60%);
+}
+.ui-note[data-unread="true"]::before {
+  opacity: 1;
+}

@@ -4,6 +4,7 @@ import { Play, Info, ChevronLeft, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './ui/Button';
 import { AmbientGlow } from './AmbientGlow';
+import { ShimmerImage } from './ShimmerImage';
 import { useReducedMotion } from '../hooks/useMediaQuery';
 import { useWindowActive } from '../hooks/useWindowActive';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
@@ -22,8 +23,9 @@ interface HeroBannerProps {
 
 const SLIDE_INTERVAL_MS = 7000;
 
+// Fixed dark-on-art buttons: they sit on the artwork, whose colours no theme controls.
 const NAV_BUTTON_CLASS =
-  'absolute top-1/2 z-30 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white cursor-pointer opacity-0 transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100';
+  'flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white cursor-pointer transition-colors hover:bg-black/80';
 
 const SEASON_LABELS: Record<string, TKey> = {
   WINTER: 'heroBanner.seasonWinter',
@@ -110,9 +112,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPaused(false);
         }}
-        // clip-path (not overflow + radius) flattens the slides and scrims before rounding, so no
-        // sliver of artwork shows along the corners.
-        className="group relative h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 ui-hero bg-bg-card [clip-path:inset(0_round_16px)]"
+        // A manga panel: one corner cut at an angle (browse.css › .ui-hero-panel), faint speed lines
+        // and a screentone corner. The drift and slide-in pause with the rotation in a background window.
+        data-idle={!windowActive || undefined}
+        className="ui-hero ui-hero-panel relative flex min-h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 flex-col justify-end overflow-hidden rounded-2xl bg-bg-card"
       >
         {/* Every slide's image stays mounted so the change is a cross-fade, not a cut. */}
         {items.map((item, i) => {
@@ -126,7 +129,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               draggable={false}
               onError={() => setFailedImages((prev) => new Set(prev).add(item.id))}
               className={clsx(
-                'pointer-events-none absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-300',
+                'ui-hero-art pointer-events-none absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-300',
+                // Only the first title drifts, once per visit: a drift per title would keep Home animating.
+                i === 0 && 'ui-hero-drift',
                 i === currentIndex ? 'opacity-100' : 'opacity-0'
               )}
             />
@@ -136,22 +141,46 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             visible everywhere, so the banner keeps an edge on all four sides. */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg-deepest/95 via-bg-deepest/55 to-transparent" />
         <div className="pointer-events-none absolute inset-y-0 start-0 w-4/5 bg-gradient-to-r rtl:bg-gradient-to-l from-bg-deepest/90 via-bg-deepest/65 to-transparent" />
-        <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-ink/[0.06]" />
+        <div aria-hidden="true" className="ui-hero-speed pointer-events-none absolute inset-0" />
+        <div aria-hidden="true" className="ui-hero-tone pointer-events-none absolute bottom-0 end-0 h-3/5 w-[45%]" />
 
-        <div className="relative z-20 flex h-full max-w-2xl flex-col justify-end p-8 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)]">
+        {/* The poster as a tilted sticker; hidden where it would crowd the text. The title is the real link. */}
+        <Link
+          to={`/detail/${current.id}`}
+          tabIndex={-1}
+          aria-hidden="true"
+          draggable={false}
+          className="ui-hero-sticker absolute bottom-10 end-[clamp(1.5rem,5vw,4.5rem)] z-10 hidden w-[clamp(7rem,12vw,10.5rem)] xl:block"
+        >
+          <ShimmerImage
+            key={current.id}
+            src={current.cover_image.large || current.cover_image.extra_large}
+            alt=""
+            className="ui-hero-swap aspect-[2/3] w-full rounded-lg border-4 border-white/90 shadow-pop"
+          />
+        </Link>
+
+        <div
+          key={current.id}
+          className="ui-hero-swap relative z-20 flex max-w-2xl flex-col p-8 pb-12 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)] xl:max-w-[min(42rem,calc(100%-14rem))]"
+        >
           {caption && <p className="mb-2 text-xs text-text-secondary">{caption}</p>}
 
-          <h2 className="mb-2 text-[28px] font-bold leading-[34px] tracking-[-0.02em] text-text-primary line-clamp-2 select-text">
+          <h2 className="mb-2 text-[clamp(1.75rem,3vw,2.5rem)] font-black leading-tight tracking-[-0.02em] text-text-primary line-clamp-2 select-text">
             <Link to={`/detail/${current.id}`} draggable={false} className="rounded-sm hover:underline">
-              {title}
+              {/* bdi: a Latin title in Arabic keeps its "!" and "…" at its own end. */}
+              <bdi>{title}</bdi>
             </Link>
           </h2>
 
           {cleanDescription && (
-            <p className="mb-4 text-sm text-text-secondary line-clamp-2 select-text">{cleanDescription}</p>
+            // dir auto: an English synopsis in Arabic keeps its "…" at its own end; still aligned to the page side.
+            <p dir="auto" className="mb-4 text-sm text-text-secondary line-clamp-2 select-text rtl:text-right">
+              {cleanDescription}
+            </p>
           )}
 
-          <div className="flex items-center gap-2 [text-shadow:none]">
+          <div className="flex flex-wrap items-center gap-2 [text-shadow:none]">
             {canWatch && (
               <Button
                 variant="primary"
@@ -178,25 +207,8 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </div>
 
         {count > 1 && (
-          <>
-            <button
-              type="button"
-              onClick={() => go(currentIndex - 1)}
-              aria-label={t('heroBanner.previousTitle')}
-              className={clsx(NAV_BUTTON_CLASS, 'start-3')}
-            >
-              <ChevronLeft aria-hidden="true" className="h-5 w-5 rtl:-scale-x-100" />
-            </button>
-            <button
-              type="button"
-              onClick={() => go(currentIndex + 1)}
-              aria-label={t('heroBanner.nextTitle')}
-              className={clsx(NAV_BUTTON_CLASS, 'end-3')}
-            >
-              <ChevronRight aria-hidden="true" className="h-5 w-5 rtl:-scale-x-100" />
-            </button>
-
-            <div className="absolute bottom-4 end-6 z-30 flex items-center gap-1">
+          <div className="absolute end-4 top-4 z-30 flex items-center gap-1">
+            <div className="me-1 flex items-center">
               {items.map((item, i) => (
                 <button
                   key={item.id}
@@ -208,14 +220,30 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 >
                   <span
                     className={clsx(
-                      'block h-1.5 rounded-full transition-[width,background-color] duration-200',
+                      'ui-hero-dot block h-1.5 rounded-full',
                       i === currentIndex ? 'w-6 bg-accent-500' : 'w-1.5 bg-ink/40'
                     )}
                   />
                 </button>
               ))}
             </div>
-          </>
+            <button
+              type="button"
+              onClick={() => go(currentIndex - 1)}
+              aria-label={t('heroBanner.previousTitle')}
+              className={NAV_BUTTON_CLASS}
+            >
+              <ChevronLeft aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" />
+            </button>
+            <button
+              type="button"
+              onClick={() => go(currentIndex + 1)}
+              aria-label={t('heroBanner.nextTitle')}
+              className={NAV_BUTTON_CLASS}
+            >
+              <ChevronRight aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" />
+            </button>
+          </div>
         )}
       </section>
     </div>

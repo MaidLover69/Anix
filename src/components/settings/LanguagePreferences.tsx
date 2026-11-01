@@ -1,4 +1,5 @@
 import React, { useId } from 'react';
+import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
 import { CustomSelect } from '../CustomSelect';
 import { Switch } from '../ui/Switch';
@@ -9,7 +10,7 @@ import { refreshAfterLanguageChange, useLanguagePrefs } from '../../hooks/useLan
 import { useUIStore } from '../../stores/uiStore';
 import { knownLanguages, languageLabel, type StreamCategory } from '../../lib/languages';
 import { LANGUAGE_SLOTS, withChoice } from '../../lib/languageChoice';
-import { locale, t } from '../../i18n';
+import { formatNumber, locale, t } from '../../i18n';
 import type { AppSettings, PluginInfo } from '../../types';
 
 const KEYS: Record<StreamCategory, 'preferred_sub_languages' | 'preferred_dub_languages'> = {
@@ -64,8 +65,24 @@ export const LanguageChoices: React.FC<{
           const choiceId = `${labelId}-${slot}`;
           return (
             <div key={slot} className="flex min-w-0 flex-col gap-1">
-              <span id={choiceId} className="text-xs text-text-muted">
-                {choice}
+              <span className="flex items-center gap-2">
+                {/* The rank as a badge: full accent for the first choice, fainter after. */}
+                <span
+                  aria-hidden="true"
+                  className={clsx(
+                    'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
+                    slot === 0
+                      ? 'bg-accent-600 text-on-accent'
+                      : slot === 1
+                        ? 'bg-accent-tint text-accent-300 ring-1 ring-accent-500/40'
+                        : 'bg-ink/[0.08] text-text-secondary'
+                  )}
+                >
+                  {formatNumber(slot + 1)}
+                </span>
+                <span id={choiceId} className="text-xs text-text-muted">
+                  {choice}
+                </span>
               </span>
               <CustomSelect
                 aria-labelledby={`${labelId} ${choiceId}`}

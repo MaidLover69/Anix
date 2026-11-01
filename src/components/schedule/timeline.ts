@@ -72,13 +72,14 @@ export function nowLineIndex(sorted: ScheduleItem[], now: number, isToday: boole
   return index === -1 ? sorted.length : index;
 }
 
-/** The next episode still to air among `ids` (belled or on the list), or null. */
-export function upNext<T extends ScheduleItem>(entries: T[], ids: Set<number>, now: number): T | null {
-  let best: T | null = null;
-  for (const e of entries) {
-    if (e.airing_at > now && ids.has(e.media_id) && (!best || e.airing_at < best.airing_at)) best = e;
-  }
-  return best;
+/** The next `limit` episodes still to air among `ids` (belled or on the list), soonest first, one per anime. */
+export function upNext<T extends ScheduleItem>(entries: T[], ids: Set<number>, now: number, limit = 1): T[] {
+  const seen = new Set<number>();
+  return entries
+    .filter((e) => e.airing_at > now && ids.has(e.media_id))
+    .sort((a, b) => a.airing_at - b.airing_at)
+    .filter((e) => !seen.has(e.media_id) && seen.add(e.media_id))
+    .slice(0, limit);
 }
 
 /**

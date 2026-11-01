@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home,
   Compass,
@@ -17,6 +17,8 @@ import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useUIStore } from '../stores/uiStore';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useFunMode } from '../hooks/useSettings';
+import { FunLevelBadge } from './FunBits';
 import { useUnreadNoticeCount } from '../hooks/useNotices';
 import { useActiveDownloadCount } from '../hooks/useDownloads';
 import { t, type TKey } from '../i18n';
@@ -52,31 +54,22 @@ const SidebarLink: React.FC<{
     aria-label={badge > 0 && badgeLabel ? badgeLabel : label}
     draggable={false}
     className={({ isActive }) =>
-      clsx(itemClass(expanded), isActive ? 'ui-nav-active bg-accent-tint text-accent-300' : IDLE_CLASS)
+      // The highlight itself is the sidebar's one sliding `ui-nav-glider`.
+      clsx(itemClass(expanded), isActive ? 'ui-nav-active text-accent-300' : IDLE_CLASS)
     }
   >
-    {({ isActive }) => (
-      <>
-        {isActive && (
-          <span
-            aria-hidden="true"
-            className="ui-nav-indicator absolute start-0 top-2 bottom-2 w-0.5 rounded-full bg-accent-500"
-          />
+    <Icon aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+    {expanded && <span className="flex-1 truncate">{label}</span>}
+    {badge > 0 && (
+      <span
+        aria-hidden="true"
+        className={clsx(
+          'min-w-[18px] rounded-full bg-accent-600 px-1 text-center text-[11px] font-semibold leading-[18px] text-on-accent tabular-nums',
+          !expanded && 'absolute end-1 top-0.5'
         )}
-        <Icon aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
-        {expanded && <span className="flex-1 truncate">{label}</span>}
-        {badge > 0 && (
-          <span
-            aria-hidden="true"
-            className={clsx(
-              'min-w-[18px] rounded-full bg-accent-600 px-1 text-center text-[11px] font-semibold leading-[18px] text-on-accent tabular-nums',
-              !expanded && 'absolute end-1 top-0.5'
-            )}
-          >
-            {badge > 99 ? '99+' : badge}
-          </span>
-        )}
-      </>
+      >
+        {badge > 99 ? '99+' : badge}
+      </span>
     )}
   </NavLink>
 );
@@ -92,14 +85,47 @@ export const Sidebar: React.FC = () => {
   const expanded = sidebarExpanded && !isNarrow;
   const unreadNotices = useUnreadNoticeCount().data ?? 0;
   const queuedDownloads = useActiveDownloadCount();
+  const fun = useFunMode();
+
+  // One highlight slides to the current page's item instead of each item painting its own.
+  const asideRef = useRef<HTMLElement>(null);
+  const { pathname } = useLocation();
+  const [glider, setGlider] = useState<{ top: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const aside = asideRef.current;
+    if (!aside) return;
+    const place = () => {
+      const active = aside.querySelector<HTMLElement>('a[aria-current="page"]');
+      if (!active) return setGlider(null);
+      const top = active.getBoundingClientRect().top - aside.getBoundingClientRect().top;
+      const height = active.offsetHeight;
+      setGlider((prev) => (prev && prev.top === top && prev.height === height ? prev : { top, height }));
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(aside);
+    // Items grow with Settings › Interface size while the sidebar keeps its height.
+    aside.querySelectorAll('nav').forEach((nav) => observer.observe(nav));
+    return () => observer.disconnect();
+  }, [pathname, expanded]);
 
   return (
     <aside
+      ref={asideRef}
       className={clsx(
         'ui-sidebar relative z-30 flex h-full flex-shrink-0 flex-col justify-between border-e border-border bg-bg-deepest select-none transition-[width] duration-200',
         expanded ? 'w-56' : 'w-16'
       )}
     >
+      {glider && (
+        <span
+          aria-hidden="true"
+          style={{ top: glider.top, height: glider.height }}
+          className="ui-nav-glider pointer-events-none absolute inset-x-2 rounded-md bg-accent-tint"
+        >
+          <span className="ui-nav-indicator absolute start-0 top-2 bottom-2 w-0.5 rounded-full bg-accent-500" />
+        </span>
+      )}
       <nav aria-label={t('sidebar.mainNav')} className="flex flex-col gap-1 p-2 pt-3">
         {NAV_ITEMS.map(({ labelKey, ...item }) => (
           <SidebarLink key={item.to} {...item} label={t(labelKey)} expanded={expanded} />
@@ -123,6 +149,7 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       <div className="flex flex-col gap-1 p-2">
+        {fun && <FunLevelBadge expanded={expanded} />}
         <button
           type="button"
           onClick={() => setCommandPaletteOpen(true)}

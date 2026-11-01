@@ -1,0 +1,130 @@
+/**
+ * Anime page looks (Detail.tsx, EpisodeItem.tsx, DetailStickyBar.tsx, CompletedStamp.tsx): the
+ * header wash in the cover colour, the cover that moves over from the poster card, the sticky
+ * bar's drop, the episode number on art and the stamp with its confetti. Colours come from theme
+ * tokens and the title's own cover colour (--ambient-rgb); the few fixed shadows sit on cover art.
+ * Every resting state is right without motion: global.css cuts animation under reduced motion and
+ * Settings › Appearance › Fewer effects, and the confetti is not drawn at all then (JS check).
+ */
+
+/* Header: the cover colour, strongest at the top, fading into the page. */
+.ui-detail-wash {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(var(--ambient-rgb, 0 0 0) / calc(var(--ambient-strength) * 1.4)),
+    transparent 85%
+  );
+}
+
+:root[data-theme="manga"] .ui-detail-wash {
+  display: none;
+}
+
+/* The tinted status chip sits on the banner art: lay the tint over a solid chip colour so a light
+   picture behind it cannot wash the text out. */
+.ui-detail-tags .ui-chip.bg-accent-tint {
+  background-color: rgb(var(--bg-elevated));
+  background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
+}
+
+.ui-detail-banner {
+  opacity: 0.55;
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent);
+}
+
+:root:is([data-theme="light"], [data-theme="manga"], [data-theme="comic"]) .ui-detail-banner {
+  opacity: 0.22;
+}
+
+:root[data-theme="manga"] .ui-detail-banner {
+  filter: grayscale(1);
+}
+
+:root:is([data-theme="manga"], [data-theme="comic"]) .ui-detail-cover {
+  border: 3px solid rgb(var(--ink));
+  box-shadow: 8px 8px 0 rgb(var(--ink));
+}
+
+/* Card cover → page cover (react-router's view transition; only browsers with
+   document.startViewTransition). The poster card being opened carries the name while the move
+   runs; the page's own cover gives it up then, so the name is never on two elements at once. */
+.ui-detail-cover,
+.ui-vt-cover {
+  view-transition-name: anime-cover;
+}
+
+main:has(.ui-vt-cover) .ui-detail-cover {
+  view-transition-name: none;
+}
+
+::view-transition-group(anime-cover) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+:root[data-effects="fewer"]::view-transition-group(*),
+:root[data-effects="fewer"]::view-transition-old(*),
+:root[data-effects="fewer"]::view-transition-new(*) {
+  animation: none !important;
+}
+
+/* The sticky bar drops in from above with a little overshoot. */
+@keyframes ui-bar-drop {
+  from { opacity: 0; transform: translateY(-110%); }
+  to { opacity: 1; transform: none; }
+}
+
+.ui-bar-drop {
+  animation: ui-bar-drop 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Episode cards: the big number sits on the still. */
+.ui-ep-num {
+  text-shadow: 0 2px 8px rgb(0 0 0 / 0.65);
+}
+
+/* The Completed stamp in the header corner slams down; the themes keep their own art and tilt. */
+.ui-detail-stamp {
+  --stamp-rot: -9deg;
+}
+
+@keyframes ui-slam {
+  0% { opacity: 0; transform: scale(2.4) rotate(calc(var(--stamp-rot) - 13deg)); }
+  70% { opacity: 1; transform: scale(0.94) rotate(calc(var(--stamp-rot) + 1deg)); }
+  100% { opacity: 1; transform: scale(1) rotate(var(--stamp-rot)); }
+}
+
+.ui-detail-stamp .ui-stamp {
+  animation: ui-slam 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* The confetti, once, as the stamp lands (only drawn with Playful touches and full motion). */
+@keyframes ui-confetti {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0); }
+  1% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--r)); }
+}
+
+.ui-confetti i {
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 50%;
+  width: 0.5rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  animation: ui-confetti 900ms cubic-bezier(0.22, 1, 0.36, 1) 300ms both;
+}

@@ -25,26 +25,35 @@ const weekdays = () =>
     };
   });
 
-/** The next episode from the user's list (watchlist and bells) still to air this week. */
-export const UpNextCard: React.FC<{ entry: AiringEntry | null; now: number }> = ({ entry, now }) => {
+/** The next episodes from the user's list (watchlist and bells) still to air this week, each with a countdown chip. */
+export const UpNextCard: React.FC<{ entries: AiringEntry[]; now: number }> = ({ entries, now }) => {
   const format = useTimeFormat();
   return (
   <section aria-labelledby="schedule-up-next" className="ui-card rounded-xl border border-border bg-bg-card p-3">
     <h2 id="schedule-up-next" className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
       {t('scheduleSide.upNext')}
     </h2>
-    {entry ? (
-      <Link to={`/detail/${entry.media_id}`} draggable={false} className="flex items-center gap-3 rounded-md transition-colors hover:bg-ink/5">
-        <ShimmerImage src={entry.cover_image} alt="" className="aspect-[2/3] w-14 flex-shrink-0 rounded-md" />
-        <span className="flex min-w-0 flex-col">
-          <span className="text-[13px] font-medium leading-[18px] text-text-primary line-clamp-2">{entry.media_title}</span>
-          <span className="mt-0.5 text-xs text-text-muted">{entry.episode > 0 ? t('common.episodeNumber', { number: entry.episode }) : t('scheduleSide.newEpisode')}</span>
-          <span className="mt-0.5 text-xs font-medium tabular-nums text-accent-300">
-            {formatTime(entry.airing_at * 1000, format, { weekday: 'short', hour: '2-digit', minute: '2-digit' }, locale())}{' '}
-            · {formatCountdown(entry.airing_at, now)}
-          </span>
-        </span>
-      </Link>
+    {entries.length > 0 ? (
+      <ul className="flex flex-col gap-1">
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <Link to={`/detail/${entry.media_id}`} draggable={false} className="flex items-center gap-3 rounded-md p-1 transition-colors hover:bg-ink/5">
+              <ShimmerImage src={entry.cover_image} alt="" className="aspect-[2/3] w-10 flex-shrink-0 rounded-md" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[13px] font-medium leading-[18px] text-text-primary">{entry.media_title}</span>
+                <span className="mt-0.5 truncate text-xs text-text-muted">
+                  {entry.episode > 0 ? t('common.episodeNumber', { number: entry.episode }) : t('scheduleSide.newEpisode')}
+                  {' · '}
+                  {formatTime(entry.airing_at * 1000, format, { weekday: 'short', hour: '2-digit', minute: '2-digit' }, locale())}
+                </span>
+              </span>
+              <span className="flex-shrink-0 whitespace-nowrap rounded-md bg-accent-tint px-1.5 py-0.5 text-xs font-semibold tabular-nums text-accent-300">
+                {formatCountdown(entry.airing_at, now)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     ) : (
       <p className="text-xs text-text-muted">
         {t('scheduleSide.nothingThisWeek')}

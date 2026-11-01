@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal } from './ui/Modal';
 import { t, type TKey } from '../i18n';
+import { useFunMode } from '../hooks/useSettings';
 
 interface HotkeyCheatSheetProps {
   isOpen: boolean;
@@ -23,6 +24,14 @@ const HOLD_SPACE = 'Hold Space';
 // Keep in step with `usePlayerShortcuts` (player) and the global handler in `router.tsx` (app).
 const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
+    title: 'hotkeyCheatSheet.app',
+    shortcuts: [
+      { keys: [['Ctrl', 'K']], description: 'hotkeyCheatSheet.search' },
+      { keys: [['?']], description: 'hotkeyCheatSheet.toggleList' },
+      { keys: [['Esc']], description: 'hotkeyCheatSheet.closeDialog' },
+    ],
+  },
+  {
     title: 'hotkeyCheatSheet.player',
     shortcuts: [
       { keys: [['Space'], ['K']], description: 'hotkeyCheatSheet.playPause' },
@@ -43,28 +52,22 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: [['Shift', 'P']], description: 'hotkeyCheatSheet.previousEpisode' },
     ],
   },
-  {
-    title: 'hotkeyCheatSheet.app',
-    shortcuts: [
-      { keys: [['Ctrl', 'K']], description: 'hotkeyCheatSheet.search' },
-      { keys: [['?']], description: 'hotkeyCheatSheet.toggleList' },
-      { keys: [['Esc']], description: 'hotkeyCheatSheet.closeDialog' },
-    ],
-  },
 ];
 
 const Key: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <kbd className="inline-flex h-6 min-w-6 items-center justify-center rounded-sm border border-border-strong bg-bg-input px-1.5 font-sans text-[11px] font-medium text-text-primary">
+  <kbd className="inline-flex h-6 min-w-6 items-center justify-center rounded-sm border border-b-2 border-border-strong bg-bg-input px-1.5 font-sans text-[11px] font-medium text-text-primary">
     {children}
   </kbd>
 );
 
 export const HotkeyCheatSheet: React.FC<HotkeyCheatSheetProps> = ({ isOpen, onClose }) => {
+  const fun = useFunMode();
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('hotkeyCheatSheet.title')}>
-      <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto pe-1">
+    <Modal isOpen={isOpen} onClose={onClose} title={t(fun ? 'fun.shortcutsTitle' : 'hotkeyCheatSheet.title')} size="2xl">
+      {/* Two cards side by side: the short App list, then the Player list. */}
+      <div className="grid max-h-[65vh] grid-cols-1 items-start gap-3 overflow-y-auto pe-1 min-[820px]:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         {SHORTCUT_GROUPS.map((group) => (
-          <section key={group.title} className="flex flex-col gap-1">
+          <section key={group.title} className="flex flex-col gap-1 rounded-xl ui-card bg-bg-card px-4 py-3">
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
               {t(group.title)}
             </h3>

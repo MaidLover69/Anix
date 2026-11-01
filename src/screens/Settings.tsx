@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { Puzzle, RefreshCw, Trash2 } from 'lucide-react';
+import { Puzzle, RefreshCw, Settings2, Trash2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CustomSelect } from '../components/CustomSelect';
 import { ThemePicker } from '../components/ThemePicker';
@@ -13,7 +13,7 @@ import { ReleaseCheckSettings } from '../components/settings/ReleaseCheckSetting
 import { LanguagePreferences } from '../components/settings/LanguagePreferences';
 import { AppLanguageRow } from '../components/setup/AppLanguage';
 import { audioOnlyLabel, pluginLanguageSummary } from '../lib/languages';
-import { HealthBadge, PluginDirectory, UpdateBadge } from '../components/settings/PluginTools';
+import { HealthBadge, HealthDot, PluginDirectory, UpdateBadge } from '../components/settings/PluginTools';
 import { PluginConfigDialog } from '../components/settings/PluginConfigDialog';
 import { ServerOrder } from '../components/settings/ServerOrder';
 import { usePluginHealth, usePluginUpdates, PLUGIN_UPDATES_KEY, type HealthState } from '../hooks/usePluginHealth';
@@ -203,6 +203,7 @@ const PluginRow: React.FC<{
         <PluginIcon src={plugin.icon} />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-baseline gap-x-2">
+            <HealthDot state={health} />
             <span id={nameId} className="text-[13px] font-medium text-text-primary select-text">
               {name}
             </span>
@@ -224,17 +225,6 @@ const PluginRow: React.FC<{
         {onTest && plugin.enabled && health && health !== 'testing' && health.status === 'verification' && (
           <PluginVerifyButton provider={plugin.id} name={name} onVerified={() => onTest(plugin)} />
         )}
-        {onConfigure && plugin.configurable && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-0.5"
-            aria-label={t('settings.settingsOf', { name })}
-            onClick={() => onConfigure(plugin)}
-          >
-            {t('common.settings')}
-          </Button>
-        )}
         {onTest && plugin.enabled && (
           <Button
             variant="ghost"
@@ -245,6 +235,19 @@ const PluginRow: React.FC<{
             onClick={() => onTest(plugin)}
           >
             {t('settings.test')}
+          </Button>
+        )}
+        {onConfigure && plugin.configurable && (
+          <Button
+            icon
+            variant="ghost"
+            size="sm"
+            className="mt-0.5"
+            aria-label={t('settings.settingsOf', { name })}
+            title={t('settings.settingsOf', { name })}
+            onClick={() => onConfigure(plugin)}
+          >
+            <Settings2 aria-hidden="true" className="h-4 w-4" />
           </Button>
         )}
         <Switch

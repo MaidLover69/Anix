@@ -47,6 +47,12 @@ export function useThemeSync(): void {
       fewerEffects,
     });
   }, [loaded, contrast, uiSize, artUrl, artStyle, fewerEffects]);
+
+  // Fun mode's looks hang on `data-fun` on <html>.
+  const funMode = settings?.fun_mode === true;
+  useEffect(() => {
+    document.documentElement.toggleAttribute('data-fun', funMode);
+  }, [funMode]);
 }
 
 /** The selected theme and a setter that applies it at once and saves it. */

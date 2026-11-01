@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Tests for the anime ids and episode numbers routes and links accept, the anime page's
-// scores and the "not found" answer.
+// scores and the "not found" answer, and fun mode's level, rank and power level.
 //   node --experimental-strip-types scripts/routes-test.mjs
 import assert from 'node:assert/strict';
 import { episodeExists, openAnimeId, parseAnimeId, parseDeepLink } from '../src/lib/routes.ts';
 import { detailScores } from '../src/lib/scores.ts';
 import { errorCode, isNotFoundError } from '../src/lib/errorCodes.ts';
+import { expForLevel, playerLevel, powerLevel, rankFor } from '../src/lib/funLevel.ts';
 
 // Ids: AniList ids and negative stand-ins; nothing else.
 assert.equal(parseAnimeId('154587'), 154587);
@@ -75,5 +76,30 @@ for (const m of ['Network error: AniList is paused after failing a moment ago', 
   assert.equal(isNotFoundError(m), false, String(m));
 }
 assert.equal(errorCode('Parse error: MyAnimeList: anime 999998 not found'), 'CAT-PARSE');
+
+// Fun mode: level n takes 5·n² episodes in all; level 1 from nothing.
+assert.equal(expForLevel(1), 0);
+assert.equal(expForLevel(2), 20);
+assert.equal(expForLevel(10), 500);
+assert.deepEqual(playerLevel(0), { level: 1, rank: 'rookie', intoLevel: 0, levelSize: 20 });
+assert.equal(playerLevel(19).level, 1);
+assert.equal(playerLevel(20).level, 2, 'exactly at the boundary');
+assert.deepEqual(playerLevel(50), { level: 3, rank: 'rookie', intoLevel: 5, levelSize: 35 });
+assert.equal(playerLevel(125).level, 5);
+for (const bad of [-3, NaN, Infinity]) assert.equal(playerLevel(bad).level, 1, String(bad));
+for (let exp = 0; exp < 20000; exp += 7) {
+  const { level, intoLevel, levelSize } = playerLevel(exp);
+  assert.ok(intoLevel >= 0 && intoLevel < levelSize, `exp ${exp}`);
+  assert.equal(expForLevel(level) + intoLevel, exp);
+}
+assert.deepEqual([1, 4, 5, 9, 10, 19, 20, 34, 35, 99].map(rankFor), [
+  'rookie', 'rookie', 'otaku', 'otaku', 'senpai', 'senpai', 'sensei', 'sensei', 'legend', 'legend',
+]);
+// Power level: the 0–100 score first, then MyAnimeList's 0–10; 90 and up is "over 9000".
+assert.deepEqual(powerLevel(85, null), { value: 8500, percent: 85, over9000: false });
+assert.deepEqual(powerLevel(90, 7), { value: 9000, percent: 90, over9000: true });
+assert.deepEqual(powerLevel(null, 9.12), { value: 9120, percent: 91.2, over9000: true });
+assert.equal(powerLevel(0, 0), null);
+assert.equal(powerLevel(null, undefined), null);
 
 console.log('routes tests passed');

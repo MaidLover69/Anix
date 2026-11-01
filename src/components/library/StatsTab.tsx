@@ -1,12 +1,14 @@
 import React, { useId, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BarChart3, Compass } from 'lucide-react';
+import { BarChart3, Compass, Flame } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import clsx from 'clsx';
 import { Button, EmptyState, ErrorState, Spinner } from '../ui';
 import { useWatchedHistory } from '../../hooks/useLibrary';
 import { useAccountStatus } from '../../hooks/useAccounts';
-import { usePlayful } from '../../hooks/useSettings';
+import { useFunMode, usePlayful } from '../../hooks/useSettings';
+import { FunLevelCard } from '../FunBits';
 import { useUIStore } from '../../stores/uiStore';
 import { ShimmerImage } from '../ShimmerImage';
 import { watchStreak } from './format';
@@ -120,7 +122,8 @@ const ColumnChart: React.FC<{ data: Bucket[]; label: string; unit: TKey; highlig
               </rect>
               {h > 0 && (
                 <path
-                  className={highlight === undefined || highlight === i ? 'ui-chart-bar' : 'ui-chart-bar-muted'}
+                  className={clsx('ui-grow-y', highlight === undefined || highlight === i ? 'ui-chart-bar' : 'ui-chart-bar-muted')}
+                  style={{ '--i': i } as React.CSSProperties}
                   d={`M${x},${plot} v${-(h - 4)} q0,-4 4,-4 h${barWidth - 8} q4,0 4,4 v${h - 4} z`}
                   pointerEvents="none"
                 />
@@ -178,7 +181,7 @@ const RankedBars: React.FC<{ data: Bucket[]; label: string; unit: TKey }> = ({ d
           </span>
           <span aria-hidden="true" className="h-1.5 w-full rounded-full bg-ink/[0.08]">
             <span
-              className="block h-full rounded-full bg-accent-500"
+              className="ui-grow-x block h-full rounded-full bg-accent-500"
               style={{ width: `${Math.max(2, (d.value / max) * 100)}%` }}
             />
           </span>
@@ -206,6 +209,7 @@ export const StatsTab: React.FC = () => {
   const historyQuery = useWatchedHistory();
   const statsQuery = useAniListStats(connected);
   const playful = usePlayful();
+  const fun = useFunMode();
 
   const rows = historyQuery.data ?? [];
   // Every day an episode was watched; a rewatch adds a day instead of moving the old one.
@@ -311,7 +315,30 @@ export const StatsTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className={`grid grid-cols-2 gap-3 ${connected && statsQuery.data ? 'lg:grid-cols-5' : 'lg:grid-cols-3'}`}>
+      <div className={`grid grid-cols-2 gap-3 ${connected && statsQuery.data ? 'lg:grid-cols-6' : 'lg:grid-cols-4'}`}>
+        {/* The streak is the hero tile; its flame flickers softly and stands still with reduced motion. */}
+        <div className="ui-streak relative col-span-2 flex min-w-0 flex-col overflow-hidden rounded-xl ui-card bg-bg-card p-4 pe-24">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{t('statsTab.streak')}</span>
+          <span className={clsx('mt-1 text-3xl font-bold text-text-primary', fun && 'fun-combo')}>
+            {streak.current > 0
+              ? t(fun ? 'fun.combo' : 'statsTab.streakDays', { count: streak.current })
+              : t('statsTab.longestValue', { count: streak.longest })}
+          </span>
+          <span className="mt-1 text-xs text-text-secondary">
+            {streak.current > 0
+              ? `${t(fun ? 'fun.comboBest' : 'statsTab.longestDetail', { count: streak.longest })}${playful && streak.current >= 7 ? ' (^o^)/' : ''}`
+              : t('statsTab.streakHint')}
+          </span>
+          <Flame
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className={clsx(
+              'absolute end-5 top-4 h-16 w-16 text-state-warning',
+              streak.current > 0 ? 'opacity-90' : 'opacity-40',
+              playful && streak.current > 0 && 'ui-flame-flicker'
+            )}
+          />
+        </div>
         <Stat
           label={t('statsTab.episodesHere')}
           value={formatNumber(rows.length)}
@@ -324,19 +351,6 @@ export const StatsTab: React.FC = () => {
             local.estimatedMinutes > 0
               ? t('statsTab.estimated', { time: formatHours(local.estimatedMinutes) })
               : t('statsTab.fromPlayback')
-          }
-        />
-        <Stat
-          label={t('statsTab.streak')}
-          value={
-            streak.current > 0
-              ? t('statsTab.streakDays', { count: streak.current })
-              : t('statsTab.longestValue', { count: streak.longest })
-          }
-          detail={
-            streak.current > 0
-              ? `${t('statsTab.longestDetail', { count: streak.longest })}${playful && streak.current >= 7 ? ' (^o^)/' : ''}`
-              : t('statsTab.streakHint')
           }
         />
         {connected && statsQuery.data && (
@@ -358,6 +372,8 @@ export const StatsTab: React.FC = () => {
           </>
         )}
       </div>
+
+      {fun && <FunLevelCard />}
 
       <Card
         title={t('statsTab.inReview', { year })}

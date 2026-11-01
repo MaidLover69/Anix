@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Play, DownloadCloud, Video, SearchX, HardDrive, Image as ImageIcon } from 'lucide-react';
 import { ShimmerImage } from '../components/ShimmerImage';
 import { EpisodeBrowser } from '../components/EpisodeBrowser';
-import { AmbientGlow } from '../components/AmbientGlow';
+import { AmbientGlow, hexToChannels } from '../components/AmbientGlow';
 import { DetailStickyBar, ListStatusSelect } from '../components/DetailStickyBar';
 import { TrailerModal, isPlayableTrailer } from '../components/TrailerModal';
 import { CharacterRail } from '../components/CharacterRail';
@@ -25,7 +25,8 @@ import {
   useWatchedEpisodes,
   useContinueWatching,
 } from '../hooks/useLibrary';
-import { usePlayful, useSettings, useSaveSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { useFunMode, usePlayful, useSettings, useSaveSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { PowerLevelMeter, Sfx } from '../components/FunBits';
 import { useStreamingProviders } from '../hooks/usePlugins';
 import { openWith, useRememberedSource } from '../hooks/useRememberedSource';
 import {
@@ -120,8 +121,8 @@ const FactRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label
 );
 
 /**
- * The right-hand column of a wide window (1200 px and up): studio, dates, genres, tags and the
- * trailer. Narrower windows keep the single column, with the genres in the header.
+ * The facts card: studio, dates, genres, tags and the trailer. A sticky right-hand column on a
+ * wide window (1200 px and up); narrower windows show it under the main column.
  */
 const DetailFacts: React.FC<{ details: AnimeDetails; seasonLabel: string; onTrailer: () => void }> = ({
   details,
@@ -150,7 +151,8 @@ const DetailFacts: React.FC<{ details: AnimeDetails; seasonLabel: string; onTrai
   const thumbnail = playable ? trailer?.thumbnail || `https://i.ytimg.com/vi/${trailer?.id}/hqdefault.jpg` : null;
 
   return (
-    <aside aria-label={t('detail.aboutThisAnime')} className="sticky top-0 hidden flex-col gap-4 rounded-xl ui-card bg-bg-card p-4 min-[1200px]:flex">
+    // top-20 clears the sticky bar (DetailStickyBar).
+    <aside aria-label={t('detail.facts')} className="flex flex-col gap-4 rounded-xl ui-card bg-bg-card p-4 min-[1200px]:sticky min-[1200px]:top-20">
       {playable ? (
         <button
           type="button"
@@ -241,6 +243,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const { data: settings } = useSettings();
   const saveSettings = useSaveSettings();
   const playful = usePlayful();
+  const fun = useFunMode();
   const providers = useStreamingProviders();
   // The server last picked for this anime is what its episodes open with.
   const { remembered } = useRememberedSource(anilistId ?? 0);
@@ -454,20 +457,24 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
       : seasonName ?? (details.seasonYear ? String(details.seasonYear) : '');
 
   const scores = detailScores(details.averageScore, details.servedBy, malDetails?.score);
-  const metadata = [
-    mediaFormatLabel(details.format) || null,
+  // Above the title: what the anime is; below it: its numbers.
+  const headerTags = [
     details.status ? enumLabel(STATUS_KEYS, details.status) : null,
+    mediaFormatLabel(details.format) || null,
     seasonLabel || null,
-    details.episodes ? t('common.episodeCount', { count: details.episodes }) : null,
-    details.duration ? t('detail.durationMinutes', { minutes: details.duration }) : null,
+  ].filter((tag): tag is string => !!tag);
+  const metadata = [
     // Scores are shown only where the source really has one, credited to it, each source once.
     scores.percent ? t('detail.sourceScore', { name: scores.percent.source, score: scores.percent.score }) : null,
     scores.mal !== null
       ? t('detail.malScore', { score: formatNumber(scores.mal, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })
       : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+    details.episodes ? t('common.episodeCount', { count: details.episodes }) : null,
+    details.duration ? t('detail.durationMinutes', { minutes: details.duration }) : null,
+  ].filter((item): item is string => !!item);
+  const watchedCount = details.episodes
+    ? Array.from(watchedSet).filter((n) => Number.isInteger(n) && n >= 1 && n <= details.episodes!).length
+    : null;
 
   // Other spellings of the title, without repeats ("DEATH NOTE · DEATH NOTE") or a copy of
   // the heading that differs only in letter case.
@@ -490,12 +497,13 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const requestedCategory = chosenCategory ?? defaultCategory;
   const barCategory: 'sub' | 'dub' = requestedCategory === 'dub' && dubAvailable ? 'dub' : 'sub';
   const coverColor = details.coverImage?.color ?? null;
+  const coverChannels = hexToChannels(coverColor);
   // "Use as background" takes the wide banner, else the cover.
   const backgroundUrl = details.bannerImage || coverImage;
   const isBackground = !!backgroundUrl && settings?.background_art?.url === backgroundUrl;
 
   return (
-    // isolate: the ambient glow sits behind the page's content but above the app background.
+    // isolate: the header's wash and glow sit behind the page's content but above the app background.
     <div className="relative isolate flex flex-col gap-8 pb-16 animate-fade-in">
       <DetailStickyBar
         anchorRef={heroRef}
@@ -516,156 +524,179 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         onCategoryChange={setChosenCategory}
       />
 
-      <div className="relative flex flex-col gap-3">
-        <AmbientGlow color={coverColor} className="-inset-x-4 top-0 -bottom-24 -z-10" />
+      {/* Full width: the negative margins undo <main>'s padding (router.tsx), the padding puts it back. */}
+      <header
+        ref={heroRef}
+        className="relative isolate -ms-6 -me-[18px] -mt-6 overflow-hidden pb-2 pe-[18px] ps-6 pt-4 xl:-ms-8 xl:-me-[26px] xl:-mt-8 xl:pe-[26px] xl:ps-8"
+      >
+        {fun && <Sfx text={t('fun.sfxMenacing')} className="fun-sfx-hero" />}
+        {coverChannels && (
+          <div
+            aria-hidden="true"
+            className="ui-detail-wash absolute inset-0 -z-10"
+            style={{ '--ambient-rgb': coverChannels } as React.CSSProperties}
+          />
+        )}
+        {bannerImage && (
+          <div aria-hidden="true" className="absolute inset-x-0 top-0 -z-10 h-72">
+            <img
+              src={bannerImage}
+              alt=""
+              draggable={false}
+              onError={() => setBannerFailed(true)}
+              className="ui-detail-banner h-full w-full object-cover object-center"
+            />
+          </div>
+        )}
+        {/* Behind the poster: the cover colour, softly. */}
+        <AmbientGlow color={coverColor} intensity={0.8} className="-z-10 start-[5%] top-[25%] h-[70%] w-[45%]" />
+
         <BackButton />
 
-        <header ref={heroRef} className="relative overflow-hidden rounded-2xl ui-card bg-bg-card">
-          {bannerImage && (
-            <div aria-hidden="true" className="absolute inset-x-0 top-0 h-56">
-              <img
-                src={bannerImage}
-                alt=""
-                draggable={false}
-                onError={() => setBannerFailed(true)}
-                className="h-full w-full object-cover object-center opacity-70"
-              />
-              {/* Dense from the middle down, where the title and metadata sit on top of it. */}
-              <div className="absolute inset-0 bg-gradient-to-b from-bg-card/10 via-bg-card/75 to-bg-card" />
-            </div>
-          )}
+        <div className="mt-6 grid grid-cols-[clamp(9rem,15vw,13rem)_minmax(0,1fr)] items-end gap-[clamp(1rem,2.5vw,2rem)]">
+          <ShimmerImage
+            src={coverImage}
+            alt={t('detail.coverAlt', { title })}
+            className="ui-detail-cover aspect-[2/3] w-full rounded-xl bg-bg-elevated shadow-pop"
+          />
 
-          {/* Behind the poster: the cover colour, softly, over the banner's fade. */}
-          <AmbientGlow color={coverColor} intensity={0.8} className="-start-40 -top-24 h-[620px] w-[640px]" />
-
-          <div className={`relative flex gap-6 p-6 ${bannerImage ? 'pt-28' : ''}`}>
-            <ShimmerImage
-              src={coverImage}
-              alt={t('detail.coverAlt', { title })}
-              className="aspect-[2/3] w-48 flex-shrink-0 self-start rounded-xl bg-bg-elevated shadow-pop"
-            />
-
-            <div className="flex min-w-0 flex-1 flex-col">
-              <h1 className="text-[28px] font-bold leading-[34px] tracking-[-0.02em] text-text-primary select-text">
-                {title}
-                {finished && <CompletedStamp />}
+          <div className="flex min-w-0 flex-col gap-3">
+            {headerTags.length > 0 && (
+              <div className="ui-detail-tags flex flex-wrap items-center gap-1.5">
+                {headerTags.map((tag, i) => (
+                  <Chip key={tag} tone={i === 0 && details.status ? 'accent' : 'neutral'}>
+                    {tag}
+                  </Chip>
+                ))}
+              </div>
+            )}
+            <div>
+              <h1 className="text-[clamp(1.6rem,3vw,2.6rem)] font-black leading-tight tracking-[-0.02em] text-text-primary select-text">
+                <bdi>{title}</bdi>
               </h1>
+              {/* Read right after the title; drawn in the header's corner (the header is its positioned box). */}
+              {finished && (
+                <div className="ui-detail-stamp pointer-events-none absolute end-[clamp(1.5rem,4vw,3rem)] top-6 z-10">
+                  <CompletedStamp />
+                </div>
+              )}
               {alternateTitles && (
-                <p title={alternateTitles} className="mt-1 text-xs leading-[18px] text-text-muted line-clamp-2 select-text">
+                <p title={alternateTitles} className="mt-1 text-sm font-semibold text-text-secondary line-clamp-2 select-text">
                   {alternateTitles}
                 </p>
               )}
-              {metadata && (
-                <p className="mt-2 text-xs tabular-nums text-text-secondary select-text">{metadata}</p>
-              )}
-
-              {details.genres && details.genres.length > 0 && (
-                // On wide windows the genres are in the right-hand column.
-                <div className="mt-3 flex flex-wrap items-center gap-2 min-[1200px]:hidden">
-                  {details.genres.map((genre) => (
-                    <Chip key={genre} tone="accent">
-                      {genre}
-                    </Chip>
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-4 max-w-3xl">
-                <p
-                  id="detail-synopsis"
-                  className={`text-sm leading-[22px] text-text-secondary select-text ${
-                    descriptionExpanded ? '' : 'line-clamp-4'
-                  }`}
-                >
-                  {cleanDescription || t('detail.noSynopsis')}
-                </p>
-                {isLongDescription && (
-                  <button
-                    type="button"
-                    aria-expanded={descriptionExpanded}
-                    aria-controls="detail-synopsis"
-                    onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                    className="mt-1 cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
-                  >
-                    {descriptionExpanded ? t('detail.showLess') : t('detail.showMore')}
-                  </button>
-                )}
+            </div>
+            {metadata.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 tabular-nums select-text">
+                {metadata.map((item) => (
+                  <Chip key={item}>{item}</Chip>
+                ))}
               </div>
+            )}
+            {fun && <PowerLevelMeter percentScore={scores.percent?.score ?? null} malScore={scores.mal} />}
 
-              <div className="mt-6 flex flex-wrap items-center gap-2">
-                <Button variant="primary" onClick={handlePlay} disabled={!hasReleasedEpisodes}>
-                  <Play aria-hidden="true" className="h-4 w-4 fill-current" />
-                  {playLabel}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <Button variant="primary" onClick={handlePlay} disabled={!hasReleasedEpisodes}>
+                <Play aria-hidden="true" className="h-4 w-4 fill-current" />
+                {playLabel}
+              </Button>
+
+              <ListStatusSelect target={listTarget} />
+
+              {/* Kept together, so a narrow window moves the whole group to a second row
+                  instead of leaving one button on its own. */}
+              <div className="flex flex-wrap items-center gap-2">
+                {(details.status === 'RELEASING' || details.status === 'NOT_YET_RELEASED') && (
+                  <NotifyBell mediaId={anilistId} title={title} cover={coverImage} variant="button" />
+                )}
+
+                {isPlayableTrailer(details.trailer) && (
+                  <Button variant="neutral" onClick={() => setIsTrailerOpen(true)}>
+                    <Video aria-hidden="true" className="h-4 w-4" />
+                    {t('detail.trailer')}
+                  </Button>
+                )}
+
+                <Button
+                  variant="neutral"
+                  onClick={() => setLocalOpen(true)}
+                  title={t('detail.localFilesHint')}
+                >
+                  <HardDrive aria-hidden="true" className="h-4 w-4" />
+                  {local.data?.linked || local.episodes.length > 0
+                    ? t('detail.yourFiles', { count: local.episodes.length })
+                    : t('detail.loadOwnEpisodes')}
                 </Button>
 
-                <ListStatusSelect target={listTarget} />
+                <Button
+                  variant="neutral"
+                  onClick={() => openBulkDownloadDialog(toMedia(details))}
+                  disabled={!hasReleasedEpisodes}
+                >
+                  <DownloadCloud aria-hidden="true" className="h-4 w-4" />
+                  {t('detail.bulkDownload')}
+                </Button>
 
-                {/* Kept together, so a narrow window moves the whole group to a second row
-                    instead of leaving one button on its own. */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {(details.status === 'RELEASING' || details.status === 'NOT_YET_RELEASED') && (
-                    <NotifyBell mediaId={anilistId} title={title} cover={coverImage} variant="button" />
-                  )}
-
-                  {isPlayableTrailer(details.trailer) && (
-                    <Button variant="neutral" onClick={() => setIsTrailerOpen(true)}>
-                      <Video aria-hidden="true" className="h-4 w-4" />
-                      {t('detail.trailer')}
-                    </Button>
-                  )}
-
+                {backgroundUrl && (
                   <Button
+                    icon
                     variant="neutral"
-                    onClick={() => setLocalOpen(true)}
-                    title={t('detail.localFilesHint')}
+                    aria-pressed={isBackground}
+                    aria-label={isBackground ? t('detail.stopBackgroundLabel') : t('detail.useBackgroundLabel')}
+                    title={isBackground ? t('detail.removeBackground') : t('detail.useAsBackground')}
+                    onClick={() =>
+                      saveSettings.mutate({
+                        background_art: isBackground
+                          ? null
+                          : { url: backgroundUrl, title, style: settings?.background_art?.style ?? 'blur' },
+                      })
+                    }
                   >
-                    <HardDrive aria-hidden="true" className="h-4 w-4" />
-                    {local.data?.linked || local.episodes.length > 0
-                      ? t('detail.yourFiles', { count: local.episodes.length })
-                      : t('detail.loadOwnEpisodes')}
+                    <ImageIcon aria-hidden="true" className="h-4 w-4" />
                   </Button>
-
-                  <Button
-                    variant="neutral"
-                    onClick={() => openBulkDownloadDialog(toMedia(details))}
-                    disabled={!hasReleasedEpisodes}
-                  >
-                    <DownloadCloud aria-hidden="true" className="h-4 w-4" />
-                    {t('detail.bulkDownload')}
-                  </Button>
-
-                  {backgroundUrl && (
-                    <Button
-                      icon
-                      variant="neutral"
-                      aria-pressed={isBackground}
-                      aria-label={isBackground ? t('detail.stopBackgroundLabel') : t('detail.useBackgroundLabel')}
-                      title={isBackground ? t('detail.removeBackground') : t('detail.useAsBackground')}
-                      onClick={() =>
-                        saveSettings.mutate({
-                          background_art: isBackground
-                            ? null
-                            : { url: backgroundUrl, title, style: settings?.background_art?.style ?? 'blur' },
-                        })
-                      }
-                    >
-                      <ImageIcon aria-hidden="true" className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
+                )}
               </div>
-              {details.servedBy && !isPlayableTrailer(details.trailer) && (
-                <p className="mt-2 text-xs text-text-muted min-[1200px]:hidden">{t('detail.noTrailerFrom', { name: details.servedBy })}</p>
-              )}
             </div>
           </div>
-        </header>
-      </div>
+        </div>
+      </header>
 
-      <div className="flex flex-col gap-8 min-[1200px]:grid min-[1200px]:grid-cols-[minmax(0,1fr)_280px] min-[1200px]:items-start">
+      <div className="flex flex-col gap-8 min-[1200px]:grid min-[1200px]:grid-cols-[minmax(0,1fr)_19rem] min-[1200px]:items-start">
         <div className="flex min-w-0 flex-col gap-8">
+          <section className="flex flex-col gap-2">
+            <h2 className="text-xl font-semibold text-text-primary">{t('detail.aboutThisAnime')}</h2>
+            <div className="max-w-[62ch]">
+              <p
+                id="detail-synopsis"
+                className={`text-sm leading-relaxed text-text-secondary select-text ${
+                  descriptionExpanded ? '' : 'line-clamp-4'
+                }`}
+              >
+                {cleanDescription || t('detail.noSynopsis')}
+              </p>
+              {isLongDescription && (
+                <button
+                  type="button"
+                  aria-expanded={descriptionExpanded}
+                  aria-controls="detail-synopsis"
+                  onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                  className="mt-1 cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
+                >
+                  {descriptionExpanded ? t('detail.showLess') : t('detail.showMore')}
+                </button>
+              )}
+            </div>
+          </section>
+
           <section className="flex flex-col gap-3">
-            <h2 className="text-xl font-semibold text-text-primary">{t('common.episodes')}</h2>
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-xl font-semibold text-text-primary">{t('common.episodes')}</h2>
+              {watchedCount !== null && watchedCount > 0 && (
+                <span className="text-xs tabular-nums text-text-muted">
+                  {t('detail.watchedCount', { watched: watchedCount, total: details.episodes! })}
+                </span>
+              )}
+            </div>
             <EpisodeBrowser
               anilistId={anilistId}
               malId={malId}

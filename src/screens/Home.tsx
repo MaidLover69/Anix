@@ -77,7 +77,7 @@ export const Home: React.FC = () => {
       {isLoading ? (
         <div
           aria-hidden="true"
-          className="h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 rounded-2xl shimmer-placeholder"
+          className="ui-hero-panel h-[clamp(260px,40vh,420px)] w-full flex-shrink-0 rounded-2xl shimmer-placeholder"
         />
       ) : (
         heroItems.length > 0 && (

@@ -29,6 +29,7 @@ export const DownloadsTab: React.FC<DownloadsTabProps> = ({ query }) => {
     <EmptyState
       icon={<Download aria-hidden="true" />}
       title={t('downloadsTab.title')}
+      mood="sleepy"
       description={downloads.length > 0 ? summary : t('downloadsTab.description')}
       action={
         <Button variant="primary" onClick={() => navigate('/downloads')}>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Home, Compass, Bookmark, Calendar, Settings as SettingsIcon, X, Palette, Puzzle, UserRound, Globe, History } from 'lucide-react';
+import { ArrowRight, Search, Home, Compass, Bookmark, Calendar, Settings as SettingsIcon, X, Palette, Puzzle, UserRound, Globe, History } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useSearchAnime } from '../hooks/useAniList';
@@ -9,9 +9,11 @@ import { useSearchHistory } from '../hooks/useSearchHistory';
 import { ShimmerImage } from './ShimmerImage';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
+import { EmptyState } from './ui/EmptyState';
 import { errorMessage } from './ui/ErrorState';
 import { mediaFormatLabel } from './library/format';
 import { t, type TKey } from '../i18n';
+import { useFunMode } from '../hooks/useSettings';
 import type { Media } from '../types';
 
 interface CommandPaletteProps {
@@ -41,6 +43,14 @@ const NAV_ITEMS: NavItem[] = [
 
 const MIN_QUERY_LENGTH = 2;
 
+/** The arrow at the end of a row; it shows on the highlighted one. */
+const Go: React.FC<{ selected: boolean }> = ({ selected }) => (
+  <ArrowRight
+    aria-hidden="true"
+    className={clsx('h-4 w-4 flex-shrink-0 text-text-muted transition-opacity rtl:-scale-x-100', selected ? 'opacity-100' : 'opacity-0')}
+  />
+);
+
 const KBD_CLASS = 'rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted';
 
 function titleOf(anime: Media): string {
@@ -50,6 +60,7 @@ function titleOf(anime: Media): string {
 // Mounted only while the palette is open, so its state starts fresh every time.
 const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const navigate = useNavigate();
+  const fun = useFunMode();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -133,7 +144,12 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     );
 
   return (
-    <div onKeyDown={handleKeyDown}>
+    <div onKeyDown={handleKeyDown} className="ui-palette">
+      {fun && (
+        <p aria-hidden="true" className="fun-menu-title border-b border-border px-4 py-1.5 text-[11px]">
+          {t('fun.commandMenu')}
+        </p>
+      )}
       <div className="flex h-12 items-center gap-3 border-b border-border px-4">
         <Search aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
         <input
@@ -189,6 +205,7 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               >
                 <History aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{recent}</span>
+                <Go selected={activeIndex === idx} />
                 {/* Mouse only: from the keyboard, Delete removes the highlighted search. */}
                 <button
                   type="button"
@@ -243,6 +260,7 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     <span className="truncate text-[13px] font-medium text-text-primary">{title}</span>
                     {caption && <span className="truncate text-xs text-text-muted">{caption}</span>}
                   </div>
+                  <Go selected={activeIndex === idx} />
                 </div>
               );
             })}
@@ -268,11 +286,14 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   onMouseMove={() => setSelectedIndex(idx)}
                   className={optionClass(activeIndex === idx)}
                 >
-                  <Icon aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
+                  <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-ink/[0.06] text-text-muted">
+                    <Icon aria-hidden="true" className="h-4 w-4" />
+                  </span>
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate text-[13px] font-medium text-text-primary">{item.title}</span>
                     <span className="truncate text-xs text-text-muted">{item.subtitle}</span>
                   </div>
+                  <Go selected={activeIndex === idx} />
                 </div>
               );
             })}
@@ -286,9 +307,12 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
 
         {!isError && !isSearching && totalItems === 0 && (
-          <p className="px-3 py-8 text-center text-[13px] text-text-muted">
-            {t('commandPalette.noResults', { query: trimmed })}
-          </p>
+          <EmptyState
+            className="m-1 py-8"
+            mood="confused"
+            icon={<Search aria-hidden="true" />}
+            title={t('commandPalette.noResults', { query: trimmed })}
+          />
         )}
       </div>
 

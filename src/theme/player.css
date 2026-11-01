@@ -1,0 +1,42 @@
+/**
+ * Watch screen motion: the stuck-playback pill drops in from the top, the mini-player shrinks in
+ * with a small spring, and a provider that is still being asked blinks its dot. None of it plays
+ * over the moving picture: the pill only shows while playback is stuck, the blink only while no
+ * stream has loaded. Every resting state is right without motion: global.css cuts animation under
+ * reduced motion and Settings › Appearance › Fewer effects.
+ */
+
+@keyframes player-drop {
+  from { opacity: 0; transform: translate(-50%, -14px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Carries its own centring transform, so the element must not use Tailwind's translate classes. */
+.player-drop {
+  transform: translateX(-50%);
+  animation: player-drop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes player-shrink-in {
+  from { opacity: 0.6; transform: scale(1.08); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.player-shrink-in {
+  /* backwards, not both: no transform stays on the player root once it has settled. */
+  animation: player-shrink-in 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+@keyframes player-blink {
+  50% { opacity: 0.25; }
+}
+
+.player-asking::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: none;
+  border-radius: 50%;
+  background: rgb(var(--accent-500));
+  animation: player-blink 1s ease-in-out infinite;
+}

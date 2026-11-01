@@ -6,7 +6,7 @@ import { PlayerFeedback } from '../components/player/PlayerFeedback';
 import type { FeedbackMessage, PlayerFeedbackHandle } from '../components/player/PlayerFeedback';
 import type { EpisodeStep } from '../components/player/PlayerControls';
 import { PlayerStatus } from '../components/player/PlayerStatus';
-import type { PlayerStatusAction } from '../components/player/PlayerStatus';
+import type { PlayerStatusAction, ProviderChip } from '../components/player/PlayerStatus';
 import { PlayerTopBar } from '../components/player/PlayerTopBar';
 import { VideoPlayer } from '../components/player/VideoPlayer';
 import { useEmbeddedMpvStatus } from '../hooks/useEmbeddedMpv';
@@ -19,7 +19,7 @@ import { useMiniPlayerSession } from '../hooks/useMiniPlayer';
 import { useAnimeCatalogEpisodes, useEpisodes, useEpisodeSources } from '../hooks/useProviders';
 import { useSiteVerification } from '../hooks/useSiteVerification';
 import { PLUGIN_SETTINGS_PATH, useStreamingProviders } from '../hooks/usePlugins';
-import { AUTO_PROVIDER, DEFAULT_SETTINGS, useSettings } from '../hooks/useSettings';
+import { AUTO_PROVIDER, DEFAULT_SETTINGS, useFunMode, useSettings } from '../hooks/useSettings';
 import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
 import { describeStream, sourceLabel } from '../lib/languages';
@@ -34,6 +34,7 @@ import {
   useLocalMedia,
 } from '../hooks/useLocalMedia';
 import { usePlayerStore } from '../stores/playerStore';
+import '../theme/player.css';
 import { t } from '../i18n';
 import { listen } from '@tauri-apps/api/event';
 import { applyProgress, progressSummary } from '../lib/sourceProgress';
@@ -133,6 +134,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const [episodesOpen, setEpisodesOpen] = useState(false);
 
   const settingsQuery = useSettings();
+  const fun = useFunMode();
   const settings = settingsQuery.data ?? DEFAULT_SETTINGS;
   const settingsReady = !settingsQuery.isPending;
   // Embedded mpv when this run started it; a stream it cannot play falls back to the web player.
@@ -290,6 +292,11 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       : null,
     lookupSummary.failed > 0 ? t('watch.foundNothing', { count: lookupSummary.failed }) : null,
   ].filter((line): line is string => line !== null);
+  // The same lookup as chips, the extensions still being asked first so the cap never hides them.
+  const lookupChips: ProviderChip[] = lookup
+    .filter(([, state]) => state !== 'found')
+    .map(([id, state]): ProviderChip => ({ label: providerLabel(id), state: state === 'asking' ? 'asking' : 'failed' }))
+    .sort((a, b) => Number(b.state === 'asking') - Number(a.state === 'asking'));
   const servingProvider = sources?.provider || null;
   // What each server's stream was like when it played in this visit, for the server list.
   const seenStreams = useRef<Record<string, string>>({});
@@ -547,7 +554,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       onClick: () => verification.verify(site.site),
       primary: true,
     })),
-    { label: t('common.retry'), onClick: handleReload, primary: verification.sites.length === 0 },
+    { label: t(fun ? 'fun.retry' : 'common.retry'), onClick: handleReload, primary: verification.sites.length === 0 },
     { label: t('watch.changeServer'), onClick: openServers },
     ...(handleTryOtherServers ? [{ label: t('watch.tryOtherServers'), onClick: handleTryOtherServers }] : []),
   ];
@@ -564,7 +571,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (!details || !settingsReady || !providers.settled || (episodeMissing && episodeCheckPending)) {
-    status = <PlayerStatus kind="loading" title={t('common.loading')} />;
+    status = <PlayerStatus kind="loading" title={t(fun ? 'fun.poweringUp' : 'common.loading')} />;
   } else if (episodeMissing) {
     status = (
       <PlayerStatus
@@ -618,7 +625,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="loading"
-        title={t('watch.findingStream', { number: episodeNumber })}
+        title={t(fun ? 'fun.findingStream' : 'watch.findingStream', { number: episodeNumber })}
         detail={
           sourcesQuery.fetchStatus === 'paused'
             ? t('watch.waitingForNetwork')
@@ -627,6 +634,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
             : t('watch.askingProviders')
         }
         progress={lookupLines}
+        chips={lookupChips}
       />
     );
   } else if (!localRequested && sourcesQuery.isError) {
@@ -637,9 +645,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={t('watch.noStreamFound', { number: episodeNumber })}
+        title={t(fun ? 'fun.noStreamFound' : 'watch.noStreamFound', { number: episodeNumber })}
         detail={failure.details ? failure.reason : localizeError(failure.reason)}
         moreDetail={failure.details}
+        chips={lookupChips}
         actions={sourceErrorActions}
       />
     );
@@ -647,7 +656,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={t('watch.noStreamFound', { number: episodeNumber })}
+        title={t(fun ? 'fun.noStreamFound' : 'watch.noStreamFound', { number: episodeNumber })}
         detail={t('watch.noStreamInAnswer')}
         actions={sourceErrorActions}
       />

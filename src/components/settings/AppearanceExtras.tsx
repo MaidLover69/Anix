@@ -298,6 +298,16 @@ export const AppearanceExtras: React.FC<{
           />
         )}
       </Row>
+      <Row label={t('appearanceExtras.funMode')} hint={t('appearanceExtras.funModeHint')}>
+        {({ labelId, hintId }) => (
+          <Switch
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            checked={settings.fun_mode === true}
+            onChange={(checked) => onChange('fun_mode', checked)}
+          />
+        )}
+      </Row>
       <Row
         label={t('appearanceExtras.fewerEffects')}
         hint={t('appearanceExtras.fewerEffectsHint')}

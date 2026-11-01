@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import clsx from 'clsx';
 
 export interface TabItem<T extends string = string> {
@@ -19,9 +19,37 @@ interface TabsProps<T extends string> {
   panelId?: string;
 }
 
-/** Underline tabs. The caller renders the panel for the selected value. */
+/** Underline tabs; one underline slides to the selected tab. The caller renders the panel for the selected value. */
 export function Tabs<T extends string>({ tabs, value, onChange, className, panelId, ...rest }: TabsProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLSpanElement>(null);
+  const selectedIndex = tabs.findIndex((tab) => tab.value === value);
+
+  // Labels and counts change width, so the underline is placed again after every render (and on resize).
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const indicator = indicatorRef.current;
+    if (!list || !indicator) return;
+    const place = () => {
+      const label = refs.current[selectedIndex]?.firstElementChild as HTMLElement | null | undefined;
+      indicator.style.opacity = label ? '1' : '0';
+      if (!label) return;
+      indicator.style.left = `${label.offsetLeft}px`;
+      indicator.style.width = `${label.offsetWidth}px`;
+      // The first placement does not slide in from the corner.
+      if (!indicator.dataset.ready) {
+        void indicator.offsetWidth;
+        indicator.dataset.ready = 'true';
+      }
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(list);
+    // Labels change width without the list doing so (Interface size, language).
+    refs.current.forEach((tab) => tab && observer.observe(tab));
+    return () => observer.disconnect();
+  });
 
   const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
     // Right to left, the next item is drawn on the left: swap the two horizontal arrows.
@@ -46,9 +74,10 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, panel
     // focus ring.
     <div className={clsx('ui-tabs border-b border-border', className)}>
       <div
+        ref={listRef}
         role="tablist"
         aria-label={rest['aria-label']}
-        className="-mx-2 -mb-px flex items-center gap-2 overflow-x-auto no-scrollbar"
+        className="relative -mx-2 -mb-px flex items-center gap-2 overflow-x-auto no-scrollbar"
       >
         {tabs.map((tab, index) => {
           const selected = tab.value === value;
@@ -71,10 +100,8 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, panel
             >
               <span
                 className={clsx(
-                  'flex items-center border-b-2 transition-colors',
-                  selected
-                    ? 'border-accent-500 text-text-primary'
-                    : 'border-transparent text-text-muted group-hover:text-text-primary'
+                  'flex items-center transition-colors',
+                  selected ? 'text-text-primary' : 'text-text-muted group-hover:text-text-primary'
                 )}
               >
                 {tab.label}
@@ -85,6 +112,11 @@ export function Tabs<T extends string>({ tabs, value, onChange, className, panel
             </button>
           );
         })}
+        <span
+          ref={indicatorRef}
+          aria-hidden="true"
+          className="ui-tab-ind pointer-events-none absolute bottom-0 h-[3px] rounded-t-sm bg-accent-500"
+        />
       </div>
     </div>
   );

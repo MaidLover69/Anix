@@ -1,0 +1,210 @@
+/**
+ * Home and Discover looks: the hero as a manga panel, the wide "Continue watching" cards with a
+ * progress ring, and the big tilted "Surprise me" card. Colours come only from theme tokens; the
+ * few fixed light-on-dark pieces sit on cover art, which no theme controls.
+ * Every resting state is right without motion: global.css cuts animation and transitions under
+ * reduced motion and Settings › Appearance › Fewer effects, and the drift and ring play once.
+ */
+
+/* Hero panel: the bottom corner on the reading end is cut at an angle. It beats the themes' own
+   .ui-hero clip (themes.css), so it carries their attribute in the selector. */
+:root[data-theme] .ui-hero-panel {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 1.75rem), calc(100% - 2.6rem) 100%, 0 100%);
+}
+
+:root[data-theme][dir="rtl"] .ui-hero-panel {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 2.6rem 100%, 0 calc(100% - 1.75rem));
+}
+
+:root:is([data-theme="manga"], [data-theme="hacker"]) .ui-hero-panel {
+  border-radius: 0;
+}
+
+:root[data-theme="comic"] .ui-hero-panel {
+  border-radius: 10px;
+}
+
+/* The bordered themes draw their ink line along the cut too, which the clip would otherwise drop. */
+:root:is([data-theme="manga"], [data-theme="comic"], [data-theme="hacker"]) .ui-hero.ui-hero-panel::after {
+  --cut-line: 2px;
+  content: "";
+  position: absolute;
+  z-index: 40;
+  bottom: 0;
+  inset-inline-end: 0;
+  width: 2.6rem;
+  height: 1.75rem;
+  pointer-events: none;
+  background: linear-gradient(to top left, transparent 50%, rgb(var(--border-rgb)) 50%, rgb(var(--border-rgb)) calc(50% + var(--cut-line)), transparent calc(50% + var(--cut-line)));
+}
+
+:root[data-theme="hacker"] .ui-hero.ui-hero-panel::after {
+  --cut-line: 1px;
+  opacity: var(--border-strong-alpha);
+}
+
+:root[dir="rtl"]:is([data-theme="manga"], [data-theme="comic"], [data-theme="hacker"]) .ui-hero.ui-hero-panel::after {
+  background: linear-gradient(to top right, transparent 50%, rgb(var(--border-rgb)) 50%, rgb(var(--border-rgb)) calc(50% + var(--cut-line)), transparent calc(50% + var(--cut-line)));
+}
+
+/* Faint speed lines radiating from behind the sticker, and a screentone in the far corner. The
+   masks only use alpha, so their colour does not matter. */
+.ui-hero-speed {
+  opacity: 0.55;
+  background: repeating-conic-gradient(from 0deg at 78% 38%, rgb(var(--ink) / 0.07) 0deg 1.2deg, transparent 1.2deg 7deg);
+  -webkit-mask-image: radial-gradient(circle at 78% 38%, transparent 18%, rgb(var(--ink)) 75%);
+  mask-image: radial-gradient(circle at 78% 38%, transparent 18%, rgb(var(--ink)) 75%);
+}
+
+:root[dir="rtl"] .ui-hero-speed {
+  background: repeating-conic-gradient(from 0deg at 22% 38%, rgb(var(--ink) / 0.07) 0deg 1.2deg, transparent 1.2deg 7deg);
+  -webkit-mask-image: radial-gradient(circle at 22% 38%, transparent 18%, rgb(var(--ink)) 75%);
+  mask-image: radial-gradient(circle at 22% 38%, transparent 18%, rgb(var(--ink)) 75%);
+}
+
+.ui-hero-tone {
+  background: radial-gradient(rgb(var(--ink) / 0.25) 0.8px, transparent 1.2px) 0 0 / 6px 6px;
+  -webkit-mask-image: linear-gradient(to top left, rgb(var(--ink)), transparent 70%);
+  mask-image: linear-gradient(to top left, rgb(var(--ink)), transparent 70%);
+}
+
+:root[dir="rtl"] .ui-hero-tone {
+  -webkit-mask-image: linear-gradient(to top right, rgb(var(--ink)), transparent 70%);
+  mask-image: linear-gradient(to top right, rgb(var(--ink)), transparent 70%);
+}
+
+/* The first title's art drifts in once per visit (slow zoom, 14 s) and then rests; it never loops. */
+@keyframes ui-hero-drift {
+  from { transform: scale(1.08) translateX(1.5%); }
+  to { transform: scale(1.02); }
+}
+
+.ui-hero-art {
+  transform: scale(1.02);
+}
+
+.ui-hero-drift {
+  animation: ui-hero-drift 14s var(--ease-out) both;
+}
+
+/* Each new title slides in. */
+@keyframes ui-hero-swap {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ui-hero-swap-rtl {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ui-hero-swap {
+  animation: ui-hero-swap 350ms var(--ease-out) both;
+}
+
+:root[dir="rtl"] .ui-hero-swap {
+  animation-name: ui-hero-swap-rtl;
+}
+
+/* A background window stops the rotation, so it stops the drift too. */
+.ui-hero-panel[data-idle] :is(.ui-hero-drift, .ui-hero-swap) {
+  animation-play-state: paused;
+}
+
+/* The poster sticker sits tilted and straightens on hover. */
+.ui-hero-sticker {
+  transform: rotate(4deg);
+  transition: transform 300ms var(--ease-spring);
+}
+
+:root[dir="rtl"] .ui-hero-sticker {
+  transform: rotate(-4deg);
+}
+
+.ui-hero-panel:hover .ui-hero-sticker {
+  transform: rotate(1deg) translateY(-4px);
+}
+
+:root[dir="rtl"] .ui-hero-panel:hover .ui-hero-sticker {
+  transform: rotate(-1deg) translateY(-4px);
+}
+
+:root[data-theme="manga"] .ui-hero-sticker > * {
+  border-color: rgb(var(--border-rgb));
+  box-shadow: 6px 6px 0 rgb(var(--border-rgb));
+}
+
+:root[data-theme="comic"] .ui-hero-sticker > * {
+  border-color: rgb(var(--border-rgb));
+  box-shadow: 4px 4px 0 rgb(var(--border-rgb));
+}
+
+/* The dot for the current title stretches. */
+.ui-hero-dot {
+  transition: width 300ms var(--ease-spring), background-color 200ms;
+}
+
+/* Continue watching: the picture lifts, the ring fills once and grows on hover. */
+.ui-continue-thumb {
+  transition: transform 220ms var(--ease-spring), box-shadow 220ms var(--ease-out);
+}
+
+.ui-continue-thumb:is(:hover, :focus-visible) {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 30px -14px rgb(var(--accent-500) / 0.6);
+}
+
+:root:is([data-theme="manga"], [data-theme="comic"]) .ui-continue-thumb:is(:hover, :focus-visible) {
+  box-shadow: 6px 6px 0 rgb(var(--border-rgb));
+}
+
+:root[data-effects="fewer"]:not([data-theme="manga"], [data-theme="comic"]) .ui-continue-thumb:is(:hover, :focus-visible) {
+  box-shadow: none;
+}
+
+@keyframes ui-ring-fill {
+  from { stroke-dashoffset: 100; }
+}
+
+.ui-progress-ring-fg {
+  stroke-dashoffset: var(--ring-offset, 100);
+  animation: ui-ring-fill 900ms var(--ease-out) both;
+}
+
+.ui-progress-ring {
+  transition: transform 220ms var(--ease-spring);
+}
+
+.ui-continue-thumb:is(:hover, :focus-visible) .ui-progress-ring {
+  transform: scale(1.1);
+}
+
+:root[data-theme="manga"] .ui-progress-ring-fg {
+  stroke: rgb(var(--bg-page));
+}
+
+/* Surprise me: the poster rests at a slight tilt. */
+.ui-surprise-poster {
+  transform: rotate(-3deg);
+}
+
+:root[dir="rtl"] .ui-surprise-poster {
+  transform: rotate(3deg);
+}
+
+:root:is([data-theme="manga"], [data-theme="comic"]) .ui-surprise-poster {
+  box-shadow: 5px 5px 0 rgb(var(--border-rgb));
+}
+
+/* Discover › More filters: the summary is a button, so its marker goes. */
+.ui-more-filters > summary {
+  list-style: none;
+}
+
+.ui-more-filters > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ui-more-filters[open] > summary .ui-more-chevron {
+  transform: rotate(180deg);
+}

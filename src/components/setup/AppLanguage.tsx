@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 import { Languages } from 'lucide-react';
 import { CustomSelect } from '../CustomSelect';
 import { Row } from '../settings/SettingsLayout';
@@ -21,16 +22,22 @@ function nativeName(code: string): string {
   return APP_LANGUAGES.find((entry) => entry.code === code)?.name ?? code;
 }
 
-/** "Deutsch — German" in English: each language by its own name, then in the interface language. */
-function optionLabel(code: string): string {
+/** The language's name in the interface language, or '' when that is its own name. */
+function localName(code: string): string {
   const own = nativeName(code);
-  if (code === language()) return own;
+  if (code === language()) return '';
   try {
     const local = new Intl.DisplayNames([locale()], { type: 'language' }).of(code === 'zh' ? 'zh-Hans' : code === 'pt' ? 'pt-BR' : code);
-    return local && local !== own ? `${own} — ${local}` : own;
+    return local && local !== own ? local : '';
   } catch {
-    return own;
+    return '';
   }
+}
+
+/** "Deutsch — German" in English: each language by its own name, then in the interface language. */
+function optionLabel(code: string): string {
+  const local = localName(code);
+  return local ? `${nativeName(code)} — ${local}` : nativeName(code);
 }
 
 /** The `app_language` value as the picker shows it: a known code, else "system". */
@@ -57,6 +64,55 @@ export const AppLanguageSelect: React.FC<{
         ...APP_LANGUAGES.map(({ code }) => ({ value: code, label: optionLabel(code), lang: code })),
       ]}
     />
+  );
+};
+
+/**
+ * The app languages as a grid of buttons, each written in its own language with its name in the
+ * interface language under it. Used by the first-run setup.
+ */
+export const AppLanguageGrid: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  labelId: string;
+  hintId?: string;
+}> = ({ value, onChange, labelId, hintId }) => {
+  useLocale();
+  const current = appLanguageValue(value);
+  const choices = [
+    { code: SYSTEM_LANGUAGE, own: t('appLanguage.system', { language: nativeName(systemLanguage()) }), local: '' },
+    ...APP_LANGUAGES.map(({ code, name }) => ({ code, own: name, local: localName(code) })),
+  ];
+  return (
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={hintId}
+      className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5"
+    >
+      {choices.map(({ code, own, local }) => {
+        const pressed = code === current;
+        return (
+          <button
+            key={code}
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => onChange(code)}
+            className={clsx(
+              'ui-theme-card flex min-w-0 flex-col items-start justify-center gap-0.5 rounded-md border px-3 py-2 text-start text-[13px] font-semibold text-text-primary cursor-pointer transition-[color,background-color,border-color,transform] motion-safe:active:scale-95',
+              code === SYSTEM_LANGUAGE && 'col-span-2',
+              pressed ? 'border-accent-500 bg-accent-tint' : 'border-border-strong bg-bg-card hover:bg-bg-input'
+            )}
+          >
+            <span lang={code === SYSTEM_LANGUAGE ? undefined : code} className="max-w-full truncate">
+              {own}
+            </span>
+            {/* Under the name, wrapping: beside it, long names ("Brazilian Portuguese") were cut at 960 px. */}
+            {local && <span className="max-w-full text-[11px] font-normal leading-tight text-text-muted [overflow-wrap:anywhere]">{local}</span>}
+          </button>
+        );
+      })}
+    </div>
   );
 };
 

@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Search, ChevronLeft, ChevronRight, X, SearchX, Dices, History, Minus, Plus, EyeOff } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, ChevronDown, X, SearchX, Dices, History, Check, EyeOff, Info, SlidersHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 import { AnimeCard } from '../components/AnimeCard';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { CustomSelect } from '../components/CustomSelect';
 import { Button } from '../components/ui/Button';
-import { Chip } from '../components/ui/Chip';
+import { Switch } from '../components/ui/Switch';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { SurpriseCard } from '../components/SurpriseCard';
@@ -19,7 +19,7 @@ import { useWatchedHistory, useWatchlist } from '../hooks/useLibrary';
 import { Spinner } from '../components/ui/Spinner';
 import { mediaFormatLabel } from '../components/library/format';
 import { t, type TKey } from '../i18n';
-import { usePlayful, useSettings } from '../hooks/useSettings';
+import { useFunMode, usePlayful, useSettings } from '../hooks/useSettings';
 import { useOfflineStatus } from '../hooks/useSystem';
 import type { SearchParams } from '../hooks/useAniList';
 import type { Media } from '../types';
@@ -130,6 +130,7 @@ export const Discover: React.FC = () => {
   const queryClient = useQueryClient();
   const { data: settings } = useSettings();
   const playful = usePlayful();
+  const fun = useFunMode();
   const searchHistory = useSearchHistory();
   const [surpriseOpen, setSurpriseOpen] = useState(false);
   const [formats, statuses, sorts, minScores, seasons, years] = useMemo(
@@ -149,6 +150,12 @@ export const Discover: React.FC = () => {
   const status = oneOf(searchParams.get('status'), statuses, '');
   const sort = oneOf(searchParams.get('sort'), sorts, DEFAULT_SORT);
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
+  const rareFilterSet = !!(format || status || season || year || minScore);
+  const [moreOpen, setMoreOpen] = useState(rareFilterSet);
+  // A link or the palette can set one while the screen is open: unfold so no active filter is hidden.
+  useEffect(() => {
+    if (rareFilterSet) setMoreOpen(true);
+  }, [rareFilterSet]);
 
   const updateParams = useCallback(
     (mutate: (params: URLSearchParams) => void, keepPage = false) => {
@@ -334,8 +341,16 @@ export const Discover: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 pb-16 animate-fade-in">
-      <h1 className="sr-only">{t('discover.title')}</h1>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-[1.8rem] font-black leading-tight text-text-primary">{t('discover.title')}</h1>
+        <span className="flex-1" />
+        <Button variant="primary" onClick={() => setSurpriseOpen(true)} title={t('discover.surpriseHint')}>
+          <Dices aria-hidden="true" className="h-4 w-4" />
+          {t('discover.surpriseMe')}
+        </Button>
+      </div>
+
+      <div className="ui-card flex flex-col gap-3 rounded-xl bg-bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px] flex-1">
             <Search
@@ -368,31 +383,16 @@ export const Discover: React.FC = () => {
           </div>
 
           <CustomSelect
-            aria-label={t('discover.format')}
-            className="min-w-36 max-w-64"
-            value={format}
-            onChange={(val) => setParam('format', val)}
-            options={formats}
-          />
-          <CustomSelect
-            aria-label={t('discover.status')}
-            className="min-w-44 max-w-64"
-            value={status}
-            onChange={(val) => setParam('status', val)}
-            options={statuses}
-          />
-          <CustomSelect
             aria-label={t('discover.sortOrder')}
             className="min-w-44 max-w-64"
             value={sort}
             onChange={(val) => setParam('sort', val, DEFAULT_SORT)}
             options={sorts}
           />
-
-          <Button variant="neutral" onClick={() => setSurpriseOpen(true)} title={t('discover.surpriseHint')}>
-            <Dices aria-hidden="true" className="h-4 w-4" />
-            {t('discover.surpriseMe')}
-          </Button>
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-text-secondary">
+            <Switch checked={hideWatched} onChange={(on) => setParam('unwatched', on ? '1' : '')} />
+            {t('discover.hideWatched')}
+          </label>
 
           {hasActiveFilters && (
             <Button variant="ghost" onClick={clearFilters}>
@@ -401,6 +401,77 @@ export const Discover: React.FC = () => {
             </Button>
           )}
         </div>
+
+        <p className="flex items-center gap-1.5 text-xs text-text-muted">
+          <Info aria-hidden="true" className="h-3.5 w-3.5" />
+          {t('discover.genresHint')}
+        </p>
+        <div role="group" aria-label={t('discover.genresHint')} className="flex flex-wrap items-center gap-2">
+          {GENRES.map((genre) => {
+            const state = selectedGenres.includes(genre) ? 'include' : excludedGenres.includes(genre) ? 'exclude' : 'off';
+            const label = t(GENRE_LABELS[genre]);
+            return (
+              <button
+                key={genre}
+                type="button"
+                onClick={() => cycleGenre(genre)}
+                aria-label={
+                  state === 'off'
+                    ? label
+                    : t(state === 'include' ? 'discover.genreIncluded' : 'discover.genreLeftOut', { genre: label })
+                }
+                title={t(
+                  state === 'off' ? 'discover.clickToInclude' : state === 'include' ? 'discover.clickToLeaveOut' : 'discover.clickToClear'
+                )}
+                className={clsx(
+                  'ui-chip inline-flex h-7 cursor-pointer items-center gap-1 whitespace-nowrap rounded-sm px-3 text-xs transition-colors select-none',
+                  state === 'include' && 'bg-accent-tint text-accent-300',
+                  state === 'exclude' && 'bg-state-error/15 text-state-error line-through',
+                  state === 'off' && 'bg-bg-elevated text-text-secondary hover:text-text-primary'
+                )}
+              >
+                {state === 'include' && <Check aria-hidden="true" className="h-3 w-3" />}
+                {state === 'exclude' && <X aria-hidden="true" className="h-3 w-3" />}
+                {label}
+              </button>
+            );
+          })}
+          {excludedGenres.length > 0 && anilistOnly}
+        </div>
+
+        {/* Rare filters fold away; they start open while one of them is set, so none is hidden. */}
+        <details
+          open={moreOpen}
+          onToggle={(e) => setMoreOpen(e.currentTarget.open)}
+          className="ui-more-filters"
+        >
+          <summary className="inline-flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-md px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-ink/10 hover:text-text-primary">
+            <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+            {t('discover.moreFilters')}
+            <ChevronDown aria-hidden="true" className="ui-more-chevron h-3.5 w-3.5 transition-transform" />
+          </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <CustomSelect
+              aria-label={t('discover.format')}
+              className="min-w-36 max-w-64"
+              value={format}
+              onChange={(val) => setParam('format', val)}
+              options={formats}
+            />
+            <CustomSelect
+              aria-label={t('discover.status')}
+              className="min-w-44 max-w-64"
+              value={status}
+              onChange={(val) => setParam('status', val)}
+              options={statuses}
+            />
+            <CustomSelect aria-label={t('discover.season')} className="min-w-32 max-w-64" value={season} onChange={(val) => setParam('season', val)} options={seasons} />
+            <CustomSelect aria-label={t('discover.year')} className="min-w-28 max-w-64" value={year} onChange={(val) => setParam('year', val)} options={years} />
+            {(year || season) && anilistOnly}
+            <CustomSelect aria-label={t('discover.minimumScore')} className="min-w-36 max-w-64" value={minScore} onChange={(val) => setParam('score', val)} options={minScores} />
+            {minScore && anilistOnly}
+          </div>
+        </details>
 
         {!input.trim() && searchHistory.history.length > 0 && (
           <div role="group" aria-label={t('discover.recentSearches')} className="flex flex-wrap items-center gap-2">
@@ -433,51 +504,6 @@ export const Discover: React.FC = () => {
             </Button>
           </div>
         )}
-
-        <div role="group" aria-label={t('discover.moreFilters')} className="flex flex-wrap items-center gap-2">
-          <CustomSelect aria-label={t('discover.minimumScore')} className="min-w-36 max-w-64" value={minScore} onChange={(val) => setParam('score', val)} options={minScores} />
-          {minScore && anilistOnly}
-          <CustomSelect aria-label={t('discover.year')} className="min-w-28 max-w-64" value={year} onChange={(val) => setParam('year', val)} options={years} />
-          <CustomSelect aria-label={t('discover.season')} className="min-w-32 max-w-64" value={season} onChange={(val) => setParam('season', val)} options={seasons} />
-          {(year || season) && anilistOnly}
-          <Chip selected={hideWatched} onClick={() => setParam('unwatched', hideWatched ? '' : '1')} className="gap-1.5">
-            <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
-            {t('discover.hideWatched')}
-          </Chip>
-        </div>
-
-        <div role="group" aria-label={t('discover.genresHint')} className="flex flex-wrap items-center gap-2">
-          {GENRES.map((genre) => {
-            const state = selectedGenres.includes(genre) ? 'include' : excludedGenres.includes(genre) ? 'exclude' : 'off';
-            const label = t(GENRE_LABELS[genre]);
-            return (
-              <button
-                key={genre}
-                type="button"
-                onClick={() => cycleGenre(genre)}
-                aria-label={
-                  state === 'off'
-                    ? label
-                    : t(state === 'include' ? 'discover.genreIncluded' : 'discover.genreLeftOut', { genre: label })
-                }
-                title={t(
-                  state === 'off' ? 'discover.clickToInclude' : state === 'include' ? 'discover.clickToLeaveOut' : 'discover.clickToClear'
-                )}
-                className={clsx(
-                  'ui-chip inline-flex h-7 cursor-pointer items-center gap-1 whitespace-nowrap rounded-sm px-3 text-xs transition-colors select-none',
-                  state === 'include' && 'bg-accent-tint text-accent-300',
-                  state === 'exclude' && 'bg-state-error/15 text-state-error line-through',
-                  state === 'off' && 'bg-bg-elevated text-text-secondary hover:text-text-primary'
-                )}
-              >
-                {state === 'include' && <Plus aria-hidden="true" className="h-3 w-3" />}
-                {state === 'exclude' && <Minus aria-hidden="true" className="h-3 w-3" />}
-                {label}
-              </button>
-            );
-          })}
-          {excludedGenres.length > 0 && anilistOnly}
-        </div>
       </div>
 
       {isLoading ? (
@@ -504,20 +530,20 @@ export const Discover: React.FC = () => {
         ) : page > 1 ? (
           <EmptyState
             icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-            title={playful ? t('discover.endPlayful') : t('discover.noMoreResults')}
+            title={fun ? t('fun.endOfResults') : playful ? t('discover.endPlayful') : t('discover.noMoreResults')}
             description={playful ? t('discover.endPlayfulHint') : t('discover.lastPage')}
             kaomoji="(^_^)b"
           />
         ) : (
           <EmptyState
             icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-            title={playful ? t('discover.noMatchPlayful') : t('discover.noAnimeFound')}
+            title={fun ? t('fun.searchEmpty') : playful ? t('discover.noMatchPlayful') : t('discover.noAnimeFound')}
             description={playful ? t('discover.noMatchPlayfulHint') : t('discover.noMatchHint')}
             mood="confused"
             kaomoji="(o_O)?"
             action={
               hasActiveFilters ? (
-                <Button variant="secondary" onClick={clearFilters}>
+                <Button variant="primary" onClick={clearFilters}>
                   {t('discover.clearFilters')}
                 </Button>
               ) : undefined

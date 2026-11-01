@@ -25,8 +25,8 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
   children,
 }) => (
   <div
-    className={`pointer-events-none absolute inset-x-0 top-0 z-20 bg-gradient-to-b from-black/85 via-black/50 to-transparent pb-12 transition-opacity duration-200 ${
-      visible ? 'opacity-100' : 'opacity-0'
+    className={`pointer-events-none absolute inset-x-0 top-0 z-20 bg-gradient-to-b from-black/85 via-black/50 to-transparent pb-12 transition-[opacity,transform] duration-200 ease-out ${
+      visible ? 'opacity-100' : '-translate-y-2.5 opacity-0'
     }`}
   >
     <div
@@ -70,21 +70,36 @@ interface PauseDetailsProps {
   episode: number;
   episodeTitle: string | null;
   meta: string;
+  /** Fun mode, once the episode played to its end: "EPISODE CLEAR! +1 EXP". */
+  cleared?: boolean;
+  /** Fun mode, with an episode after this one: the "To be continued" arrow. */
+  continued?: boolean;
 }
 
-/** Shown over the picture after a long pause. */
-export const PauseDetails: React.FC<PauseDetailsProps> = ({ title, episode, episodeTitle, meta }) => (
+/** The pause screen: after a long pause, the title large on a scrim down the left of the picture. */
+export const PauseDetails: React.FC<PauseDetailsProps> = ({ title, episode, episodeTitle, meta, cleared, continued }) => (
   <div
     aria-hidden="true"
     // The panel stays on the left of the LTR player; dir="auto" gives each line its own text direction.
-    className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-full max-w-xl flex-col justify-center gap-2 text-left bg-gradient-to-r from-black/80 via-black/50 to-transparent px-10 animate-fade-in motion-reduce:animate-none [text-shadow:0_1px_3px_rgb(0_0_0/0.7)]"
+    className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-[min(36rem,70%)] flex-col justify-center gap-2 text-left bg-gradient-to-r from-black/85 via-black/45 to-transparent px-10 animate-fade-in motion-reduce:animate-none [text-shadow:0_1px_3px_rgb(0_0_0/0.7)]"
   >
-    <p dir="auto" className="text-xs font-semibold uppercase tracking-wider text-white/70">{t('playerTopBar.paused')}</p>
-    <h2 dir="auto" className="text-2xl font-semibold text-white">{title}</h2>
-    <p dir="auto" className="text-sm text-white/90">
+    {cleared ? (
+      <p dir="auto" className="fun-clear text-xl">
+        {t('fun.episodeClear')} <span className="fun-clear-exp">{t('fun.plusExp')}</span>
+      </p>
+    ) : (
+      <p dir="auto" className="text-xs font-extrabold uppercase tracking-widest text-white/70">{t('playerTopBar.paused')}</p>
+    )}
+    <h2 dir="auto" className="line-clamp-3 text-[clamp(1.5rem,3vw,2.4rem)] font-black leading-tight text-white">{title}</h2>
+    <p dir="auto" className="text-base font-medium text-white/90">
       {t('common.episodeNumber', { number: episode })}
       {episodeTitle && episodeTitle.trim().toLowerCase() !== `episode ${episode}` ? ` · ${episodeTitle}` : ''}
     </p>
     {meta && <p dir="auto" className="text-xs text-white/70">{meta}</p>}
+    {continued && (
+      <p dir="auto" className="fun-continued mt-4 self-start">
+        {t('fun.toBeContinued')}
+      </p>
+    )}
   </div>
 );

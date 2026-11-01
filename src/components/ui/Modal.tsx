@@ -105,7 +105,8 @@ export const Modal: React.FC<ModalProps> = ({
       if (e.key !== 'Tab' || !panelRef.current) return;
       const root = panelRef.current;
       const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (el) => el.getClientRects().length > 0
+        // Hidden setup steps keep their boxes (visibility: hidden) but cannot take focus.
+        (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
       );
       if (focusable.length === 0) {
         e.preventDefault();

@@ -5,7 +5,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { Button, Chip, EmptyState, ErrorState } from '../ui';
 import { AnimeCard } from '../AnimeCard';
 import { useProgressiveList } from '../../hooks/useProgressiveList';
-import { usePlayful } from '../../hooks/useSettings';
+import { useFunMode, usePlayful } from '../../hooks/useSettings';
 import { useAccountStatus } from '../../hooks/useAccounts';
 import { LIST_STATUS_OPTIONS, useSyncListStatuses } from '../../hooks/useLibrary';
 import type { ListStatusValue, WatchlistEntry } from '../../types';
@@ -23,6 +23,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
   const shown = filter === null ? watchlist : watchlist.filter((item) => item.status === filter);
   const list = useProgressiveList(shown, 60, filter);
   const playful = usePlayful();
+  const fun = useFunMode();
   const navigate = useNavigate();
   const accounts = useAccountStatus().data;
   // With AniList connected its statuses win; read them in once per visit.
@@ -44,7 +45,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
     return (
       <EmptyState
         icon={<Bookmark className="w-8 h-8" aria-hidden="true" />}
-        title={playful ? t('watchlistTab.emptyPlayful') : t('watchlistTab.empty')}
+        title={fun ? t('fun.watchlistEmpty') : playful ? t('watchlistTab.emptyPlayful') : t('watchlistTab.empty')}
         description={
           playful
             ? t('watchlistTab.emptyHintPlayful')

@@ -172,6 +172,7 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
         <EmptyState
           icon={<FolderSearch className="w-8 h-8" aria-hidden="true" />}
           title={t('localFilesTab.noScan')}
+          mood="sleepy"
           description={t('localFilesTab.noScanHint')}
           action={
             <Button variant="primary" onClick={chooseFolder}>
@@ -184,6 +185,7 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
         <EmptyState
           icon={<Film className="w-8 h-8" aria-hidden="true" />}
           title={t('localFilesTab.noFiles')}
+          mood="confused"
           description={
             tn('localFilesTab.noFilesHint', { folder: <span className="select-text break-all">{scan.scannedDir}</span> })
           }

@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   window_buttons: 'desktop',
   use_system_accent: false,
   playful_touches: true,
+  fun_mode: false,
   release_check_hours: 3,
   background_alerts: false,
   // Settings from before the key existed (1.2.0) load as embedded mpv.
@@ -93,9 +94,15 @@ export function useTimeFormat(): TimeFormat {
   return isTimeFormat(value) ? value : 'system';
 }
 
-/** The "Playful touches" switch; on unless it was turned off (older settings lack the key). */
+/** The "Playful touches" switch; on unless it was turned off (older settings lack the key). Fun mode shows them too. */
 export function usePlayful(): boolean {
-  return useSettings().data?.playful_touches !== false;
+  const settings = useSettings().data;
+  return settings?.playful_touches !== false || settings?.fun_mode === true;
+}
+
+/** Settings › Appearance › Fun mode; off unless it was turned on. */
+export function useFunMode(): boolean {
+  return useSettings().data?.fun_mode === true;
 }
 
 export function useSaveSettings() {

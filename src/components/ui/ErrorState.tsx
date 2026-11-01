@@ -3,7 +3,7 @@ import { AlertCircle, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './Button';
 import { Mascot, type MascotMood } from './Mascot';
-import { usePlayful } from '../../hooks/useSettings';
+import { useFunMode, usePlayful } from '../../hooks/useSettings';
 import { errorCode, errorKeys } from '../../lib/errorCodes';
 import { isKey, language, t } from '../../i18n';
 
@@ -69,8 +69,9 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
   className,
 }) => {
   const playful = usePlayful();
+  const fun = useFunMode();
   const title = titleProp ?? t('common.somethingWentWrong');
-  const retryLabel = retryLabelProp ?? t('common.tryAgain');
+  const retryLabel = retryLabelProp ?? t(fun ? 'fun.retry' : 'common.tryAgain');
   // The code and the copied details use the backend's own words, for bug reports.
   const raw = message ?? (error !== undefined && error !== null ? rawErrorMessage(error) : undefined);
   const text = raw !== undefined ? localizeError(raw, true) : undefined;

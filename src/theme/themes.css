@@ -8,7 +8,8 @@
  * - Manga and Comic also change structure (outlines, corners, hard shadows). Those rules hang
  *   on a few hooks the shared components carry: ui-btn, ui-chip, ui-switch, ui-seg, ui-tabs,
  *   ui-tab, ui-select, ui-menu, ui-modal, ui-backdrop, ui-toast, ui-card, ui-inset, ui-hero,
- *   ui-plate, ui-sidebar, ui-nav-active, ui-nav-indicator, ui-titlebar, ui-app, ui-theme-card, ui-stamp.
+ *   ui-plate, ui-sidebar, ui-nav-active, ui-nav-glider, ui-nav-indicator, ui-titlebar, ui-app, ui-theme-card,
+ *   ui-stamp, ui-tab-ind, ui-rail-title, ui-anime-card, ui-empty, ui-banner.
  *
  * This file must load after global.css (main.tsx imports them in that order).
  */
@@ -381,8 +382,17 @@
   background-size: 4px 4px;
 }
 
-/* Selected: inverted. */
-:root[data-theme="manga"] .ui-nav-active,
+/* Selected: inverted. The sidebar's highlight is the glider behind the item; it jumps instead of
+   sliding, since the item's text inverts at once. */
+:root[data-theme="manga"] .ui-nav-active {
+  color: rgb(var(--bg-page));
+}
+
+:root[data-theme="manga"] .ui-nav-glider {
+  background-color: var(--text-primary);
+  transition: none;
+}
+
 :root[data-theme="manga"] .ui-chip[aria-pressed="true"],
 :root[data-theme="manga"] .ui-seg > [aria-checked="true"],
 :root[data-theme="manga"] .ui-tab[aria-selected="true"] > span {
@@ -400,7 +410,7 @@
   color: inherit;
 }
 
-:root[data-theme="manga"] .ui-nav-active > .ui-nav-indicator {
+:root[data-theme="manga"] .ui-nav-glider > .ui-nav-indicator {
   display: none;
 }
 
@@ -606,13 +616,16 @@
 }
 
 :root[data-theme="comic"] .ui-nav-active {
-  background-color: #ffffff;
   color: #111111;
+}
+
+:root[data-theme="comic"] .ui-nav-glider {
+  background-color: #ffffff;
   border: 2px solid #111111;
   box-shadow: 2px 2px 0 #111111;
 }
 
-:root[data-theme="comic"] .ui-nav-active > .ui-nav-indicator {
+:root[data-theme="comic"] .ui-nav-glider > .ui-nav-indicator {
   display: none;
 }
 
@@ -707,18 +720,17 @@
   box-shadow: 3px 3px 0 rgb(var(--border-rgb));
 }
 
-/* Tabs: the selected one is a caption box standing on the rule. */
-:root[data-theme="comic"] .ui-tab > span {
-  padding: 0 10px;
-  border: 2px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+/* Tabs: the selected one is bold over a fat yellow bar. */
+:root[data-theme="comic"] .ui-tab[aria-selected="true"] > span {
+  font-weight: 800;
 }
 
-:root[data-theme="comic"] .ui-tab[aria-selected="true"] > span {
-  background-color: #ffd60a;
-  border-color: rgb(var(--border-rgb));
-  color: #111111;
+/* The sliding underline is a fat caption-yellow bar with an ink outline. */
+:root[data-theme="comic"] .ui-tab-ind {
+  height: 7px;
+  border: 2px solid rgb(var(--border-rgb));
+  border-radius: 2px;
+  background-color: var(--accent-tint);
 }
 
 /* Switch */
@@ -924,6 +936,198 @@
 :root[data-theme="comic"] :is(.ui-chart-bar, .ui-chart-bar-muted) {
   stroke: rgb(var(--border-rgb));
   stroke-width: 1.5;
+}
+
+/* ------------------------------------------------------ Shared motion and looks
+ * The sliding sidebar highlight and tab underline, rail titles, poster cards and their quick
+ * look, the dashed empty card and its mascot, toasts and the strips under the title bar.
+ * Every resting state is right without its motion: global.css cuts animation and transitions
+ * under reduced motion and Settings › Appearance › Fewer effects.
+ */
+
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Sidebar: one highlight slides between items; icons tip a little on hover. The collapse
+   chevron (aria-expanded) keeps its own right-to-left flip. */
+.ui-nav-glider {
+  transition: top 300ms var(--ease-spring), height 220ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-effects="fewer"]) .ui-sidebar :is(a, button:not([aria-expanded])) > svg:first-child {
+    transition: transform 220ms var(--ease-spring);
+  }
+  :root:not([data-effects="fewer"]) .ui-sidebar :is(a, button:not([aria-expanded])):hover > svg:first-child {
+    transform: translateY(-1px) rotate(-6deg);
+  }
+}
+
+/* Rail titles: a slanted accent tab; Comic makes the title a caption box, Hacker a prompt. */
+.ui-rail-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.ui-rail-title::before {
+  content: "";
+  flex-shrink: 0;
+  width: 0.4rem;
+  height: 1.05em;
+  border-radius: 2px;
+  background-color: rgb(var(--accent-500));
+  transform: skewX(-14deg);
+}
+
+:root[dir="rtl"] .ui-rail-title::before {
+  transform: skewX(14deg);
+}
+
+:root[data-theme="hacker"] .ui-rail-title::before {
+  content: ">";
+  width: auto;
+  height: auto;
+  background: none;
+  color: rgb(var(--accent-500));
+  transform: none;
+}
+
+:root[data-theme="comic"] .ui-rail-title {
+  padding: 0.1rem 0.6rem;
+  color: var(--on-tint);
+  background-color: var(--accent-tint);
+  border: 2px solid rgb(var(--border-rgb));
+  box-shadow: 3px 3px 0 rgb(var(--border-rgb));
+  transform: rotate(-1deg);
+}
+
+:root[data-theme="comic"] .ui-rail-title::before {
+  display: none;
+}
+
+/* "View all": the arrow nudges forward. */
+.ui-view-all > svg {
+  transition: transform 220ms var(--ease-spring);
+}
+
+.ui-view-all:is(:hover, :focus-visible) > svg {
+  transform: translateX(4px);
+}
+
+:root[dir="rtl"] .ui-view-all > svg {
+  transform: scaleX(-1);
+}
+
+:root[dir="rtl"] .ui-view-all:is(:hover, :focus-visible) > svg {
+  transform: translateX(-4px) scaleX(-1);
+}
+
+/* Poster cards: lift 4px, tilt toward the pointer (--rx/--ry from AnimeCard.tsx) and glow in the
+   cover's own colour (--cover-rgb). Manga and Comic get a hard ink shadow instead. */
+.ui-card-tilt {
+  transition: transform 220ms var(--ease-spring);
+}
+
+.ui-anime-card:is(:hover, :focus-within) .ui-card-tilt {
+  transform: perspective(700px) translateY(-4px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+}
+
+.ui-card-tilt > a .ui-card {
+  transition: box-shadow 220ms var(--ease-out);
+}
+
+.ui-anime-card:is(:hover, :focus-within) .ui-card-tilt > a .ui-card {
+  box-shadow: 0 16px 32px -14px rgb(var(--cover-rgb, var(--accent-500)) / 0.6), 0 0 0 1px rgb(var(--ink) / 0.08);
+}
+
+:root[data-theme="hacker"] .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt > a .ui-card {
+  box-shadow: 0 0 0 1px rgb(var(--accent-500)), 0 0 22px rgb(var(--accent-500) / 0.35);
+}
+
+:root:is([data-theme="manga"], [data-theme="comic"]) .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt > a .ui-card {
+  box-shadow: 6px 6px 0 rgb(var(--border-rgb));
+}
+
+:root[data-effects="fewer"]:not([data-theme="manga"], [data-theme="comic"]) .ui-anime-card .ui-card-tilt > a .ui-card {
+  box-shadow: none;
+}
+
+/* The quick look slides up over the poster. */
+@keyframes ui-peek-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ui-peek-up {
+  animation: ui-peek-up 220ms var(--ease-spring) both;
+}
+
+/* The mascot breathes and its Zzz drift. */
+@keyframes ui-breathe {
+  50% { transform: scale(1.035, 0.975); }
+}
+
+@keyframes ui-zz {
+  0%, 100% { transform: translate(0, 0); opacity: 0.9; }
+  50% { transform: translate(2px, -3px); opacity: 0.5; }
+}
+
+.ui-mascot {
+  transform-origin: 50% 90%;
+  animation: ui-breathe 3.2s ease-in-out infinite;
+}
+
+.ui-mascot-zz {
+  animation: ui-zz 3.2s ease-in-out infinite;
+}
+
+/* Toasts spring in; Comic draws them as speech bubbles. */
+@keyframes ui-toast-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+}
+
+.ui-toast-in {
+  animation: ui-toast-in 350ms var(--ease-spring) both;
+}
+
+:root[data-theme="comic"] .ui-toast {
+  margin-bottom: 8px;
+  border-radius: 14px;
+}
+
+:root[data-theme="comic"] .ui-toast::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  inset-inline-end: 22px;
+  width: 14px;
+  height: 14px;
+  background-color: rgb(var(--bg-elevated));
+  border-right: 2px solid rgb(var(--border-rgb));
+  border-bottom: 2px solid rgb(var(--border-rgb));
+  transform: rotate(45deg);
+}
+
+/* Tabs: the underline slides once it has been placed (Tabs.tsx sets data-ready). */
+.ui-tab-ind[data-ready] {
+  transition: left 300ms var(--ease-spring), width 300ms var(--ease-spring);
+}
+
+/* The strips under the title bar (offline, another catalogue, disk full). */
+:root[data-theme="manga"] .ui-banner {
+  background-color: rgb(var(--bg-page));
+  border-bottom: 2px solid rgb(var(--border-rgb));
+}
+
+:root[data-theme="comic"] .ui-banner {
+  border-bottom: 2px solid rgb(var(--border-rgb));
+}
+
+:root[data-theme="comic"] .ui-banner[data-tone="info"] svg {
+  color: var(--on-tint);
 }
 
 /* ------------------------------------------------------- Look (Settings › Appearance)

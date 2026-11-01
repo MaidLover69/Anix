@@ -86,7 +86,7 @@ const viewOptions = () => [
 const GRID_CLASS: Record<ViewMode, string> = {
   compact: 'flex flex-col',
   list: 'grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-x-4 gap-y-1',
-  grid: 'grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2',
+  grid: 'grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2',
 };
 
 /**
@@ -157,7 +157,7 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
   const [chosenProvider, setChosenProvider] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedChunkIndex, setSelectedChunkIndex] = useState(0);
-  const [viewMode, setViewMode] = useStoredChoice<ViewMode>('episode-layout', VIEW_MODES, 'list');
+  const [viewMode, setViewMode] = useStoredChoice<ViewMode>('episode-layout', VIEW_MODES, 'grid');
   const [playlistTargetEpisodes, setPlaylistTargetEpisodes] = useState<EpisodeItemType[] | null>(null);
 
   const { data: watchedEpisodes = [] } = useWatchedEpisodes(anilistId);

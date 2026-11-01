@@ -162,13 +162,13 @@ h1[tabindex="-1"]:focus-visible {
   color: var(--selection-text);
 }
 
-/* Shimmer Animation */
+/* Shimmer Animation: a sweep in the theme's accent over a faint ink base. */
 .shimmer-placeholder {
   background: linear-gradient(
     90deg,
-    rgb(var(--ink) / 0.04) 0%,
-    rgb(var(--ink) / 0.09) 50%,
-    rgb(var(--ink) / 0.04) 100%
+    rgb(var(--ink) / 0.05) 0%,
+    rgb(var(--accent-500) / 0.14) 50%,
+    rgb(var(--ink) / 0.05) 100%
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite linear;

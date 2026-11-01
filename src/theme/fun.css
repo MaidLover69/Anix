@@ -1,0 +1,306 @@
+/*
+ * Fun mode (Settings › Appearance › Fun mode, `data-fun` on <html>): a game-like layer over the
+ * same screens. Colours come only from the theme tokens, so all 9 themes carry it. Movement is
+ * small and stops under reduced motion (global.css) and Fewer effects (rules below); nothing
+ * here moves over a playing video. Pieces that only render in fun mode (FunBits.tsx) need no
+ * `data-fun` in their selectors. Markers use `content: "x" / ""` so screen readers skip them.
+ */
+
+/* ---------------------------------------------------------- Shared bits */
+
+.fun-sfx {
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: transparent;
+  -webkit-text-stroke: 2px rgb(var(--accent-500) / 0.55);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.fun-level {
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  color: rgb(var(--accent-300));
+}
+
+/* EXP and power meters: segmented, filled with a token gradient. */
+.fun-exp {
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: rgb(var(--ink) / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.1);
+}
+
+.fun-exp-fill {
+  min-width: 2px;
+  background-image: linear-gradient(90deg, rgb(var(--accent-600)), rgb(var(--accent-300)));
+  /* Masks only use alpha. */
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 7px, transparent 7px 9px);
+  mask-image: repeating-linear-gradient(90deg, #000 0 7px, transparent 7px 9px);
+}
+
+:root[dir="rtl"] .fun-exp-fill {
+  background-image: linear-gradient(270deg, rgb(var(--accent-600)), rgb(var(--accent-300)));
+}
+
+/* "🔥 Day combo ×5": a fighting-game combo counter. */
+.fun-combo {
+  display: inline-block;
+  font-weight: 900;
+  font-style: italic;
+  color: rgb(var(--warning));
+  transform: skewX(-8deg);
+}
+
+:root[dir="rtl"] .fun-combo {
+  transform: skewX(8deg);
+}
+
+/* ---------------------------------------------------------- Sidebar and Stats */
+
+.fun-badge {
+  background-color: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-500) / 0.3);
+}
+
+.fun-level-card::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 40%;
+  background-image: repeating-linear-gradient(-60deg, rgb(var(--accent-500) / 0.08) 0 2px, transparent 2px 12px);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------- Anime page */
+
+.fun-sfx-hero {
+  position: absolute;
+  z-index: -5;
+  inset-inline-end: 6%;
+  bottom: 0.5rem;
+  font-size: clamp(3.5rem, 9vw, 7.5rem);
+  -webkit-text-stroke-width: 3px;
+  opacity: 0.35;
+}
+
+/* Under 1200 px the action buttons reach the right side and leave it no room. */
+@media (max-width: 1199px) {
+  .fun-sfx-hero {
+    display: none;
+  }
+}
+
+.fun-over9000 {
+  font-weight: 900;
+  font-style: italic;
+  text-transform: uppercase;
+  color: rgb(var(--warning));
+}
+
+.fun-sfx-stamp {
+  position: absolute;
+  /* Far enough out that the tilted stamp's corner (and Comic's tag) does not cross it. */
+  inset-inline-start: -3.75rem;
+  top: -1.5rem;
+  font-size: 2rem;
+  -webkit-text-stroke-color: rgb(var(--success) / 0.7);
+}
+
+/* ---------------------------------------------------------- Player: end card and loading */
+
+.fun-clear {
+  align-self: flex-start;
+  padding: 0.2rem 0.7rem;
+  border-radius: 3px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-shadow: none;
+  color: rgb(var(--on-accent));
+  background-color: rgb(var(--accent-600));
+  transform: skewX(-8deg);
+}
+
+.fun-clear-exp {
+  margin-inline-start: 0.4rem;
+  font-size: 0.75em;
+  opacity: 0.85;
+}
+
+/* "To be continued": an arrow-shaped box pointing back, the old cliffhanger caption. */
+.fun-continued {
+  padding: 0.35rem 1.1rem 0.35rem 1.8rem;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: none;
+  color: rgb(var(--on-accent));
+  background-color: rgb(var(--accent-600));
+  clip-path: polygon(1.2rem 0, 100% 0, 100% 100%, 1.2rem 100%, 0 50%);
+}
+
+.fun-continued::after {
+  content: " ↙";
+  content: " ↙" / "";
+}
+
+.fun-charge {
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: rgb(var(--accent-500) / 0.25);
+}
+
+.fun-charge > span {
+  width: 100%;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgb(var(--accent-500)) 0 8px,
+    rgb(var(--accent-300)) 8px 16px
+  );
+  background-size: 22.6px 100%;
+  animation: fun-charge 0.8s linear infinite;
+}
+
+@keyframes fun-charge {
+  to { background-position: 22.6px 0; }
+}
+
+:root[data-effects="fewer"] .fun-charge > span {
+  animation: none;
+}
+
+:root[data-fun] .fun-party > li::before {
+  content: "♥";
+  content: "♥" / "";
+  color: rgb(var(--accent-300));
+}
+
+/* ---------------------------------------------------------- Toasts: JRPG dialog boxes */
+
+:root[data-fun] .ui-toast {
+  border: 3px double rgb(var(--accent-500));
+  border-radius: 4px;
+}
+
+:root[data-fun] .ui-toast::after {
+  content: "▼";
+  content: "▼" / "";
+  position: absolute;
+  bottom: 3px;
+  inset-inline-end: 12px;
+  font-size: 9px;
+  line-height: 1;
+  color: rgb(var(--accent-300));
+}
+
+/* Blinks only on ordinary screens; on the player (no ui-toast-in) it stays still. */
+:root[data-fun]:not([data-effects="fewer"]) .ui-toast-in::after {
+  animation: fun-blink 1s steps(2, jump-none) infinite;
+}
+
+@keyframes fun-blink {
+  50% { opacity: 0; }
+}
+
+.fun-sfx-toast {
+  align-self: center;
+  font-size: 1.1rem;
+  -webkit-text-stroke-width: 1px;
+}
+
+/* ---------------------------------------------------------- Game UI look */
+
+/* HP bars for episode and continue progress. */
+:root[data-fun] .ui-hp {
+  height: 6px;
+  padding: 1px;
+  background-color: rgb(var(--bg-deepest) / 0.75);
+}
+
+:root[data-fun] .ui-hp-fill {
+  border-radius: 1px;
+  background-image: linear-gradient(90deg, rgb(var(--success)), rgb(var(--accent-500)));
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+  mask-image: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+}
+
+:root[data-fun][dir="rtl"] .ui-hp-fill {
+  background-image: linear-gradient(270deg, rgb(var(--success)), rgb(var(--accent-500)));
+}
+
+/* Buttons press down with a small pop. */
+:root[data-fun]:not([data-effects="fewer"]) .ui-btn {
+  transition-property: color, background-color, border-color, opacity, transform;
+}
+
+:root[data-fun]:not([data-effects="fewer"]) .ui-btn:enabled:active {
+  transform: translateY(1px) scale(0.96);
+}
+
+/* Speed lines behind a poster card on hover. */
+:root[data-fun]:not([data-effects="fewer"]) .ui-card-tilt::before {
+  position: absolute;
+  z-index: -1;
+  border-radius: 1rem;
+  background-image: repeating-conic-gradient(from 0deg, rgb(var(--accent-500) / 0.45) 0 1.5deg, transparent 1.5deg 9deg);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 55%, #000 100%);
+  mask-image: radial-gradient(closest-side, transparent 55%, #000 100%);
+  pointer-events: none;
+}
+
+/* Only while hovered, and only 4px above and below: the rail scroller (HorizontalRail) has 8px of
+   room, half of it taken by the card's lift, so the lines never add a vertical scroll to it. */
+:root[data-fun]:not([data-effects="fewer"]) .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt {
+  isolation: isolate;
+}
+
+:root[data-fun]:not([data-effects="fewer"]) .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt::before {
+  content: "";
+  inset: -4px -12px;
+}
+
+/* A game-menu cursor on section headers and the palette's selected row. */
+:root[data-fun] :is(:hover, :focus-within) > .ui-rail-title::before {
+  content: "▶";
+  content: "▶" / "";
+  width: auto;
+  height: auto;
+  font-size: 0.7em;
+  color: rgb(var(--accent-500));
+  background: none;
+  transform: none;
+}
+
+:root[data-fun] .ui-palette [role="option"][aria-selected="true"]::before {
+  content: "▶";
+  content: "▶" / "";
+  flex-shrink: 0;
+  font-size: 0.7em;
+  color: rgb(var(--accent-500));
+}
+
+:root[data-fun][dir="rtl"] :is(:hover, :focus-within) > .ui-rail-title::before,
+:root[data-fun][dir="rtl"] .ui-palette [role="option"][aria-selected="true"]::before {
+  content: "◀";
+  content: "◀" / "";
+}
+
+.fun-menu-title {
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--accent-300));
+}
+
+/* Letter spacing breaks the joins of Arabic script (as global.css does for tracking-*). */
+:root[dir="rtl"] :is(.fun-level, .fun-clear, .fun-continued, .fun-menu-title) {
+  letter-spacing: 0;
+}

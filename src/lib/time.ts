@@ -31,3 +31,13 @@ export function formatTime(
 ): string {
   return new Intl.DateTimeFormat(locale, timeOptions(format, options)).format(when);
 }
+
+/** Splits items into those from today (since local midnight) and earlier ones, keeping their order. */
+export function splitByDay<T extends { created_at: number }>(notices: T[], now = Date.now()): { today: T[]; earlier: T[] } {
+  const d = new Date(now);
+  const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return {
+    today: notices.filter((n) => n.created_at >= midnight),
+    earlier: notices.filter((n) => n.created_at < midnight),
+  };
+}

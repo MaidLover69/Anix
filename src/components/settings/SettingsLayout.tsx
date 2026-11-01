@@ -1,28 +1,30 @@
 import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Search, X } from 'lucide-react';
+import { Bell, Cpu, Database, Download, Globe, Info, Languages, Palette, Play, Puzzle, Search, UserRound, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { markParts } from '../../lib/textMarks';
 import { t } from '../../i18n';
+import '../../theme/settings.css';
 
 /**
  * Sections of the Settings screen, in page order. `/settings?section=<id>` opens one. A
  * section's id is its `id` prop, else its title in lower case. Add new sections here: the
- * list and the drill-down show only these, and an unlisted section is shown on every page.
+ * side list shows only these, and an unlisted section is shown on every page.
  * Text is kept as keys, so it follows a language change (`t()` must not run at import).
  */
 export const SETTINGS_SECTIONS = [
-  { id: 'appearance', titleKey: 'settingsLayout.appearance', hintKey: 'settingsLayout.appearanceHint' },
-  { id: 'playback', titleKey: 'settingsLayout.playback', hintKey: 'settingsLayout.playbackHint' },
-  { id: 'sources', titleKey: 'settingsLayout.sources', hintKey: 'settingsLayout.sourcesHint' },
-  { id: 'downloads', titleKey: 'settingsLayout.downloads', hintKey: 'settingsLayout.downloadsHint' },
-  { id: 'system', titleKey: 'settingsLayout.system', hintKey: 'settingsLayout.systemHint' },
-  { id: 'network', titleKey: 'settingsLayout.network', hintKey: 'settingsLayout.networkHint' },
-  { id: 'notifications', titleKey: 'settingsLayout.notifications', hintKey: 'settingsLayout.notificationsHint' },
-  { id: 'account', titleKey: 'settingsLayout.account', hintKey: 'settingsLayout.accountHint' },
-  { id: 'data', titleKey: 'settingsLayout.data', hintKey: 'settingsLayout.dataHint' },
-  { id: 'about', titleKey: 'settingsLayout.about', hintKey: 'settingsLayout.aboutHint' },
-  { id: 'plugins', titleKey: 'settingsLayout.plugins', hintKey: 'settingsLayout.pluginsHint' },
+  { id: 'appearance', titleKey: 'settingsLayout.appearance', hintKey: 'settingsLayout.appearanceHint', icon: Palette },
+  { id: 'playback', titleKey: 'settingsLayout.playback', hintKey: 'settingsLayout.playbackHint', icon: Play },
+  { id: 'sources', titleKey: 'settingsLayout.sources', hintKey: 'settingsLayout.sourcesHint', icon: Languages },
+  { id: 'downloads', titleKey: 'settingsLayout.downloads', hintKey: 'settingsLayout.downloadsHint', icon: Download },
+  { id: 'system', titleKey: 'settingsLayout.system', hintKey: 'settingsLayout.systemHint', icon: Cpu },
+  { id: 'network', titleKey: 'settingsLayout.network', hintKey: 'settingsLayout.networkHint', icon: Globe },
+  { id: 'notifications', titleKey: 'settingsLayout.notifications', hintKey: 'settingsLayout.notificationsHint', icon: Bell },
+  { id: 'account', titleKey: 'settingsLayout.account', hintKey: 'settingsLayout.accountHint', icon: UserRound },
+  { id: 'data', titleKey: 'settingsLayout.data', hintKey: 'settingsLayout.dataHint', icon: Database },
+  { id: 'about', titleKey: 'settingsLayout.about', hintKey: 'settingsLayout.aboutHint', icon: Info },
+  { id: 'plugins', titleKey: 'settingsLayout.plugins', hintKey: 'settingsLayout.pluginsHint', icon: Puzzle },
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
@@ -46,23 +48,52 @@ const ViewContext = createContext<SettingsView>({ query: '', active: null });
 /** True inside a section whose title matched the search: all its rows show. */
 const SectionMatchContext = createContext(true);
 
+/** `text` with the words of the settings search highlighted. */
+const Marked: React.FC<{ text: string }> = ({ text }) => {
+  const { query } = useContext(ViewContext);
+  if (!query) return <>{text}</>;
+  return (
+    <>
+      {markParts(text, query).map((part, index) =>
+        part.hit ? (
+          <mark key={index} className="rounded-sm bg-accent-500/30 text-inherit">
+            {part.text}
+          </mark>
+        ) : (
+          <React.Fragment key={index}>{part.text}</React.Fragment>
+        )
+      )}
+    </>
+  );
+};
+
 /**
- * The Settings screen frame: a search box, then the section list and the open section side by
- * side on wide windows, or the list that drills into one section (with Back) on narrow ones.
- * While searching, every section and row that matches shows.
+ * The Settings screen frame: a search box, then the section list (name and one-line hint each)
+ * beside the open section on wide windows, or above it as a scrolling row on narrow ones (960 px,
+ * large text). While searching, every section and row that matches shows, the match marked.
  */
 export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const searchId = useId();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const wide = useMediaQuery('(min-width: 1200px)');
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
   const linked = searchParams.get('section') ?? '';
-  const active: SettingsSectionId | null = isListed(linked) ? linked : wide ? SETTINGS_SECTIONS[0].id : null;
-  const showList = wide || (!active && !query);
-  const activeTitleKey = SETTINGS_SECTIONS.find((s) => s.id === active)?.titleKey;
+  const active: SettingsSectionId = isListed(linked) ? linked : SETTINGS_SECTIONS[0].id;
   const paneRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [anyMatch, setAnyMatch] = useState(true);
+  // Narrow: bring the open section into view in the scrolling row, moving only the row (a
+  // physical-pixel delta, so it also holds right to left).
+  useEffect(() => {
+    const list = listRef.current;
+    const item = list?.querySelector('[aria-current="page"]');
+    if (wide || !list || !item) return;
+    const row = list.getBoundingClientRect();
+    const box = item.getBoundingClientRect();
+    if (box.left >= row.left && box.right <= row.right) return;
+    list.scrollBy({ left: box.left - row.left - (row.width - box.width) / 2 });
+  }, [wide, active, query]);
   // Runs after the sections have decided whether they match.
   useLayoutEffect(() => {
     setAnyMatch(!!paneRef.current?.querySelector('[data-settings-section]'));
@@ -106,59 +137,39 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
         </div>
       </div>
 
-      <div className={clsx(wide && 'flex items-start gap-8')}>
-        {showList && (
-          <nav aria-label={t('settingsLayout.sectionsNav')} className={clsx(wide ? 'sticky top-0 w-56 flex-shrink-0' : 'w-full max-w-2xl')}>
-            <ul className={clsx('flex flex-col', wide ? 'gap-0.5' : 'divide-y divide-border rounded-xl ui-card bg-bg-card')}>
-              {SETTINGS_SECTIONS.map((section) => {
-                const current = wide && !query && section.id === active;
-                return (
-                  <li key={section.id}>
-                    <Link
-                      to={`?section=${section.id}`}
-                      replace={wide}
-                      onClick={() => setSearch('')}
-                      aria-current={current ? 'page' : undefined}
-                      className={clsx(
-                        'flex items-center gap-3 transition-colors',
-                        wide
-                          ? 'rounded-md px-3 py-1.5 text-[13px]'
-                          : 'px-4 py-3 hover:bg-ink/5',
-                        current
-                          ? 'bg-accent-tint font-medium text-accent-300'
-                          : wide
-                            ? 'text-text-secondary hover:bg-ink/10 hover:text-text-primary'
-                            : 'text-text-primary'
-                      )}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate">{t(section.titleKey)}</span>
-                        {!wide && <span className="block truncate text-xs text-text-muted">{t(section.hintKey)}</span>}
-                      </span>
-                      {!wide && <ChevronRight aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted rtl:-scale-x-100" />}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
-        )}
+      <div className={clsx('flex', wide ? 'items-start gap-8' : 'flex-col gap-4')}>
+        <nav aria-label={t('settingsLayout.sectionsNav')} className={clsx(wide ? 'sticky top-0 w-60 flex-shrink-0' : 'w-full')}>
+          {/* p-1 narrow: the scrolling row would clip the focus outline. */}
+          <ul ref={listRef} className={clsx('flex', wide ? 'flex-col gap-0.5' : 'gap-1 overflow-x-auto p-1')}>
+            {SETTINGS_SECTIONS.map((section) => {
+              const current = !query && section.id === active;
+              const Icon = section.icon;
+              return (
+                <li key={section.id} className={clsx(!wide && 'flex-none')}>
+                  <Link
+                    to={`?section=${section.id}`}
+                    replace
+                    onClick={() => setSearch('')}
+                    aria-current={current ? 'page' : undefined}
+                    className={clsx(
+                      'flex items-start gap-3 rounded-lg px-3 py-2 transition-colors',
+                      !wide && 'max-w-[15rem]',
+                      current ? 'bg-accent-tint text-text-primary' : 'text-text-secondary hover:bg-ink/5 hover:text-text-primary'
+                    )}
+                  >
+                    <Icon aria-hidden="true" className={clsx('mt-0.5 h-4 w-4 flex-shrink-0', current && 'text-accent-300')} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-semibold">{t(section.titleKey)}</span>
+                      <span className="block truncate text-xs text-text-muted">{t(section.hintKey)}</span>
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
 
-        <div
-          ref={paneRef}
-          className={clsx(!wide && !active && !query ? 'hidden' : 'flex', 'min-w-0 max-w-2xl flex-1 flex-col gap-8')}
-        >
-          {!wide && active && !query && (
-            <button
-              type="button"
-              onClick={() => setSearchParams({}, { replace: true })}
-              className="-mb-4 flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-secondary hover:bg-ink/10 hover:text-text-primary"
-            >
-              <ArrowLeft aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" />
-              {t('settingsLayout.allSettings')}
-              {activeTitleKey && <span className="sr-only">{t('settingsLayout.leaving', { title: t(activeTitleKey) })}</span>}
-            </button>
-          )}
+        <div ref={paneRef} className="flex min-w-0 max-w-2xl flex-1 flex-col gap-8">
           <ViewContext.Provider value={{ query, active: query ? null : active }}>{children}</ViewContext.Provider>
           {query && !anyMatch && (
             <p role="status" className="py-10 text-center text-[13px] text-text-muted">
@@ -218,13 +229,13 @@ export const Section: React.FC<{
         'scroll-mt-4 flex-col gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent-500/60 focus-visible:ring-offset-4 focus-visible:ring-offset-bg-page'
       )}
     >
-      <h2 id={titleId} className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-        {title}
+      <h2 id={titleId} className="mb-1 text-base font-semibold text-text-primary">
+        <Marked text={title} />
       </h2>
       <div
         ref={cardRef}
         className={clsx(
-          'divide-y divide-border rounded-xl ui-card bg-bg-card px-4',
+          'ui-settings-rows',
           // While only some rows match, content that is not a matching row is left out too.
           view.query && !titleMatches && '[&>*:not([data-settings-match]):not(:has([data-settings-match]))]:hidden'
         )}
@@ -261,7 +272,7 @@ export const Row: React.FC<{
     >
       <div className="flex min-w-0 flex-col">
         <span id={labelId} className="text-[13px] font-medium text-text-primary">
-          {label}
+          <Marked text={label} />
         </span>
         {hint && (
           <span id={hintId} className="mt-0.5 text-xs text-text-muted">

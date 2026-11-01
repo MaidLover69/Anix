@@ -1,5 +1,5 @@
 import React, { useId, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useViewTransitionState } from 'react-router-dom';
 import { Bookmark } from 'lucide-react';
 import clsx from 'clsx';
 import { ShimmerImage } from './ShimmerImage';
@@ -7,7 +7,10 @@ import type { Media } from '../types';
 import { useWatchlist, useToggleWatchlist } from '../hooks/useLibrary';
 import { QuickPeekCard, useQuickPeek } from './QuickPeek';
 import { PosterContextMenu } from './PosterContextMenu';
+import { hexToChannels } from './AmbientGlow';
+import { prefersLessMotion } from '../lib/motion';
 import { t } from '../i18n';
+import { useFunMode } from '../hooks/useSettings';
 
 interface AnimeCardProps {
   media: Media;
@@ -30,6 +33,9 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
+  const detailPath = `/detail/${media.id}`;
+  // True while a view transition to or from this card's anime page runs.
+  const opening = useViewTransitionState(detailPath);
   const peekId = useId();
   const quickPeek = useQuickPeek();
   const peekOpen = peek && quickPeek.isOpen;
@@ -39,6 +45,7 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   const inWatchlist = listEntry !== undefined;
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const toggleWatchlistMutation = useToggleWatchlist();
+  const fun = useFunMode();
 
   const title =
     media.title.english ||
@@ -75,17 +82,34 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
     }
   };
 
+  // Hover tilts the card a little toward the pointer (themes.css › .ui-anime-card).
+  const tilt = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' || prefersLessMotion()) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width - 0.5;
+    const y = (event.clientY - rect.top) / rect.height - 0.5;
+    event.currentTarget.style.setProperty('--ry', `${(x * 8).toFixed(2)}deg`);
+    event.currentTarget.style.setProperty('--rx', `${(-y * 6).toFixed(2)}deg`);
+  };
+  const untilt = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.style.removeProperty('--rx');
+    event.currentTarget.style.removeProperty('--ry');
+    if (peek) quickPeek.requestClose();
+  };
+  const coverRgb = hexToChannels(media.cover_image.color);
+
   const caption = [media.season_year, media.genres?.[0]].filter(Boolean).join(' · ');
   const format = media.format && media.format !== 'TV' ? media.format.replace(/_/g, ' ') : null;
 
   return (
     <div
       ref={rootRef}
-      className={`group relative flex flex-col flex-shrink-0 select-none ${className}`}
-      style={style}
+      className={`ui-anime-card group relative flex flex-col flex-shrink-0 select-none ${className}`}
+      style={coverRgb ? ({ ...style, '--cover-rgb': coverRgb } as React.CSSProperties) : style}
       onContextMenu={openMenu}
       onPointerEnter={peek ? (e) => e.pointerType !== 'touch' && quickPeek.requestOpen() : undefined}
-      onPointerLeave={peek ? quickPeek.requestClose : undefined}
+      onPointerMove={tilt}
+      onPointerLeave={untilt}
       onPointerDown={
         peek
           ? (e) => {
@@ -121,65 +145,72 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
           : undefined
       }
     >
-      <Link
-        ref={linkRef}
-        to={`/detail/${media.id}`}
-        draggable={false}
-        aria-describedby={peekOpen ? peekId : undefined}
-        aria-haspopup="menu"
-        onKeyDown={(e) => {
-          if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') openMenu(e);
-        }}
-        className="flex flex-col rounded-xl"
-      >
-        <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card">
-          <ShimmerImage
-            src={coverUrl}
-            alt=""
-            className="w-full h-full transition-transform duration-150 group-hover:scale-[1.04]"
-          />
+      {/* What lifts and tilts on hover: the poster, its bookmark button and its quick look together. */}
+      <div className="ui-card-tilt relative flex flex-col">
+        <Link
+          ref={linkRef}
+          to={detailPath}
+          // The cover moves over into the anime page where the browser can (detail.css); a plain fade otherwise.
+          viewTransition={!prefersLessMotion()}
+          draggable={false}
+          aria-describedby={peekOpen ? peekId : undefined}
+          aria-haspopup="menu"
+          onKeyDown={(e) => {
+            if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') openMenu(e);
+          }}
+          className="flex flex-col rounded-xl"
+        >
+          <div className={clsx('relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card', opening && 'ui-vt-cover')}>
+            <ShimmerImage
+              src={coverUrl}
+              alt=""
+              className="w-full h-full transition-transform duration-150 group-hover:scale-[1.04]"
+            />
 
-          {format && <span className={clsx(BADGE_CLASS, 'absolute start-2 top-2')}>{format}</span>}
+            {format && <span className={clsx(BADGE_CLASS, 'absolute start-2 top-2')}>{format}</span>}
 
-          {media.average_score !== null && media.average_score !== undefined && (
-            <span className={clsx(BADGE_CLASS, 'absolute end-2 top-2 tabular-nums')}>
-              {media.average_score}%
-            </span>
+            {media.average_score !== null && media.average_score !== undefined && (
+              <span className={clsx(BADGE_CLASS, 'absolute end-2 top-2 tabular-nums')}>
+                {media.average_score}%
+              </span>
+            )}
+
+            {showProgress !== undefined && showProgress > 0 && (
+              <div className="absolute bottom-0 start-0 end-0 h-1 bg-white/20">
+                <div
+                  className="h-full bg-accent-500"
+                  style={{ width: `${Math.min(100, Math.max(0, showProgress))}%` }}
+                />
+              </div>
+            )}
+          </div>
+
+          <h3 title={title} className="mt-2 text-[13px] font-medium leading-[18px] text-text-primary line-clamp-2">
+            <bdi>{title}</bdi>
+          </h3>
+          {caption && <span className="mt-0.5 truncate text-xs text-text-muted">{caption}</span>}
+        </Link>
+
+        {/* A sibling of the link, not a child: a button inside a link is invalid and unreachable by keyboard. */}
+        <button
+          type="button"
+          onClick={handleWatchlistClick}
+          aria-label={t(inWatchlist ? 'animeCard.removeFromWatchlist' : fun ? 'fun.addToParty' : 'animeCard.addToWatchlist', { title })}
+          aria-pressed={inWatchlist}
+          className={clsx(
+            'absolute start-2 flex h-8 w-8 items-center justify-center rounded-md bg-black/70 cursor-pointer transition-[opacity,background-color] hover:bg-black/90',
+            format ? 'top-9' : 'top-2',
+            // The chip is always black, so the saved state uses a fixed light colour in every theme.
+            inWatchlist
+              ? 'text-white'
+              : 'text-white opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
           )}
+        >
+          <Bookmark aria-hidden="true" className={clsx('h-4 w-4', inWatchlist && 'fill-current')} />
+        </button>
 
-          {showProgress !== undefined && showProgress > 0 && (
-            <div className="absolute bottom-0 start-0 end-0 h-1 bg-white/20">
-              <div
-                className="h-full bg-accent-500"
-                style={{ width: `${Math.min(100, Math.max(0, showProgress))}%` }}
-              />
-            </div>
-          )}
-        </div>
-
-        <h3 title={title} className="mt-2 text-[13px] font-medium leading-[18px] text-text-primary line-clamp-2">
-          {title}
-        </h3>
-        {caption && <span className="mt-0.5 truncate text-xs text-text-muted">{caption}</span>}
-      </Link>
-
-      {/* A sibling of the link, not a child: a button inside a link is invalid and unreachable by keyboard. */}
-      <button
-        type="button"
-        onClick={handleWatchlistClick}
-        aria-label={t(inWatchlist ? 'animeCard.removeFromWatchlist' : 'animeCard.addToWatchlist', { title })}
-        aria-pressed={inWatchlist}
-        className={clsx(
-          'absolute start-2 flex h-8 w-8 items-center justify-center rounded-md bg-black/70 cursor-pointer transition-[opacity,background-color] hover:bg-black/90',
-          format ? 'top-9' : 'top-2',
-          // The chip is always black, so the saved state uses a fixed light colour in every theme.
-          inWatchlist
-            ? 'text-white'
-            : 'text-white opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
-        )}
-      >
-        <Bookmark aria-hidden="true" className={clsx('h-4 w-4', inWatchlist && 'fill-current')} />
-      </button>
+        {peekOpen && <QuickPeekCard id={peekId} media={media} title={title} />}
+      </div>
 
       {menuAt && (
         <PosterContextMenu
@@ -194,18 +225,6 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
           at={menuAt}
           onClose={() => setMenuAt(null)}
           returnFocusTo={linkRef.current}
-        />
-      )}
-
-      {peekOpen && (
-        <QuickPeekCard
-          id={peekId}
-          media={media}
-          title={title}
-          anchorRef={rootRef}
-          onPointerEnter={quickPeek.requestOpen}
-          onPointerLeave={quickPeek.requestClose}
-          onDismiss={quickPeek.closeNow}
         />
       )}
     </div>

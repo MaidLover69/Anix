@@ -76,7 +76,7 @@ export const DetailStickyBar: React.FC<DetailStickyBarProps> = ({
           role="region"
           aria-label={t('detailStickyBar.titleActions', { title })}
           className={clsx(
-            'ui-frost ui-bar-in absolute inset-x-0 top-2 flex h-14 items-center gap-3 rounded-xl border border-border px-3 shadow-pop'
+            'ui-frost ui-bar-drop absolute inset-x-0 top-2 flex h-14 items-center gap-3 rounded-xl border border-border px-3 shadow-pop'
           )}
         >
           <ShimmerImage src={cover} alt="" className="aspect-[2/3] h-10 flex-shrink-0 rounded-md bg-bg-elevated" />

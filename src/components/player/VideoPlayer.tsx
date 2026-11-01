@@ -11,7 +11,15 @@ import { AUDIO_MODES, PlayerControls } from './PlayerControls';
 import type { EpisodeStep } from './PlayerControls';
 import { PlayerSettingsPanel } from './PlayerSettingsPanel';
 import { PauseDetails, PlayerClock } from './PlayerTopBar';
-import { countdownLabel, HOLD_RATE, mpvSubtitlePositions, objectFitClass, PAUSE_DETAILS_MS, stepSpeed } from './playerLogic';
+import {
+  countdownLabel,
+  HOLD_RATE,
+  mpvSubtitlePositions,
+  objectFitClass,
+  PAUSE_DETAILS_MS,
+  SKIP_COUNTDOWN_SECONDS,
+  stepSpeed,
+} from './playerLogic';
 import { watchStall } from '../../lib/stall';
 import type { StallWatch } from '../../lib/stall';
 import { SecondarySubtitle } from './SecondarySubtitle';
@@ -35,7 +43,7 @@ import { usePlayerEngine } from '../../hooks/usePlayerEngine';
 import type { PlayerEngine, QualityLevel } from '../../hooks/usePlayerEngine';
 import { usePlayerShortcuts } from '../../hooks/usePlayerShortcuts';
 import { useSkipTimes } from '../../hooks/useProviders';
-import { useSettings } from '../../hooks/useSettings';
+import { useFunMode, useSettings } from '../../hooks/useSettings';
 import { useStoredChoice } from '../../hooks/useStoredChoice';
 import { useSubtitleDrop } from '../../hooks/useSubtitleDrop';
 import { hasSkipTimes, useSkipSegments } from '../../hooks/useSkipSegments';
@@ -114,6 +122,9 @@ interface ExternalPlayerProgress {
 
 /** A watch party guest follows the host's position, so it skips nothing by itself. */
 const NO_AUTO_SKIP: AutoSkip = { intro: false, outro: false };
+
+/** The bars and the cursor hide after this long without mouse or keyboard activity. */
+const CHROME_IDLE_MS = 2500;
 
 /** Saved positions this close to the end, or to the start, are not resumed. */
 const RESUME_END_FRACTION = 0.95;
@@ -353,7 +364,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [subtitleSettingsOpen, setSubtitleSettingsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const panelOpen = subtitleSettingsOpen || settingsOpen || partyOpen || overlayOpen;
-  const chrome = useAutoHide((media.playing || engine.rebuffering) && engine.phase === 'ready' && !panelOpen);
+  const chrome = useAutoHide((media.playing || engine.rebuffering) && engine.phase === 'ready' && !panelOpen, CHROME_IDLE_MS);
 
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = guest ? () => {} : onEnded;
@@ -744,8 +755,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     [engine.levels, engine.activeLevel]
   );
 
+  const fun = useFunMode();
   const errorActions: PlayerStatusAction[] = [
-    { label: t('common.retry'), onClick: onReload, primary: true },
+    { label: t(fun ? 'fun.retry' : 'common.retry'), onClick: onReload, primary: true },
     { label: t('videoPlayer.changeServer'), onClick: onOpenServers },
     ...(onTryOtherServers ? [{ label: t('videoPlayer.tryOtherServers'), onClick: onTryOtherServers }] : []),
     ...(extraErrorActions ?? []),
@@ -835,7 +847,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ref={rootRef}
       // Time, seek bar and the left/right seek zones read left to right in every language.
       dir="ltr"
-      className={`absolute inset-0 select-none ${chrome.visible ? '' : 'cursor-none'}`}
+      // Entering the mini-player, the web player shrinks in with a small spring (player.css). Not
+      // with embedded mpv: it draws the picture under the page, which a page transform cannot move.
+      className={`absolute inset-0 select-none ${chrome.visible ? '' : 'cursor-none'} ${
+        miniPlayer.mini && !isMpv ? 'player-shrink-in' : ''
+      }`}
       onMouseMove={chrome.poke}
       onKeyDownCapture={chrome.poke}
       onFocusCapture={chrome.poke}
@@ -904,12 +920,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <PlayerStatus
           scrim
           kind="error"
-          title={providerName ? t('videoPlayer.playbackFailedOn', { provider: providerName }) : t('videoPlayer.playbackFailed')}
+          title={
+            providerName
+              ? t(fun ? 'fun.streamFledOn' : 'videoPlayer.playbackFailedOn', { provider: providerName })
+              : t(fun ? 'fun.streamFled' : 'videoPlayer.playbackFailed')
+          }
           detail={engine.error}
           actions={errorActions}
         />
       ) : loading ? (
-        <PlayerStatus kind="loading" title={t('videoPlayer.loadingStream')} />
+        <PlayerStatus kind="loading" title={t(fun ? 'fun.chargingBeam' : 'videoPlayer.loadingStream')} />
       ) : (
         (media.buffering || engine.rebuffering) && (
           <div role="status" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -924,7 +944,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           role="status"
           // The player root is ltr for its controls; this sentence and its buttons follow the UI language.
           dir={document.documentElement.dir || 'ltr'}
-          className="absolute left-1/2 top-16 z-20 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-lg border border-white/20 bg-black/80 px-4 py-2 text-[13px] text-white"
+          // A pill that drops in from the top (player.css), once, when playback gets stuck.
+          className="player-drop absolute left-1/2 top-16 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-center gap-2 rounded-full border border-white/20 bg-black/90 py-1.5 pe-1.5 ps-4 text-[13px] text-white shadow-pop"
         >
           <span>{t('videoPlayer.stuckTitle')}</span>
           <button
@@ -933,7 +954,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               spendStallOffer();
               (onTryOtherServers ?? onOpenServers)();
             }}
-            className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
+            className="h-8 rounded-full bg-accent-600 px-3.5 font-semibold text-on-accent cursor-pointer transition-colors hover:bg-accent-500"
           >
             {onTryOtherServers ? t('videoPlayer.tryOtherServers') : t('videoPlayer.changeServer')}
           </button>
@@ -944,7 +965,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 spendStallOffer();
                 onEngineFail(t('videoPlayer.stuckReason'));
               }}
-              className="h-8 rounded-md bg-white/15 px-3 font-medium cursor-pointer transition-colors hover:bg-white/25"
+              className="h-8 rounded-full bg-white/15 px-3.5 font-medium cursor-pointer transition-colors hover:bg-white/25"
             >
               {t('videoPlayer.useWebPlayer')}
             </button>
@@ -952,7 +973,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             type="button"
             onClick={spendStallOffer}
-            className="h-8 rounded-md px-2 text-white/80 cursor-pointer transition-colors hover:bg-white/15 hover:text-white"
+            className="h-8 rounded-full px-3 text-white/80 cursor-pointer transition-colors hover:bg-white/15 hover:text-white"
           >
             {t('common.close')}
           </button>
@@ -972,8 +993,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   ? t('videoPlayer.skipIntroWithKey')
                   : t('videoPlayer.skipEndingWithKey')
             }
-            className="h-9 rounded-md border border-white/20 bg-black/70 px-4 text-[13px] font-medium tabular-nums text-white cursor-pointer transition-colors hover:bg-black/90"
+            className="relative isolate h-10 overflow-hidden rounded-md border border-white/50 bg-black/70 px-4 text-[13px] font-semibold tabular-nums text-white cursor-pointer transition-colors hover:bg-black/90"
           >
+            {skip.countdown !== null && (
+              // Fills a third more at each of 3, 2, 1, in steps with no transition: nothing glides over the video.
+              <span
+                aria-hidden="true"
+                className="absolute inset-y-0 left-0 -z-10 bg-accent-500/40"
+                style={{ width: `${((SKIP_COUNTDOWN_SECONDS + 1 - countdownLabel(skip.countdown)) / SKIP_COUNTDOWN_SECONDS) * 100}%` }}
+              />
+            )}
             {skip.countdown !== null
               ? t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntroIn' : 'videoPlayer.skipEndingIn', {
                   seconds: countdownLabel(skip.countdown),
@@ -986,7 +1015,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={skip.cancelCountdown}
               onMouseDown={(e) => e.preventDefault()}
               title={t('videoPlayer.keepWatchingWithKey')}
-              className="h-9 rounded-md border border-white/20 bg-black/70 px-3 text-[13px] text-white cursor-pointer transition-colors hover:bg-black/90"
+              className="h-10 rounded-md border border-white/20 bg-black/70 px-3 text-[13px] text-white cursor-pointer transition-colors hover:bg-black/90"
             >
               {t('common.cancel')}
             </button>
@@ -1011,7 +1040,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {pausedLong && !panelOpen && !miniPlayer.mini && (
-        <PauseDetails title={animeTitle} episode={episodeNumber} episodeTitle={episodeTitle} meta={metaLine} />
+        <PauseDetails
+          title={animeTitle}
+          episode={episodeNumber}
+          episodeTitle={episodeTitle}
+          meta={metaLine}
+          // Read when the pause screen appears, which an `ended` pause leads to.
+          cleared={fun && videoRef.current?.ended === true}
+          continued={fun && videoRef.current?.ended === true && next !== null}
+        />
       )}
 
       {miniPlayer.mini ? (

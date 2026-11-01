@@ -7,6 +7,7 @@ import type { ToastMessage } from '../stores/uiStore';
 import { Button } from './ui/Button';
 import { t } from '../i18n';
 import { useFullscreenElement } from '../hooks/useFullscreen';
+import { Sfx } from './FunBits';
 
 interface ToastContainerProps {
   /**
@@ -60,7 +61,11 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
               resumeToast(toast.id);
             }
           }}
-          className="ui-toast pointer-events-auto flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 ps-4 pe-2 shadow-pop animate-slide-up"
+          // Springs in on ordinary screens; over the player it just appears, so nothing moves over the picture.
+          className={clsx(
+            'ui-toast pointer-events-auto relative flex max-w-full items-start gap-3 rounded-xl border border-border-strong bg-bg-elevated py-3 ps-4 pe-2 shadow-pop',
+            placement === 'bottom-right' && 'ui-toast-in'
+          )}
         >
           {ICONS[toast.type]}
           <div className="flex min-w-0 flex-1 flex-col">
@@ -73,6 +78,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ placement = 'bot
               </p>
             )}
           </div>
+          {toast.art === 'levelUp' && <Sfx text={t('fun.sfxSparkle')} className="fun-sfx-toast" />}
           <Button
             icon
             variant="ghost"

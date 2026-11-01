@@ -80,7 +80,7 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
           </Button>
         </div>
       </div>
-      <ol ref={scrollRef} className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 py-1 scroll-px-1 no-scrollbar">
+      <ol ref={scrollRef} className="relative -mx-1 flex snap-x gap-3 overflow-x-auto px-1 py-1 scroll-px-1 no-scrollbar">
         {entries.map(({ node, number, side, current }) => {
           const caption = [side ? t('watchOrder.sideStory') : null, mediaFormatLabel(node.format ?? null), node.seasonYear]
             .filter(Boolean)

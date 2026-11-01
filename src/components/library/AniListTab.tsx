@@ -51,6 +51,7 @@ export const AniListTab: React.FC = () => {
       <EmptyState
         icon={<Cloud className="w-8 h-8" aria-hidden="true" />}
         title={t('aniListTab.notConnected')}
+        mood="confused"
         description={t('aniListTab.notConnectedHint')}
         action={
           <Button variant="primary" onClick={() => setAuthDialogOpen(true)}>

@@ -1,0 +1,31 @@
+/**
+ * Settings: each section's rows drawn as one group of cards. Every direct child of a section is a
+ * card; :where() keeps these rules at zero specificity, so a child's own background and padding
+ * (a notice, the restart banner, an empty state) still win. Colours and corners are theme tokens.
+ */
+.ui-settings-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+:where(.ui-settings-rows > *) {
+  background: rgb(var(--bg-card));
+  border: 1px solid rgb(var(--border-rgb) / var(--border-alpha));
+  border-radius: var(--radius-md);
+  padding-inline: 1rem;
+}
+:where(.ui-settings-rows > :first-child) {
+  border-start-start-radius: var(--radius-xl);
+  border-start-end-radius: var(--radius-xl);
+}
+:where(.ui-settings-rows > :last-child) {
+  border-end-start-radius: var(--radius-xl);
+  border-end-end-radius: var(--radius-xl);
+}
+/* The ink outline Manga and Comic give every panel, and Hacker's stronger line. */
+:root:is([data-theme="manga"], [data-theme="comic"]) :where(.ui-settings-rows > *) {
+  border: 2px solid rgb(var(--border-rgb));
+}
+:root[data-theme="hacker"] :where(.ui-settings-rows > *) {
+  border-color: rgb(var(--border-rgb) / var(--border-strong-alpha));
+}

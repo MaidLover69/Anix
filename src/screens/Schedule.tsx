@@ -58,13 +58,13 @@ const NowLine: React.FC<{ now: number; timeline: boolean }> = ({ now, timeline }
     {timeline && (
       <span
         aria-hidden="true"
-        className="absolute -start-[24px] top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-accent-500 motion-safe:animate-pulse"
+        className="absolute -start-[24px] top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-state-error motion-safe:animate-pulse"
       />
     )}
-    <span className="text-[11px] font-semibold uppercase tracking-wider tabular-nums text-accent-300">
+    <span className="text-[11px] font-semibold uppercase tracking-wider tabular-nums text-state-error">
       {tn('schedule.nowAt', { time: <span className="font-medium normal-case tracking-normal">{timeOf(now, format)}</span> })}
     </span>
-    <span aria-hidden="true" className="h-px flex-1 bg-accent-500" />
+    <span aria-hidden="true" className="h-0.5 flex-1 rounded-full bg-state-error" />
   </li>
   );
 };
@@ -177,6 +177,11 @@ const ScheduleEntry: React.FC<{ entry: AiringEntry; now: number; variant: ViewMo
             )}
           </span>
         </span>
+        {hasAired && entry.episode > 0 && (
+          <span className="flex-shrink-0 rounded-sm bg-state-success/15 px-1.5 py-0.5 text-[11px] font-medium text-state-success">
+            {t('schedule.newEpisode')}
+          </span>
+        )}
       </Link>
       {bell('icon')}
     </div>
@@ -281,7 +286,7 @@ export const Schedule: React.FC = () => {
     [filtered, activeDay.start, activeDay.end]
   );
   const nowIndex = viewMode === 'grid' ? null : nowLineIndex(entries, now, activeDay.offset === 0);
-  const next = useMemo(() => upNext(schedule, myListIds, now), [schedule, myListIds, now]);
+  const next = useMemo(() => upNext(schedule, myListIds, now, 4), [schedule, myListIds, now]);
   const anyFilter = !!filters.format || filters.myList || filters.dub;
   const clearFilters = () =>
     setParams(
@@ -411,6 +416,7 @@ export const Schedule: React.FC = () => {
 
       <div className="-mx-1 overflow-x-auto px-1 no-scrollbar">
         <SegmentedControl
+          className="ui-day-pills"
           aria-label={t('schedule.day')}
           value={String(activeDay.offset)}
           onChange={(value) => setParam('day', value === '0' ? null : value)}
@@ -421,10 +427,13 @@ export const Schedule: React.FC = () => {
               count: counts[i],
             }),
             label: (
-              <span className="flex items-center gap-1.5">
-                {day.offset === 0 && <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent-500" />}
-                <span>{day.weekday}</span>
-                <span className="tabular-nums">{day.dayOfMonth}</span>
+              <span className="flex flex-col items-center leading-tight">
+                {day.offset === 0 ? (
+                  <span className="text-[10px] font-bold uppercase tracking-wider">{t('schedule.today')}</span>
+                ) : (
+                  <span className="text-[11px] font-normal">{day.weekday}</span>
+                )}
+                <span className="text-base font-semibold tabular-nums text-text-primary">{day.dayOfMonth}</span>
                 {!isLoading && !isError && (
                   <span className="text-[11px] font-normal tabular-nums text-text-muted">{t('schedule.episodeCountShort', { count: counts[i] })}</span>
                 )}
@@ -464,7 +473,7 @@ export const Schedule: React.FC = () => {
         <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-6">
           <div className="min-w-0">{list}</div>
           <aside aria-label={t('schedule.thisWeek')} className="sticky top-0 flex flex-col gap-4">
-            <UpNextCard entry={next} now={now} />
+            <UpNextCard entries={next} now={now} />
             <MonthCalendar
               days={days.map((day, i) => ({ ...day, count: counts[i] }))}
               selected={activeDay.offset}
@@ -473,7 +482,11 @@ export const Schedule: React.FC = () => {
           </aside>
         </div>
       ) : (
-        list
+        // At narrow widths the Up next card moves under the list.
+        <>
+          {list}
+          <UpNextCard entries={next} now={now} />
+        </>
       )}
     </div>
   );

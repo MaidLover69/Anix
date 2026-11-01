@@ -102,4 +102,37 @@ assert.equal(storageState(10, 10, 2), 'tight');
 assert.equal(storageState(9, 10, 2), 'tight');
 assert.equal(storageState(8, 10, 2), 'ok');
 
+// Schedule › Up next: soonest first, one per anime, only from the list, only still to air. The
+// countdown text needs the locale files, so `t` is stubbed; upNext never calls it.
+register(
+  'data:text/javascript,' +
+    encodeURIComponent(
+      `export async function resolve(s, c, next) {
+        return s === '../../i18n'
+          ? { url: 'data:text/javascript,export const t=()=>"";', shortCircuit: true }
+          : next(s, c);
+      }`
+    )
+);
+const { upNext } = await import('../src/components/schedule/timeline.ts');
+{
+  const e = (media_id, airing_at) => ({ media_id, airing_at, format: null });
+  const all = [e(1, 300), e(2, 200), e(1, 150), e(3, 50), e(4, 400), e(5, 250)];
+  const mine = new Set([1, 2, 3, 4]);
+  assert.deepEqual(upNext(all, mine, 100, 4).map((x) => [x.media_id, x.airing_at]), [[1, 150], [2, 200], [4, 400]]);
+  assert.deepEqual(upNext(all, mine, 100).map((x) => x.media_id), [1], 'one by default');
+  assert.deepEqual(upNext(all, new Set(), 100, 4), [], 'nothing on the list');
+}
+
+// Notifications › Today / Earlier: split at local midnight, order kept.
+const { splitByDay } = await import('../src/lib/time.ts');
+{
+  const now = new Date(2026, 9, 31, 10, 0).getTime();
+  const midnight = new Date(2026, 9, 31).getTime();
+  const items = [{ created_at: now }, { created_at: midnight }, { created_at: midnight - 1 }, { created_at: 0 }];
+  const { today, earlier } = splitByDay(items, now);
+  assert.deepEqual(today, items.slice(0, 2));
+  assert.deepEqual(earlier, items.slice(2));
+}
+
 console.log('history tests passed');

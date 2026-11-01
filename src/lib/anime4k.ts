@@ -3,8 +3,6 @@ import type { TKey } from '../i18n';
 /** Anime4K upscaling presets of the embedded mpv engine (shaders bundled, MIT, by bloc97). */
 export type Anime4kPreset = 'off' | 'a_fast' | 'b_fast' | 'c_fast' | 'a_hq' | 'b_hq' | 'c_hq';
 
-export const ANIME4K_PRESETS: readonly Anime4kPreset[] = ['off', 'a_fast', 'b_fast', 'c_fast', 'a_hq', 'b_hq', 'c_hq'];
-
 export type Anime4kMode = 'off' | 'a' | 'b' | 'c';
 export type Anime4kQuality = 'fast' | 'hq';
 

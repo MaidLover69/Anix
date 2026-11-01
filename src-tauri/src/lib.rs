@@ -235,7 +235,6 @@ pub fn run() {
             commands::update_watch_progress,
             commands::add_to_watchlist,
             commands::remove_from_watchlist,
-            commands::is_in_watchlist,
             commands::get_watchlist,
             commands::set_episodes_watched,
             commands::get_watched_history,

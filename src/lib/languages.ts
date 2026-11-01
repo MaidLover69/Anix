@@ -62,12 +62,6 @@ const LANGUAGES: LanguageEntry[] = [
   { code: 'et', name: 'Estonian', aliases: ['est', 'eesti'] },
 ];
 
-/** Every language the app knows, by English name. */
-export const KNOWN_LANGUAGES: { code: string; name: string }[] = LANGUAGES.map(({ code, name }) => ({
-  code,
-  name,
-})).sort((a, b) => a.name.localeCompare(b.name));
-
 /** Every language the app knows, named and sorted in the interface language (for pickers). */
 export function knownLanguages(): { code: string; name: string }[] {
   const lang = locale();

@@ -133,16 +133,6 @@ pub async fn remove_from_watchlist(
 }
 
 #[tauri::command]
-pub async fn is_in_watchlist(
-    state: State<'_, AppState>,
-    anilist_id: i32,
-) -> Result<bool, String> {
-    db::is_in_watchlist(&state.pool, anilist_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn get_watchlist(
     state: State<'_, AppState>,
 ) -> Result<Vec<WatchlistEntry>, String> {

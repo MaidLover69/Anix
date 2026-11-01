@@ -78,25 +78,6 @@ export function mediaFormatLabel(format: string | null | undefined): string {
   return key ? t(key) : sentenceCase(format);
 }
 
-const DOWNLOAD_STATUS_LABELS: Record<string, string> = {
-  QUEUED: 'Queued',
-  DOWNLOADING: 'Downloading',
-  COMPLETED: 'Completed',
-  FAILED: 'Failed',
-};
-
-export function downloadStatusLabel(status: string): string {
-  return DOWNLOAD_STATUS_LABELS[status.toUpperCase()] ?? sentenceCase(status);
-}
-
-export const ANILIST_LIST_STATUSES: { value: string; label: string }[] = [
-  { value: 'CURRENT', label: 'Watching' },
-  { value: 'PLANNING', label: 'Planning' },
-  { value: 'COMPLETED', label: 'Completed' },
-  { value: 'PAUSED', label: 'Paused' },
-  { value: 'DROPPED', label: 'Dropped' },
-];
-
 export function episodeLabel(episode: number): string {
   return t('common.episodeNumber', { number: episode });
 }

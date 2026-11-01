@@ -33,10 +33,6 @@ export function stepSpeed(rate: number, direction: 1 | -1): number {
 export const HOLD_MS = 300;
 export const HOLD_RATE = 2;
 
-export function isHold(pressedAt: number, now: number): boolean {
-  return now - pressedAt >= HOLD_MS;
-}
-
 /** Auto-skip counts down on the button before it jumps. */
 export const SKIP_COUNTDOWN_SECONDS = 3;
 
@@ -97,7 +93,6 @@ export function mpvSubtitlePositions(input: SubtitlePositionInput): { primary: n
 }
 
 export type ScreenFit = 'fit' | 'crop' | 'fill';
-export const SCREEN_FITS: readonly ScreenFit[] = ['fit', 'crop', 'fill'];
 
 /** The web engine's `object-fit` class for a fit mode. */
 export function objectFitClass(fit: ScreenFit): string {

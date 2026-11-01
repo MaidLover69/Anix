@@ -674,14 +674,6 @@ export interface AnimeThemeEntry {
   resolution: number | null;
 }
 
-export interface LocalAnimeFile {
-  file_path: string;
-  file_name: string;
-  file_size: number;
-  parsed_title: string;
-  parsed_episode: number | null;
-}
-
 export interface CustomPlaylist {
   id: string;
   name: string;

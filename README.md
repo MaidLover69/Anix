@@ -6,8 +6,8 @@
 
 ### An anime catalogue, tracker, and local library player for Linux
 
-[![Platform](https://img.shields.io/badge/Platform-Linux%20(AppImage%20%7C%20RPM%20%7C%20DEB)-E95420?logo=linux&logoColor=white)](https://anix-linux.vercel.app)
-[![Version](https://img.shields.io/badge/Version-1.3.2-blue.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20(AppImage%20%7C%20RPM%20%7C%20DEB%20%7C%20Flatpak)-E95420?logo=linux&logoColor=white)](https://anix-linux.vercel.app)
+[![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <p align="center">
@@ -107,19 +107,23 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 ## Installation
 
-Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [GitHub Releases](https://github.com/MaidLover69/Anix/releases), and [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases).
+Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases), and [GitHub Releases](https://github.com/MaidLover69/Anix/releases).
 
-- **Direct AppImage Download:** [Anix_1.3.1_amd64.AppImage](https://drive.google.com/file/d/1c5IhzjZMVEbJJ6K3B1bZxlU4nWjh8ChI/view?usp=sharing)
-- [GitHub Releases](https://github.com/MaidLover69/Anix/releases) • [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases)
+- **Releases:** Download AppImage (Classic & Modern), DEB, RPM, or Flatpak from [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases) or [GitHub Releases](https://github.com/MaidLover69/Anix/releases).
+- **Arch User Repository (AUR):** Available via `anix-bin`.
 
 ### AppImage (Universal, any distribution)
+
+Anix provides two official AppImage variants:
+- **Classic (`Anix_1.4.0_amd64.AppImage`)**: Built on Ubuntu 22.04 LTS (glibc 2.35+). Works across almost every Linux distribution including Ubuntu 22.04+, Debian 12+, Linux Mint 21+, Fedora 36+, openSUSE Leap 15.6+, Arch Linux, and CachyOS.
+- **Modern (`Anix_1.4.0_amd64-modern.AppImage`)**: Built on Ubuntu 24.04 LTS (glibc 2.39+) with newer WebKitGTK and runtime libraries for bleeding-edge systems.
+
+The built-in updater automatically detects system compatibility and selects or upgrades to the appropriate AppImage variant.
 
 ```bash
 chmod +x Anix_1.4.0_amd64.AppImage
 ./Anix_1.4.0_amd64.AppImage
 ```
-
-**Works on almost every distribution:** the AppImage is built on Ubuntu 22.04, so it runs on Ubuntu 22.04, Linux Mint 21, Debian 12, Fedora 36, openSUSE Leap 15.6 and anything newer, Arch and CachyOS included, with nothing to install. Make it executable (the `chmod +x` above, or tick *Allow executing file as program* in the file's properties) and start it.
 
 **FUSE 2:** AppImages need FUSE 2 to start. Fedora usually has it; on other distributions install it once if the AppImage does not open:
 

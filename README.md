@@ -109,6 +109,9 @@ Anix features a modular plugin architecture supporting JavaScript extensions for
 
 Packages for Linux are available from the project website: <https://anix-linux.vercel.app/download>, [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases), and [GitHub Releases](https://github.com/MaidLover69/Anix/releases).
 
+- **Direct Cloud Downloads:**
+  - **[Google Drive Folder](https://drive.google.com/drive/folders/1U6_kpB45iJxYZrEwfbt4n66TnssdH5-W?usp=sharing)** — Contains all Anix 1.4 packages (AppImage, DEB, RPM, Flatpak) and extension files.
+  - **[MEGA Alternative Folder](https://mega.nz/folder/7ExSlB6R#qA3pX6jIo6TIZXkXdvtnVg)** — Alternative mirror containing all Anix application packages.
 - **Releases:** Download AppImage (Classic & Modern), DEB, RPM, or Flatpak from [Codeberg Releases](https://codeberg.org/MaidLover69/Anix/releases) or [GitHub Releases](https://github.com/MaidLover69/Anix/releases).
 - **Arch User Repository (AUR):** Available via `anix-bin`.
 

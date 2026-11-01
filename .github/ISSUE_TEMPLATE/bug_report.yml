@@ -23,7 +23,7 @@ body:
     attributes:
       label: Anix version
       description: Settings › About, or the file name of the AppImage.
-      placeholder: "1.3.2"
+      placeholder: "1.4.0"
     validations:
       required: true
   - type: dropdown

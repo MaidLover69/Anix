@@ -10,6 +10,7 @@ import { useWindowActive } from '../hooks/useWindowActive';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
 import { t, type TKey } from '../i18n';
+import { Meme, MemeFrame, useHighModule } from './meme/Meme';
 import type { Media, HistoryEntry } from '../types';
 
 interface HeroBannerProps {
@@ -53,6 +54,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const [paused, setPaused] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<number>>(() => new Set());
   const reduceMotion = useReducedMotion();
+  const high = useHighModule();
   // Nobody watches a rotation in a hidden or background window; each slide change costs a repaint.
   const windowActive = useWindowActive();
 
@@ -143,6 +145,15 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         <div className="pointer-events-none absolute inset-y-0 start-0 w-4/5 bg-gradient-to-r rtl:bg-gradient-to-l from-bg-deepest/90 via-bg-deepest/65 to-transparent" />
         <div aria-hidden="true" className="ui-hero-speed pointer-events-none absolute inset-0" />
         <div aria-hidden="true" className="ui-hero-tone pointer-events-none absolute bottom-0 end-0 h-3/5 w-[45%]" />
+        {high && (
+          // High: Goku's beam crosses the banner behind the text to the poster (meme-high-shell.css).
+          <div aria-hidden="true" className="meme-kbeam">
+            <span>
+              <i />
+              <b className="meme-ktip" />
+            </span>
+          </div>
+        )}
 
         {/* The poster as a tilted sticker; hidden where it would crowd the text. The title is the real link. */}
         <Link
@@ -152,6 +163,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           draggable={false}
           className="ui-hero-sticker absolute bottom-10 end-[clamp(1.5rem,5vw,4.5rem)] z-10 hidden w-[clamp(7rem,12vw,10.5rem)] xl:block"
         >
+          {high && (
+            <>
+              <MemeFrame spot="heroKicker" className="meme-kimg" />
+              <b className="meme-kcap" />
+            </>
+          )}
           <ShimmerImage
             key={current.id}
             src={current.cover_image.large || current.cover_image.extra_large}
@@ -162,8 +179,13 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
         <div
           key={current.id}
-          className="ui-hero-swap relative z-20 flex max-w-2xl flex-col p-8 pb-12 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)] xl:max-w-[min(42rem,calc(100%-14rem))]"
+          className="ui-hero-swap meme-hero-body relative z-20 flex max-w-2xl flex-col p-8 pb-12 [text-shadow:0_1px_2px_rgb(var(--bg-deepest)/0.45)] xl:max-w-[min(42rem,calc(100%-14rem))]"
         >
+          {high && (
+            <p className="meme-hero-kicker mb-1 text-xs font-semibold text-text-secondary">
+              <Meme spot="heroKicker" plain={t('heroBanner.trendingNow')} />
+            </p>
+          )}
           {caption && <p className="mb-2 text-xs text-text-secondary">{caption}</p>}
 
           <h2 className="mb-2 text-[clamp(1.75rem,3vw,2.5rem)] font-black leading-tight tracking-[-0.02em] text-text-primary line-clamp-2 select-text">
@@ -196,7 +218,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 }
               >
                 <Play aria-hidden="true" className="h-4 w-4 fill-current" />
-                {target ? t('heroBanner.continueEpisode', { episode: watchEpisode }) : t('heroBanner.watchFirstEpisode')}
+                <Meme
+                  spot="heroPlay"
+                  plain={
+                    target ? t('heroBanner.continueEpisode', { episode: watchEpisode }) : t('heroBanner.watchFirstEpisode')
+                  }
+                />
               </Button>
             )}
             <Button variant="neutral" onClick={() => navigate(`/detail/${current.id}`)}>

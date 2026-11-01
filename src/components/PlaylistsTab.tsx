@@ -8,6 +8,7 @@ import type { CustomPlaylist } from '../types';
 import { CreatePlaylistModal } from './library/CreatePlaylistModal';
 import { PlaylistCollage } from './library/PlaylistCollage';
 import { PlaylistDetail } from './library/PlaylistDetail';
+import { Meme } from './meme/Meme';
 import { t } from '../i18n';
 
 export const PlaylistsTab: React.FC = () => {
@@ -88,7 +89,9 @@ export const PlaylistsTab: React.FC = () => {
           action={
             <Button variant="primary" onClick={() => setShowCreateModal(true)}>
               <Plus className="w-4 h-4" aria-hidden="true" />
-              <span>{t('playlistsTab.create')}</span>
+              <span>
+                <Meme spot="newSaga" plain={t('playlistsTab.create')} />
+              </span>
             </Button>
           }
         />

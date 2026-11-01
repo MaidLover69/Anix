@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { markParts } from '../../lib/textMarks';
 import { t } from '../../i18n';
+import { Meme, useHighModule, useMemeText, type MemeSpot } from '../meme/Meme';
 import '../../theme/settings.css';
 
 /**
@@ -28,6 +29,21 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
+
+/** Meme mode › High: each listed section's meme (nav item and heading). */
+const SECTION_MEME: Record<SettingsSectionId, MemeSpot> = {
+  appearance: 'secAppearance',
+  playback: 'secPlayback',
+  sources: 'secSources',
+  downloads: 'secDownloads',
+  system: 'secSystem',
+  network: 'secNetwork',
+  notifications: 'secNotif',
+  account: 'secAccount',
+  data: 'secData',
+  about: 'secAbout',
+  plugins: 'secPlugins',
+};
 
 const isListed = (id: string): id is SettingsSectionId => SETTINGS_SECTIONS.some((s) => s.id === id);
 
@@ -77,6 +93,7 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
   const [searchParams] = useSearchParams();
   const wide = useMediaQuery('(min-width: 1200px)');
   const [search, setSearch] = useState('');
+  const memeText = useMemeText();
   const query = search.trim().toLowerCase();
   const linked = searchParams.get('section') ?? '';
   const active: SettingsSectionId = isListed(linked) ? linked : SETTINGS_SECTIONS[0].id;
@@ -102,7 +119,9 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <div className="flex flex-col gap-6 pb-16 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold text-text-primary">{t('common.settings')}</h1>
+        <h1 className="meme-title text-xl font-semibold text-text-primary">
+          <Meme spot="setTitle" plain={t('common.settings')} />
+        </h1>
         <div role="search" className="relative w-full max-w-xs">
           <label htmlFor={searchId} className="sr-only">
             {t('settingsLayout.searchSettings')}
@@ -113,7 +132,7 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
             type="search"
             autoComplete="off"
             spellCheck={false}
-            placeholder={t('settingsLayout.searchSettings')}
+            placeholder={memeText('setSearch', t('settingsLayout.searchSettings'))}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -138,7 +157,10 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
       </div>
 
       <div className={clsx('flex', wide ? 'items-start gap-8' : 'flex-col gap-4')}>
-        <nav aria-label={t('settingsLayout.sectionsNav')} className={clsx(wide ? 'sticky top-0 w-60 flex-shrink-0' : 'w-full')}>
+        <nav
+          aria-label={t('settingsLayout.sectionsNav')}
+          className={clsx('meme-set-nav', wide ? 'sticky top-0 w-60 flex-shrink-0' : 'w-full')}
+        >
           {/* p-1 narrow: the scrolling row would clip the focus outline. */}
           <ul ref={listRef} className={clsx('flex', wide ? 'flex-col gap-0.5' : 'gap-1 overflow-x-auto p-1')}>
             {SETTINGS_SECTIONS.map((section) => {
@@ -159,7 +181,9 @@ export const SettingsShell: React.FC<{ children: React.ReactNode }> = ({ childre
                   >
                     <Icon aria-hidden="true" className={clsx('mt-0.5 h-4 w-4 flex-shrink-0', current && 'text-accent-300')} />
                     <span className="min-w-0">
-                      <span className="block truncate text-[13px] font-semibold">{t(section.titleKey)}</span>
+                      <span className="block truncate text-[13px] font-semibold">
+                        <Meme spot={SECTION_MEME[section.id]} plain={t(section.titleKey)} />
+                      </span>
                       <span className="block truncate text-xs text-text-muted">{t(section.hintKey)}</span>
                     </span>
                   </Link>
@@ -199,6 +223,7 @@ export const Section: React.FC<{
   const listed = SETTINGS_SECTIONS.find((s) => s.id === sectionKey);
   const titleMatches = !view.query || settingsMatch(title, view.query);
   const [rowMatches, setRowMatches] = useState(true);
+  const high = useHighModule();
 
   // Rows that do not match render nothing; what is left decides whether the section shows.
   useLayoutEffect(() => {
@@ -230,7 +255,7 @@ export const Section: React.FC<{
       )}
     >
       <h2 id={titleId} className="mb-1 text-base font-semibold text-text-primary">
-        <Marked text={title} />
+        {high && listed && !view.query ? <Meme spot={SECTION_MEME[listed.id]} plain={title} /> : <Marked text={title} />}
       </h2>
       <div
         ref={cardRef}
@@ -254,13 +279,17 @@ export const Row: React.FC<{
   keywords?: string;
   /** Puts the control under the label, for one that needs the full width. */
   stacked?: boolean;
+  /** Meme mode › High: the label's meme; the search finds the row by it too. */
+  meme?: MemeSpot;
   children: (ids: { labelId: string; hintId: string | undefined }) => React.ReactNode;
-}> = ({ label, hint, keywords, stacked = false, children }) => {
+}> = ({ label, hint, keywords, stacked = false, meme, children }) => {
   const labelId = useId();
   const hintId = useId();
   const { query } = useContext(ViewContext);
   const sectionMatches = useContext(SectionMatchContext);
-  if (query && !sectionMatches && !settingsMatch(`${label} ${hint ?? ''} ${keywords ?? ''}`, query)) return null;
+  const high = useHighModule();
+  const memeWords = high && meme ? high.memeText(meme, label) : '';
+  if (query && !sectionMatches && !settingsMatch(`${label} ${hint ?? ''} ${keywords ?? ''} ${memeWords}`, query)) return null;
   return (
     <div
       data-settings-match={query ? '' : undefined}
@@ -272,7 +301,7 @@ export const Row: React.FC<{
     >
       <div className="flex min-w-0 flex-col">
         <span id={labelId} className="text-[13px] font-medium text-text-primary">
-          <Marked text={label} />
+          {memeWords && meme && !query ? <Meme spot={meme} plain={label} /> : <Marked text={label} />}
         </span>
         {hint && (
           <span id={hintId} className="mt-0.5 text-xs text-text-muted">

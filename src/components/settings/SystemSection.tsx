@@ -20,6 +20,7 @@ import type { HardwareReport, RollbackInfo } from '../../types';
 import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { selfTestSummary } from './PlayerEngineSettings';
 import { t } from '../../i18n';
+import { Meme, MemeImage } from '../meme/Meme';
 
 const VENDOR_LABELS: Record<string, string> = { intel: 'Intel', amd: 'AMD', nvidia: 'NVIDIA' };
 
@@ -57,11 +58,26 @@ const ReportView: React.FC<{ report: HardwareReport }> = ({ report }) => {
       ? t('systemSection.gstOldVaapi')
       : t('systemSection.gstNoVa');
   const unknown = t('systemSection.unknown');
+  const vaapiWorks = !!va.vainfo_installed && !!va.info && va.info.decode.length > 0;
 
   return (
     <div className="flex w-full flex-col gap-3">
       <dl className="divide-y divide-border rounded-md ui-inset bg-bg-surface px-3">
-        <Fact label="VA-API" /* i18n-ignore */ value={vaapiValue} tone={va.ok ? 'ok' : va.vainfo_installed ? 'bad' : 'plain'} />
+        <Fact
+          label="VA-API" /* i18n-ignore */
+          value={
+            vaapiWorks ? (
+              <span className="flex items-center gap-2">
+                <MemeImage name="frieza-final-form" className="meme-row-sm" />
+                <span>
+                  <Meme spot="hwOk" plain={vaapiValue} />
+                </span>
+              </span>
+            ) : (
+              vaapiValue
+            )
+          }
+          tone={va.ok ? 'ok' : va.vainfo_installed ? 'bad' : 'plain'} />
         {va.info?.driver && <Fact label={t('systemSection.vaapiDriver')} value={va.info.driver} />}
         {va.error && <Fact label={t('systemSection.vainfoSaid')} value={<span className="whitespace-pre-wrap">{va.error}</span>} />}
         <Fact label={t('systemSection.gstreamer')} value={gstValue} tone={gst.va || gst.vaapi ? 'ok' : 'bad'} />
@@ -275,6 +291,7 @@ export const SystemSection: React.FC = () => {
         label={t('systemSection.diagnostics')}
         hint={t('systemSection.diagnosticsHint')}
         keywords={t('systemSection.diagnosticsKeywords')}
+        meme="diag"
       >
         {() => (
           <Button

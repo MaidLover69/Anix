@@ -547,7 +547,7 @@ impl Notifier {
                 let notification = ReleaseNotification { episodes: fresh, ..notification };
                 info!("Release notification: {} ({})", notification.title, notification.body());
                 sink.show(&notification).await;
-                keep_notice(pool, &notification).await;
+                keep_notice(pool, &notification, crate::notices::AIRING).await;
             }
             if let Some(e) = failure {
                 return Err(e);
@@ -594,7 +594,7 @@ impl Notifier {
             };
             info!("Reminder: {} ({})", notification.title, reminder.body(now));
             sink.show(&notification).await;
-            keep_notice(pool, &notification).await;
+            keep_notice(pool, &notification, crate::notices::AIRING).await;
         }
         let sent = crate::reminders::sent(pool).await?;
         Ok(crate::reminders::next_due_at(&leads, &snapshot.airings, &sent, now))
@@ -662,7 +662,7 @@ impl Notifier {
                         hit.provider,
                         release_check::found_body(episode, &row.track, hit.language.as_deref())
                     );
-                    announce(pool, sink, bell, row, note).await;
+                    announce(pool, sink, bell, row, note, crate::notices::AIRING).await;
                 }
             }
         }
@@ -679,7 +679,7 @@ impl Notifier {
                     bell.media_title,
                     release_check::missing_body(row.episode, &row.track, &checks.prefs)
                 );
-                announce(pool, sink, bell, row, note).await;
+                announce(pool, sink, bell, row, note, crate::notices::AIRING_MISSING).await;
             }
         }
         Ok(plan.wake_at)
@@ -750,7 +750,14 @@ impl Notifier {
 }
 
 /// Shows a release-check alert and keeps it for the notification centre.
-async fn announce(pool: &SqlitePool, sink: &dyn NotificationSink, bell: &Bell, row: &release_check::CheckRow, note: String) {
+async fn announce(
+    pool: &SqlitePool,
+    sink: &dyn NotificationSink,
+    bell: &Bell,
+    row: &release_check::CheckRow,
+    note: String,
+    kind: &str,
+) {
     let notification = ReleaseNotification {
         media_id: bell.media_id,
         title: bell.media_title.clone(),
@@ -759,14 +766,14 @@ async fn announce(pool: &SqlitePool, sink: &dyn NotificationSink, bell: &Bell, r
         note: Some(note),
     };
     sink.show(&notification).await;
-    keep_notice(pool, &notification).await;
+    keep_notice(pool, &notification, kind).await;
 }
 
 /// Keeps an alert for the in-app notification centre, so alerts sent while the window was
 /// closed (or by `--background`) are listed when the app opens.
-async fn keep_notice(pool: &SqlitePool, n: &ReleaseNotification) {
+async fn keep_notice(pool: &SqlitePool, n: &ReleaseNotification, kind: &str) {
     let link = format!("/detail/{}", n.media_id);
-    if let Err(e) = crate::notices::push(pool, crate::notices::AIRING, &n.title, &n.body_in(crate::i18n::current()), Some(&link)).await {
+    if let Err(e) = crate::notices::push(pool, kind, &n.title, &n.body_in(crate::i18n::current()), Some(&link)).await {
         warn!("Could not keep the alert for {} in the notification centre: {}", n.title, e);
     }
 }

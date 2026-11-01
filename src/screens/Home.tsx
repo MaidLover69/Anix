@@ -8,12 +8,13 @@ import { useContinueWatching } from '../hooks/useLibrary';
 import { usePlayful, useSettings } from '../hooks/useSettings';
 import { orderHomeRows, type HomeRowId } from '../lib/homeRows';
 import { t, type TKey } from '../i18n';
+import { Meme, MemeFrame, useHighModule, type MemeSpot } from '../components/meme/Meme';
 import type { AnimeDetails } from '../types';
 
-const CATALOG_ROWS: Record<'trending' | 'popular' | 'top_rated', { title: TKey; link: string }> = {
-  trending: { title: 'home.trendingNow', link: '/discover?sort=TRENDING_DESC' },
-  popular: { title: 'home.allTimePopular', link: '/discover?sort=POPULARITY_DESC' },
-  top_rated: { title: 'home.highestRated', link: '/discover?sort=SCORE_DESC' },
+const CATALOG_ROWS: Record<'trending' | 'popular' | 'top_rated', { title: TKey; link: string; spot: MemeSpot }> = {
+  trending: { title: 'home.trendingNow', link: '/discover?sort=TRENDING_DESC', spot: 'trendTitle' },
+  popular: { title: 'home.allTimePopular', link: '/discover?sort=POPULARITY_DESC', spot: 'popTitle' },
+  top_rated: { title: 'home.highestRated', link: '/discover?sort=SCORE_DESC', spot: 'topTitle' },
 };
 
 export const Home: React.FC = () => {
@@ -22,6 +23,7 @@ export const Home: React.FC = () => {
   const { data: localHistory } = useContinueWatching();
   const { data: settings } = useSettings();
   const playful = usePlayful();
+  const high = useHighModule();
 
   const continueWatching = localHistory ?? data?.continue_watching ?? [];
   const heroItems = data?.trending?.slice(0, 5) ?? [];
@@ -39,7 +41,7 @@ export const Home: React.FC = () => {
 
   const row = (id: HomeRowId): React.ReactNode => {
     if (id === 'continue') {
-      return <HorizontalRail key={id} title={t('home.continueWatching')} historyItems={continueWatching} />;
+      return <HorizontalRail key={id} title={t('home.continueWatching')} titleSpot="contTitle" historyItems={continueWatching} />;
     }
     if (id === 'because') {
       return lastWatched ? (
@@ -47,6 +49,7 @@ export const Home: React.FC = () => {
           key={id}
           details={lastDetails as AnimeDetails | null | undefined}
           title={t('home.becauseYouWatched', { title: lastWatched.title })}
+          titleSpot="becauseW"
         />
       ) : null;
     }
@@ -54,8 +57,9 @@ export const Home: React.FC = () => {
       return id !== firstCatalogRow ? null : (
         <ErrorState
           key="catalog-error"
-          title={playful ? t('home.anilistDownPlayful') : t('home.anilistDown')}
+          title={playful && !high ? t('home.anilistDownPlayful') : t('home.anilistDown')}
           mood="sleepy"
+          meme="catDown"
           message={
             isError
               ? undefined
@@ -67,8 +71,10 @@ export const Home: React.FC = () => {
         />
       );
     }
-    const { title, link } = CATALOG_ROWS[id];
-    return <HorizontalRail key={id} title={t(title)} items={data?.[id]} isLoading={isLoading} viewAllLink={link} />;
+    const { title, link, spot } = CATALOG_ROWS[id];
+    return (
+      <HorizontalRail key={id} title={t(title)} titleSpot={spot} items={data?.[id]} isLoading={isLoading} viewAllLink={link} />
+    );
   };
 
   return (
@@ -88,6 +94,22 @@ export const Home: React.FC = () => {
             defaultProvider={settings?.preferred_provider}
           />
         )
+      )}
+      {high && (
+        // High only: a greeting above the rails, or Naruto running while they load.
+        <p className="meme-greet">
+          {isLoading ? (
+            <>
+              <MemeFrame spot="searching" className="meme-run-sm" />
+              <Meme spot="searching" plain={t('common.loading')} />
+            </>
+          ) : (
+            <>
+              <MemeFrame spot="greet" />
+              <Meme spot="greet" plain={t('home.welcomeBack')} />
+            </>
+          )}
+        </p>
       )}
 
       {order.map(row)}

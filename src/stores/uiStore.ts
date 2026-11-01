@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { MemeSpot } from '../lib/memeCatalogue';
 import type { Media } from '../types';
 
 export interface ToastMessage {
@@ -7,8 +8,10 @@ export interface ToastMessage {
   title: string;
   message?: string;
   duration?: number;
-  /** Fun mode's decoration drawn on the toast (aria-hidden). */
+  /** Meme mode › Medium's decoration drawn on the toast (aria-hidden). */
   art?: 'levelUp';
+  /** Meme mode › High: the spot whose image replaces the icon and whose meme dresses the title. */
+  meme?: MemeSpot;
 }
 
 const DEFAULT_TOAST_MS = 3000;

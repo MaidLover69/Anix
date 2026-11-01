@@ -7,6 +7,7 @@ import { formatTime } from '../../lib/time';
 import { useTimeFormat } from '../../hooks/useSettings';
 import type { AiringEntry } from '../../types';
 import { locale, t } from '../../i18n';
+import { Meme } from '../meme/Meme';
 
 export interface CalendarDay {
   offset: number;
@@ -31,7 +32,7 @@ export const UpNextCard: React.FC<{ entries: AiringEntry[]; now: number }> = ({ 
   return (
   <section aria-labelledby="schedule-up-next" className="ui-card rounded-xl border border-border bg-bg-card p-3">
     <h2 id="schedule-up-next" className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-      {t('scheduleSide.upNext')}
+      <Meme spot="incoming" plain={t('scheduleSide.upNext')} />
     </h2>
     {entries.length > 0 ? (
       <ul className="flex flex-col gap-1">

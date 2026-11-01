@@ -22,6 +22,7 @@ import { t, type TKey } from '../i18n';
 import { useFunMode, usePlayful, useSettings } from '../hooks/useSettings';
 import { useOfflineStatus } from '../hooks/useSystem';
 import type { SearchParams } from '../hooks/useAniList';
+import { Meme, MemeFrame, useHighModule, useMemeText } from '../components/meme/Meme';
 import type { Media } from '../types';
 
 const GENRES = [
@@ -131,6 +132,8 @@ export const Discover: React.FC = () => {
   const { data: settings } = useSettings();
   const playful = usePlayful();
   const fun = useFunMode();
+  const high = useHighModule();
+  const memeText = useMemeText();
   const searchHistory = useSearchHistory();
   const [surpriseOpen, setSurpriseOpen] = useState(false);
   const [formats, statuses, sorts, minScores, seasons, years] = useMemo(
@@ -342,11 +345,14 @@ export const Discover: React.FC = () => {
   return (
     <div className="flex flex-col gap-6 pb-16 animate-fade-in">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-[1.8rem] font-black leading-tight text-text-primary">{t('discover.title')}</h1>
+        <h1 className="meme-title text-[1.8rem] font-black leading-tight text-text-primary">
+          <Meme spot="discTitle" plain={t('discover.title')} />
+        </h1>
+        {high && <span aria-hidden="true" className="meme-sfx meme-page-sfx meme-sfx-don" />}
         <span className="flex-1" />
         <Button variant="primary" onClick={() => setSurpriseOpen(true)} title={t('discover.surpriseHint')}>
           <Dices aria-hidden="true" className="h-4 w-4" />
-          {t('discover.surpriseMe')}
+          <Meme spot="surprise" plain={t('discover.surpriseMe')} />
         </Button>
       </div>
 
@@ -360,7 +366,7 @@ export const Discover: React.FC = () => {
             <input
               type="text"
               aria-label={t('discover.searchLabel')}
-              placeholder={t('discover.searchPlaceholder')}
+              placeholder={memeText('search', t('discover.searchPlaceholder'))}
               autoComplete="off"
               spellCheck={false}
               value={input}
@@ -387,7 +393,7 @@ export const Discover: React.FC = () => {
             className="min-w-44 max-w-64"
             value={sort}
             onChange={(val) => setParam('sort', val, DEFAULT_SORT)}
-            options={sorts}
+            options={high ? sorts.map((o) => ({ ...o, label: memeText('sort', o.label) })) : sorts}
           />
           <label className="flex cursor-pointer items-center gap-2 text-[13px] text-text-secondary">
             <Switch checked={hideWatched} onChange={(on) => setParam('unwatched', on ? '1' : '')} />
@@ -404,7 +410,7 @@ export const Discover: React.FC = () => {
 
         <p className="flex items-center gap-1.5 text-xs text-text-muted">
           <Info aria-hidden="true" className="h-3.5 w-3.5" />
-          {t('discover.genresHint')}
+          <Meme spot="genres" plain={t('discover.genresHint')} />
         </p>
         <div role="group" aria-label={t('discover.genresHint')} className="flex flex-wrap items-center gap-2">
           {GENRES.map((genre) => {
@@ -506,6 +512,12 @@ export const Discover: React.FC = () => {
         )}
       </div>
 
+      {isLoading && high && (
+        <p className="meme-greet justify-center">
+          <MemeFrame spot="searching" className="meme-run-sm" />
+          <Meme spot="searching" plain={t('common.loading')} />
+        </p>
+      )}
       {isLoading ? (
         <div aria-busy="true" className={GRID_CLASS}>
           {Array.from({ length: PER_PAGE }).map((_, i) => (
@@ -530,16 +542,23 @@ export const Discover: React.FC = () => {
         ) : page > 1 ? (
           <EmptyState
             icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-            title={fun ? t('fun.endOfResults') : playful ? t('discover.endPlayful') : t('discover.noMoreResults')}
+            title={
+              high ? t('discover.noMoreResults') : fun ? t('fun.endOfResults') : playful ? t('discover.endPlayful') : t('discover.noMoreResults')
+            }
             description={playful ? t('discover.endPlayfulHint') : t('discover.lastPage')}
             kaomoji="(^_^)b"
+            meme="endRes"
           />
         ) : (
           <EmptyState
             icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
-            title={fun ? t('fun.searchEmpty') : playful ? t('discover.noMatchPlayful') : t('discover.noAnimeFound')}
+            title={
+              high ? t('discover.noAnimeFound') : fun ? t('fun.searchEmpty') : playful ? t('discover.noMatchPlayful') : t('discover.noAnimeFound')
+            }
             description={playful ? t('discover.noMatchPlayfulHint') : t('discover.noMatchHint')}
             mood="confused"
+            meme="noRes"
+            memePlate
             kaomoji="(o_O)?"
             action={
               hasActiveFilters ? (

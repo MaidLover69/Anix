@@ -1,7 +1,8 @@
 import React from 'react';
 import { Modal } from './ui/Modal';
 import { t, type TKey } from '../i18n';
-import { useFunMode } from '../hooks/useSettings';
+import { useMemeLevel } from '../hooks/useSettings';
+import { Meme, type MemeSpot } from './meme/Meme';
 
 interface HotkeyCheatSheetProps {
   isOpen: boolean;
@@ -12,6 +13,8 @@ interface Shortcut {
   /** Alternatives; each one is a key or a combination of keys pressed together. */
   keys: string[][];
   description: TKey;
+  /** Meme mode › High: the row's meme. */
+  meme?: MemeSpot;
 }
 
 interface ShortcutGroup {
@@ -36,8 +39,8 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: [['Space'], ['K']], description: 'hotkeyCheatSheet.playPause' },
       // Key names stay as they are; only the word "Hold" is interface text.
-      { keys: [[HOLD_SPACE]], description: 'hotkeyCheatSheet.holdFast' },
-      { keys: [['['], [']']], description: 'hotkeyCheatSheet.speedStep' },
+      { keys: [[HOLD_SPACE]], description: 'hotkeyCheatSheet.holdFast', meme: 'holdSpace' },
+      { keys: [['['], [']']], description: 'hotkeyCheatSheet.speedStep', meme: 'bracket' },
       { keys: [['←'], ['→']], description: 'hotkeyCheatSheet.seek5' },
       { keys: [['Shift', '←'], ['Shift', '→']], description: 'hotkeyCheatSheet.seek30' },
       { keys: [['J'], ['L']], description: 'hotkeyCheatSheet.seek10' },
@@ -61,9 +64,20 @@ const Key: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export const HotkeyCheatSheet: React.FC<HotkeyCheatSheetProps> = ({ isOpen, onClose }) => {
-  const fun = useFunMode();
+  const memeLevel = useMemeLevel();
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t(fun ? 'fun.shortcutsTitle' : 'hotkeyCheatSheet.title')} size="2xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <Meme
+          spot="scTitle"
+          plain={t('hotkeyCheatSheet.title')}
+          medium={memeLevel === 'medium' ? t('fun.shortcutsTitle') : undefined}
+        />
+      }
+      size="2xl"
+    >
       {/* Two cards side by side: the short App list, then the Player list. */}
       <div className="grid max-h-[65vh] grid-cols-1 items-start gap-3 overflow-y-auto pe-1 min-[820px]:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         {SHORTCUT_GROUPS.map((group) => (
@@ -77,7 +91,9 @@ export const HotkeyCheatSheet: React.FC<HotkeyCheatSheetProps> = ({ isOpen, onCl
                   key={shortcut.description}
                   className="flex items-center justify-between gap-4 border-b border-border py-2 last:border-b-0"
                 >
-                  <dt className="text-[13px] text-text-secondary">{t(shortcut.description)}</dt>
+                  <dt className="text-[13px] text-text-secondary">
+                    {shortcut.meme ? <Meme spot={shortcut.meme} plain={t(shortcut.description)} /> : t(shortcut.description)}
+                  </dt>
                   <dd className="flex flex-shrink-0 items-center gap-1.5">
                     {shortcut.keys.map((combo, index) => (
                       <React.Fragment key={combo.join('+')}>

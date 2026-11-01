@@ -19,7 +19,7 @@ import { useMiniPlayerSession } from '../hooks/useMiniPlayer';
 import { useAnimeCatalogEpisodes, useEpisodes, useEpisodeSources } from '../hooks/useProviders';
 import { useSiteVerification } from '../hooks/useSiteVerification';
 import { PLUGIN_SETTINGS_PATH, useStreamingProviders } from '../hooks/usePlugins';
-import { AUTO_PROVIDER, DEFAULT_SETTINGS, useFunMode, useSettings } from '../hooks/useSettings';
+import { AUTO_PROVIDER, DEFAULT_SETTINGS, useFunMode, useMemeLevel, useSettings } from '../hooks/useSettings';
 import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
 import { describeStream, sourceLabel } from '../lib/languages';
@@ -37,6 +37,7 @@ import {
 import { usePlayerStore } from '../stores/playerStore';
 import '../theme/player.css';
 import { t } from '../i18n';
+import { useHighModule } from '../components/meme/Meme';
 import { listen } from '@tauri-apps/api/event';
 import { applyProgress, progressSummary } from '../lib/sourceProgress';
 import type { LookupProgress, ProgressList } from '../lib/sourceProgress';
@@ -138,7 +139,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // The Flatpak cannot start mpv or VLC, so "External player" plays here instead.
   const desktopStatus = useDesktopStatus();
   const flatpak = desktopStatus.data?.flatpak === true;
+  // Medium keeps its game wording; High keeps plain words where its picture is the meme.
   const fun = useFunMode();
+  const medium = useMemeLevel() === 'medium';
+  const high = useHighModule();
   const settings = settingsQuery.data ?? DEFAULT_SETTINGS;
   const settingsReady = !settingsQuery.isPending;
   // Embedded mpv when this run started it; a stream it cannot play falls back to the web player.
@@ -149,17 +153,19 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const handleMpvFail = useCallback(
     (message: string) => {
       setMpvFailed(true);
-      notify({ text: t('watch.switchedToWebPlayer', { message }), tone: 'error' });
+      const text = t('watch.switchedToWebPlayer', { message });
+      notify({ text: high ? high.memeText('webFallback', text) : text, tone: 'error' });
     },
-    [notify]
+    [notify, high]
   );
   // Embedded mpv was wanted but did not start (libmpv missing, GL failed): say why, once a run.
   const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available ? mpvStatus.data.error : null;
   useEffect(() => {
     if (!mpvStartError || mpvStartNoticeShown) return;
     mpvStartNoticeShown = true;
-    notify({ text: t('watch.usingWebPlayer', { message: mpvStartError }), tone: 'error' });
-  }, [mpvStartError, notify]);
+    const text = t('watch.usingWebPlayer', { message: mpvStartError });
+    notify({ text: high ? high.memeText('webFallback', text) : text, tone: 'error' });
+  }, [mpvStartError, notify, high]);
 
   // Provider keys are plugin ids; which ones exist, and their names, come from the plugin list.
   const providers = useStreamingProviders();
@@ -515,7 +521,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const openEpisodes = useCallback(() => setEpisodesOpen(true), []);
 
   const autoPlayNext = usePlayerStore((s) => s.autoPlayNext);
-  // Fun mode: the episode auto-play moves on to gets "EPISODE CLEAR / To be continued" on its loading screen,
+  // Meme mode Medium and up: the episode auto-play moves on to gets "EPISODE CLEAR / To be continued" on its loading screen,
   // since the end screen of the one that ended never shows.
   const [clearedKey, setClearedKey] = useState<string | null>(null);
   const cleared = fun && clearedKey === `${anilistId}:${episodeNumber}`;
@@ -561,11 +567,11 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const sourceErrorActions: PlayerStatusAction[] = [
     ...verification.sites.map((site) => ({
-      label: t('watch.verifySite', { site: site.label }),
+      label: high ? high.memeText('verify', t('watch.verifySite', { site: site.label })) : t('watch.verifySite', { site: site.label }),
       onClick: () => verification.verify(site.site),
       primary: true,
     })),
-    { label: t(fun ? 'fun.retry' : 'common.retry'), onClick: handleReload, primary: verification.sites.length === 0 },
+    { label: t(medium ? 'fun.retry' : 'common.retry'), onClick: handleReload, primary: verification.sites.length === 0 },
     { label: t('watch.changeServer'), onClick: openServers },
     ...(handleTryOtherServers ? [{ label: t('watch.tryOtherServers'), onClick: handleTryOtherServers }] : []),
   ];
@@ -582,7 +588,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (!details || !settingsReady || !providers.settled || (episodeMissing && episodeCheckPending)) {
-    status = <PlayerStatus kind="loading" cleared={cleared} title={t(fun ? 'fun.poweringUp' : 'common.loading')} />;
+    status = <PlayerStatus kind="loading" cleared={cleared} title={t('common.loading')} medium={t('fun.poweringUp')} />;
   } else if (episodeMissing) {
     status = (
       <PlayerStatus
@@ -625,6 +631,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       <PlayerStatus
         kind="setup"
         title={noPluginsTitle(providers.installed)}
+        meme={providers.installed === 0 ? 'noPlugins' : undefined}
         detail={t('watch.noPluginsEpisode', { detail: noPluginsDetail(providers.installed), number: episodeNumber })}
         actions={[
           { label: t('watch.openPluginSettings'), onClick: () => navigate(PLUGIN_SETTINGS_PATH), primary: true },
@@ -636,7 +643,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="loading" cleared={cleared}
-        title={t(fun ? 'fun.findingStream' : 'watch.findingStream', { number: episodeNumber })}
+        title={t('watch.findingStream', { number: episodeNumber })}
+        medium={t('fun.findingStream', { number: episodeNumber })}
+        meme="finding"
         detail={
           sourcesQuery.fetchStatus === 'paused'
             ? t('watch.waitingForNetwork')
@@ -656,7 +665,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={t(fun ? 'fun.noStreamFound' : 'watch.noStreamFound', { number: episodeNumber })}
+        title={t('watch.noStreamFound', { number: episodeNumber })}
+        medium={t('fun.noStreamFound', { number: episodeNumber })}
+        meme="noStream"
         detail={failure.details ? failure.reason : localizeError(failure.reason)}
         moreDetail={failure.details}
         chips={lookupChips}
@@ -667,7 +678,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     status = (
       <PlayerStatus
         kind="error"
-        title={t(fun ? 'fun.noStreamFound' : 'watch.noStreamFound', { number: episodeNumber })}
+        title={t('watch.noStreamFound', { number: episodeNumber })}
+        medium={t('fun.noStreamFound', { number: episodeNumber })}
+        meme="noStream"
         detail={t('watch.noStreamInAnswer')}
         actions={sourceErrorActions}
       />

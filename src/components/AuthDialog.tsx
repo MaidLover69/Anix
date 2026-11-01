@@ -16,6 +16,7 @@ import {
 } from '../hooks/useAccounts';
 import type { AccountService, AccountStatus } from '../types';
 import { t } from '../i18n';
+import { Meme } from './meme/Meme';
 
 /** The line under an account's name: who is connected, or that nobody is. */
 export function accountSummary(
@@ -63,7 +64,7 @@ export const AccountAction: React.FC<{ service: AccountService }> = ({ service }
         disabled={disconnect.isPending}
       >
         <LogOut aria-hidden="true" className="h-4 w-4" />
-        {t('authDialog.disconnect')}
+        <Meme spot="signOut" plain={t('authDialog.disconnect')} />
       </Button>
     );
   }

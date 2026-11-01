@@ -18,16 +18,20 @@ import clsx from 'clsx';
 import { useUIStore } from '../stores/uiStore';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useFunMode } from '../hooks/useSettings';
-import { FunLevelBadge, forgetSeenLevel } from './FunBits';
+import { forgetSeenLevel } from '../lib/funSeen';
 import { useUnreadNoticeCount } from '../hooks/useNotices';
 import { useActiveDownloadCount } from '../hooks/useDownloads';
 import { t, type TKey } from '../i18n';
+import { Meme, useMemeText, type MemeSpot } from './meme/Meme';
 
-const NAV_ITEMS: { to: string; icon: LucideIcon; labelKey: TKey }[] = [
-  { to: '/', icon: Home, labelKey: 'sidebar.home' },
-  { to: '/discover', icon: Compass, labelKey: 'sidebar.discover' },
-  { to: '/schedule', icon: Calendar, labelKey: 'sidebar.schedule' },
-  { to: '/library', icon: Bookmark, labelKey: 'sidebar.library' },
+// Medium and High only, so Low never loads the game pieces.
+const FunLevelBadge = React.lazy(() => import('./FunBits').then((m) => ({ default: m.FunLevelBadge })));
+
+const NAV_ITEMS: { to: string; icon: LucideIcon; labelKey: TKey; spot: MemeSpot }[] = [
+  { to: '/', icon: Home, labelKey: 'sidebar.home', spot: 'navHome' },
+  { to: '/discover', icon: Compass, labelKey: 'sidebar.discover', spot: 'navDiscover' },
+  { to: '/schedule', icon: Calendar, labelKey: 'sidebar.schedule', spot: 'navSchedule' },
+  { to: '/library', icon: Bookmark, labelKey: 'sidebar.library', spot: 'navLibrary' },
 ];
 
 const itemClass = (expanded: boolean) =>
@@ -41,38 +45,47 @@ const SidebarLink: React.FC<{
   to: string;
   icon: LucideIcon;
   label: string;
+  spot: MemeSpot;
   expanded: boolean;
   /** A count shown on the item (unread, in progress, …); hidden at 0. */
   badge?: number;
   /** The label with its count, for screen readers: "Notifications · 3 unread". */
   badgeLabel?: string;
-}> = ({ to, icon: Icon, label, expanded, badge = 0, badgeLabel = '' }) => (
-  <NavLink
-    to={to}
-    end={to === '/'}
-    title={expanded ? undefined : badge > 0 ? `${label} (${badge})` : label}
-    aria-label={badge > 0 && badgeLabel ? badgeLabel : label}
-    draggable={false}
-    className={({ isActive }) =>
-      // The highlight itself is the sidebar's one sliding `ui-nav-glider`.
-      clsx(itemClass(expanded), isActive ? 'ui-nav-active text-accent-300' : IDLE_CLASS)
-    }
-  >
-    <Icon aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
-    {expanded && <span className="flex-1 truncate">{label}</span>}
-    {badge > 0 && (
-      <span
-        aria-hidden="true"
-        className={clsx(
-          'min-w-[18px] rounded-full bg-accent-600 px-1 text-center text-[11px] font-semibold leading-[18px] text-on-accent tabular-nums',
-          !expanded && 'absolute end-1 top-0.5'
-        )}
-      >
-        {badge > 99 ? '99+' : badge}
-      </span>
-    )}
-  </NavLink>
-);
+}> = ({ to, icon: Icon, label, spot, expanded, badge = 0, badgeLabel = '' }) => {
+  const memeText = useMemeText();
+  const tip = memeText(spot, label);
+  return (
+    <NavLink
+      to={to}
+      end={to === '/'}
+      title={expanded ? undefined : badge > 0 ? `${tip} (${badge})` : tip}
+      aria-label={badge > 0 && badgeLabel ? badgeLabel : label}
+      draggable={false}
+      className={({ isActive }) =>
+        // The highlight itself is the sidebar's one sliding `ui-nav-glider`.
+        clsx(itemClass(expanded), isActive ? 'ui-nav-active text-accent-300' : IDLE_CLASS)
+      }
+    >
+      <Icon aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
+      {expanded && (
+        <span className="flex-1 truncate">
+          <Meme spot={spot} plain={label} />
+        </span>
+      )}
+      {badge > 0 && (
+        <span
+          aria-hidden="true"
+          className={clsx(
+            'min-w-[18px] rounded-full bg-accent-600 px-1 text-center text-[11px] font-semibold leading-[18px] text-on-accent tabular-nums',
+            !expanded && 'absolute end-1 top-0.5'
+          )}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </NavLink>
+  );
+};
 
 export const Sidebar: React.FC = () => {
   const sidebarExpanded = useUIStore((s) => s.sidebarExpanded);
@@ -86,7 +99,8 @@ export const Sidebar: React.FC = () => {
   const unreadNotices = useUnreadNoticeCount().data ?? 0;
   const queuedDownloads = useActiveDownloadCount();
   const fun = useFunMode();
-  // The sidebar stays mounted while Fun mode is switched in Settings (it unmounts only on the player).
+  const memeText = useMemeText();
+  // The sidebar stays mounted while Meme mode is changed in Settings (it unmounts only on the player).
   useEffect(() => {
     if (!fun) forgetSeenLevel();
   }, [fun]);
@@ -138,6 +152,7 @@ export const Sidebar: React.FC = () => {
           to="/downloads"
           icon={Download}
           label={t('sidebar.downloads')}
+          spot="navDownloads"
           expanded={expanded}
           badge={queuedDownloads}
           badgeLabel={t('sidebar.downloadsQueued', { count: queuedDownloads })}
@@ -146,6 +161,7 @@ export const Sidebar: React.FC = () => {
           to="/notifications"
           icon={Bell}
           label={t('sidebar.notifications')}
+          spot="navNotifications"
           expanded={expanded}
           badge={unreadNotices}
           badgeLabel={t('sidebar.notificationsUnread', { count: unreadNotices })}
@@ -153,18 +169,24 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       <div className="flex flex-col gap-1 p-2">
-        {fun && <FunLevelBadge expanded={expanded} />}
+        {fun && (
+          <React.Suspense fallback={null}>
+            <FunLevelBadge expanded={expanded} />
+          </React.Suspense>
+        )}
         <button
           type="button"
           onClick={() => setCommandPaletteOpen(true)}
-          title={expanded ? undefined : t('sidebar.searchHint')}
+          title={expanded ? undefined : memeText('navSearch', t('sidebar.searchHint'))}
           aria-label={t('common.search')}
           className={clsx(itemClass(expanded), IDLE_CLASS)}
         >
           <Search aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
           {expanded && (
             <>
-              <span className="flex-1 truncate text-start">{t('common.search')}</span>
+              <span className="flex-1 truncate text-start">
+                <Meme spot="navSearch" plain={t('common.search')} />
+              </span>
               <kbd className="rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
                 Ctrl+K
               </kbd>
@@ -175,14 +197,16 @@ export const Sidebar: React.FC = () => {
         <button
           type="button"
           onClick={() => setHotkeyCheatSheetOpen(true)}
-          title={expanded ? undefined : t('sidebar.shortcutsHint')}
+          title={expanded ? undefined : memeText('navShortcuts', t('sidebar.shortcutsHint'))}
           aria-label={t('sidebar.keyboardShortcuts')}
           className={clsx(itemClass(expanded), IDLE_CLASS)}
         >
           <HelpCircle aria-hidden="true" className="h-5 w-5 flex-shrink-0" />
           {expanded && (
             <>
-              <span className="flex-1 truncate text-start">{t('sidebar.shortcuts')}</span>
+              <span className="flex-1 truncate text-start">
+                <Meme spot="navShortcuts" plain={t('sidebar.shortcuts')} />
+              </span>
               <kbd className="rounded-sm bg-ink/10 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
                 ?
               </kbd>
@@ -190,7 +214,7 @@ export const Sidebar: React.FC = () => {
           )}
         </button>
 
-        <SidebarLink to="/settings" icon={Settings} label={t('common.settings')} expanded={expanded} />
+        <SidebarLink to="/settings" icon={Settings} label={t('common.settings')} spot="navSettings" expanded={expanded} />
 
         {!isNarrow && (
           <button

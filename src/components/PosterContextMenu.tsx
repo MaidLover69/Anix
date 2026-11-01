@@ -53,7 +53,7 @@ export const PosterContextMenu: React.FC<PosterContextMenuProps> = ({ target, st
 
   const copyLink = () => {
     navigator.clipboard.writeText(animeLink(target.id)).then(
-      () => showToast({ type: 'success', title: t('posterContextMenu.linkCopied'), message: animeLink(target.id) }),
+      () => showToast({ type: 'success', title: t('posterContextMenu.linkCopied'), message: animeLink(target.id), meme: 'linkCopied' }),
       (err) => showToast({ type: 'error', title: t('posterContextMenu.couldNotCopy'), message: errorMessage(err) })
     );
   };

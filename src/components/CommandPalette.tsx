@@ -14,6 +14,7 @@ import { errorMessage } from './ui/ErrorState';
 import { mediaFormatLabel } from './library/format';
 import { t, type TKey } from '../i18n';
 import { useFunMode } from '../hooks/useSettings';
+import { MemeImage, useHighModule, useMemeText } from './meme/Meme';
 import type { Media } from '../types';
 
 interface CommandPaletteProps {
@@ -61,6 +62,8 @@ function titleOf(anime: Media): string {
 const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const navigate = useNavigate();
   const fun = useFunMode();
+  const high = useHighModule();
+  const memeText = useMemeText();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -145,10 +148,17 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   return (
     <div onKeyDown={handleKeyDown} className="ui-palette">
-      {fun && (
-        <p aria-hidden="true" className="fun-menu-title border-b border-border px-4 py-1.5 text-[11px]">
-          {t('fun.commandMenu')}
+      {high ? (
+        <p aria-hidden="true" className="fun-menu-title meme-pal-title flex items-center gap-2.5 border-b border-border px-4 py-1.5 text-[11px]">
+          <MemeImage name="goku-instant-transmission" />
+          <span>{high.memeLine('palTitle')}</span>
         </p>
+      ) : (
+        fun && (
+          <p aria-hidden="true" className="fun-menu-title border-b border-border px-4 py-1.5 text-[11px]">
+            {t('fun.commandMenu')}
+          </p>
+        )
       )}
       <div className="flex h-12 items-center gap-3 border-b border-border px-4">
         <Search aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
@@ -160,7 +170,7 @@ const PaletteBody: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           aria-controls="command-palette-results"
           aria-activedescendant={activeIndex >= 0 ? `command-palette-option-${activeIndex}` : undefined}
           aria-label={t('commandPalette.searchLabel')}
-          placeholder={t('commandPalette.searchPlaceholder')}
+          placeholder={memeText('palTitle', t('commandPalette.searchPlaceholder'))}
           autoComplete="off"
           spellCheck={false}
           value={query}

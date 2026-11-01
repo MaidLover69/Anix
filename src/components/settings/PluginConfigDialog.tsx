@@ -114,7 +114,7 @@ export const PluginConfigDialog: React.FC<{ plugin: PluginInfo | null; onClose: 
     mutationFn: (next: Record<string, string>) => invoke<void>('set_plugin_config', { id, values: next }), // i18n-ignore (generic call, not text)
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
-      showToast({ type: 'success', title: t('pluginConfigDialog.saved', { name }) });
+      showToast({ type: 'success', title: t('pluginConfigDialog.saved', { name }), meme: 'saved' });
       onClose();
     },
     onError: (err) => showToast({ type: 'error', title: t('pluginConfigDialog.couldNotSave', { name }), message: errorMessage(err) }),

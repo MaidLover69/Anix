@@ -1,0 +1,307 @@
+/*
+ * Meme mode › High: Library, Schedule, Downloads, Notifications, Settings, setup, palette and
+ * dialog rules. Loaded with the High chunk (components/meme/high.tsx); the shared base is meme-high.css.
+ * Colours only from theme tokens. The one animated effect (the streak aura) stops under reduced
+ * motion and Fewer effects; images are never mirrored right to left.
+ */
+
+/* ---------------------------------------------------------- Page headers */
+
+/* A small panel after the page title (Library, Schedule). */
+.meme-hdr {
+  align-self: center;
+  width: auto;
+  height: 6.5rem;
+  max-width: 11.5rem;
+  margin-inline: 0.6rem 0.3rem;
+  transform: rotate(2.5deg);
+}
+
+:root[dir="rtl"] .meme-hdr {
+  transform: rotate(-2.5deg);
+}
+
+.meme-page-sfx {
+  font-size: 2.2rem;
+}
+
+/* The settings nav keeps its one-line truncation: meme over the plain name. */
+.meme-set-nav .mm-k {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.meme-set-nav :is(.mm-d, .mm-p) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meme-set-nav .mm-p {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------- Library › Stats */
+
+.meme-orbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.meme-orbs i {
+  display: grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  font-style: normal;
+  color: rgb(var(--ink) / 0.35);
+  background: rgb(var(--ink) / 0.08);
+}
+
+.meme-orbs i.on {
+  color: rgb(var(--error));
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, rgb(var(--warning)) 40%, white) 0 18%,
+    rgb(var(--warning)) 60%,
+    color-mix(in srgb, rgb(var(--warning)) 70%, black)
+  );
+  box-shadow: 0 0 8px rgb(var(--warning) / 0.6);
+}
+
+:root[data-theme="manga"] .meme-orbs i.on {
+  filter: grayscale(1);
+}
+
+/* The streak tile's Dragon Ball aura: a flickering crown of flames on top. */
+.meme-aura {
+  overflow: visible !important;
+  box-shadow:
+    0 0 0 2px rgb(var(--warning) / 0.55),
+    0 0 22px rgb(var(--warning) / 0.35) !important;
+}
+
+.meme-aura::before {
+  content: "";
+  position: absolute;
+  inset: -14px 6% auto;
+  height: 20px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgb(var(--warning) / 0.7), rgb(var(--warning) / 0));
+  clip-path: polygon(
+    0 100%, 6% 35%, 12% 100%, 20% 10%, 28% 100%, 36% 40%, 44% 100%, 52% 0, 60% 100%, 68% 30%, 76% 100%, 84% 12%,
+    92% 100%, 97% 45%, 100% 100%
+  );
+  transform-origin: 50% 100%;
+  animation: meme-flick 1.2s ease-in-out infinite;
+}
+
+@keyframes meme-flick {
+  50% {
+    transform: scaleY(0.75);
+    opacity: 0.8;
+  }
+}
+
+:root[data-effects="fewer"] .meme-aura::before {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meme-aura::before {
+    animation: none;
+  }
+}
+
+/* Jinwoo on the level card, top corner; the label makes room for him. */
+.fun-level-card .mimg.lvl {
+  position: absolute;
+  z-index: 1;
+  top: 0.8rem;
+  inset-inline-end: 0.8rem;
+  width: auto;
+  height: 3.6rem;
+  max-width: 6.4rem;
+}
+
+.fun-level-card:has(.mimg.lvl) > span:first-of-type {
+  padding-inline-end: 7rem;
+}
+
+/* ---------------------------------------------------------- Downloads */
+
+/* Mob's ???% meter as a burst badge. */
+.meme-mob {
+  display: inline-grid;
+  place-items: center;
+  min-width: 3.6rem;
+  padding: 0.35rem 0.5rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--on-accent));
+  background: rgb(var(--accent-600));
+  clip-path: polygon(
+    50% 0, 62% 14%, 80% 4%, 82% 24%, 100% 26%, 90% 44%, 100% 62%, 82% 70%, 84% 92%, 64% 84%, 50% 100%, 36% 84%,
+    16% 92%, 18% 70%, 0 62%, 10% 44%, 0 26%, 18% 24%, 20% 4%, 38% 14%
+  );
+  transform: rotate(-5deg);
+}
+
+:root[data-theme="manga"] .meme-mob {
+  color: #fff;
+  background: #000;
+}
+
+/* Lancer instead of the clock icon in the Up next heading. */
+h2 > .mimg.meme-dl-head {
+  width: auto;
+  height: 4.2rem;
+  max-width: 7.5rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+/* ---------------------------------------------------------- Notifications */
+
+/* "Aired, but no source yet": Pikachu's face fills the round icon slot. */
+.mimg.meme-note-img {
+  width: 100%;
+  height: 100%;
+  border-width: 1.5px;
+  border-radius: 9999px;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------- Settings */
+
+.mimg.meme-row-sm {
+  width: auto;
+  height: 2.4rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+.mimg.meme-row-md {
+  width: auto;
+  height: 5rem;
+}
+
+.mimg.meme-okabe {
+  width: auto;
+  height: 6.5rem;
+}
+
+/* A Steins;Gate divergence meter for the version (decoration). */
+.meme-nixie {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid rgb(var(--warning) / 0.4);
+  border-radius: 4px;
+  font: 700 1.5rem/1.2 ui-monospace, "JetBrains Mono", monospace;
+  letter-spacing: 0.18em;
+  direction: ltr;
+  color: rgb(var(--warning));
+  text-shadow:
+    0 0 6px rgb(var(--warning)),
+    0 0 16px rgb(var(--warning) / 0.6);
+  background: rgb(var(--ink) / 0.06);
+}
+
+:root[data-theme="light"] .meme-nixie,
+:root[data-theme="comic"] .meme-nixie,
+:root[data-theme="manga"] .meme-nixie {
+  color: rgb(var(--ink));
+  text-shadow: none;
+}
+
+/* Plugins loading: the Spirit Bomb glows instead of a spinner. */
+.meme-spirit {
+  display: block;
+  flex: none;
+  padding: 3px;
+  border-radius: 6px;
+  box-shadow: 0 0 14px rgb(var(--accent-500) / 0.8);
+}
+
+.meme-spirit .mimg {
+  width: auto;
+  height: 4.4rem;
+  box-shadow: none;
+}
+
+.meme-credits-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.35rem 1rem;
+}
+
+/* ---------------------------------------------------------- Dialogs, setup, palette */
+
+/* Dialog titles with a meme wrap instead of being cut off. */
+:root[data-meme="high"] .ui-modal h2:has(.mm-k) {
+  white-space: normal;
+}
+
+/* A character panel in a dialog (setup's Kamina, the update's Kirei), beside the text. */
+.mimg.meme-dlg-img {
+  float: inline-end;
+  width: auto;
+  height: 4.2rem;
+  max-width: 7.4rem;
+  margin: 0.25rem 0 0.5rem 0.75rem;
+  margin-inline: 0.75rem 0;
+}
+
+.flex > .mimg.meme-dlg-img {
+  float: none;
+  align-self: flex-end;
+}
+
+/* The caption sits above the plain question (the Modal puts its header slot after the title). */
+:has(> .meme-cf-cap) {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.meme-cf-cap {
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  color: rgb(var(--accent-300));
+}
+
+:root[dir="rtl"] .meme-cf-cap {
+  letter-spacing: 0;
+}
+
+:root[data-theme="comic"] .meme-cf-cap {
+  color: rgb(var(--accent-600));
+}
+
+.meme-pal-title .mimg {
+  width: 2.4rem;
+  height: 2.4rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+/* ---------------------------------------------------------- 960 px and large text */
+
+@media (max-width: 1100px) {
+  .meme-hdr {
+    height: 4.4rem;
+    max-width: 8rem;
+  }
+
+  .mimg.meme-dlg-img {
+    height: 3rem;
+  }
+
+  h2 > .mimg.meme-dl-head {
+    height: 3rem;
+  }
+}

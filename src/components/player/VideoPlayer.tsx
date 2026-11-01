@@ -43,7 +43,8 @@ import { usePlayerEngine } from '../../hooks/usePlayerEngine';
 import type { PlayerEngine, QualityLevel } from '../../hooks/usePlayerEngine';
 import { usePlayerShortcuts } from '../../hooks/usePlayerShortcuts';
 import { useSkipTimes } from '../../hooks/useProviders';
-import { useFunMode, useSettings } from '../../hooks/useSettings';
+import { useFunMode, useMemeLevel, useSettings } from '../../hooks/useSettings';
+import { Meme, useHighModule } from '../meme/Meme';
 import { useStoredChoice } from '../../hooks/useStoredChoice';
 import { useSubtitleDrop } from '../../hooks/useSubtitleDrop';
 import { useDesktopStatus } from '../../hooks/useSystem';
@@ -757,10 +758,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 
   const fun = useFunMode();
+  // Retry keeps plain words on High, where the picture is the meme.
+  const medium = useMemeLevel() === 'medium';
+  const high = useHighModule();
   // The Flatpak cannot start mpv or VLC on the host.
   const flatpak = useDesktopStatus().data?.flatpak === true;
   const errorActions: PlayerStatusAction[] = [
-    { label: t(fun ? 'fun.retry' : 'common.retry'), onClick: onReload, primary: true },
+    { label: t(medium ? 'fun.retry' : 'common.retry'), onClick: onReload, primary: true },
     { label: t('videoPlayer.changeServer'), onClick: onOpenServers },
     ...(onTryOtherServers ? [{ label: t('videoPlayer.tryOtherServers'), onClick: onTryOtherServers }] : []),
     ...(extraErrorActions ?? []),
@@ -925,19 +929,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           kind="error"
           title={
             providerName
-              ? t(fun ? 'fun.streamFledOn' : 'videoPlayer.playbackFailedOn', { provider: providerName })
-              : t(fun ? 'fun.streamFled' : 'videoPlayer.playbackFailed')
+              ? t('videoPlayer.playbackFailedOn', { provider: providerName })
+              : t('videoPlayer.playbackFailed')
           }
+          medium={providerName ? t('fun.streamFledOn', { provider: providerName }) : t('fun.streamFled')}
+          nani
           detail={engine.error}
           actions={errorActions}
         />
       ) : loading ? (
-        <PlayerStatus kind="loading" title={t(fun ? 'fun.chargingBeam' : 'videoPlayer.loadingStream')} />
+        <PlayerStatus kind="loading" title={t('videoPlayer.loadingStream')} medium={t('fun.chargingBeam')} />
       ) : (
         (media.buffering || engine.rebuffering) && (
           <div role="status" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <LoaderCircle aria-hidden="true" className="h-10 w-10 animate-spin text-white" />
-            <span className="sr-only">{t('videoPlayer.buffering')}</span>
+            {high ? (
+              // High: the words show under the spinner (static, so nothing moves but the spinner).
+              <span className="meme-buffering absolute top-1/2 mt-9 text-[13px] font-semibold text-white">
+                <Meme spot="buffering" plain={t('videoPlayer.buffering')} />
+              </span>
+            ) : (
+              <span className="sr-only">{t('videoPlayer.buffering')}</span>
+            )}
           </div>
         )
       )}
@@ -959,7 +972,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
             className="h-8 rounded-full bg-accent-600 px-3.5 font-semibold text-on-accent cursor-pointer transition-colors hover:bg-accent-500"
           >
-            {onTryOtherServers ? t('videoPlayer.tryOtherServers') : t('videoPlayer.changeServer')}
+            {onTryOtherServers ? <Meme spot="retry" plain={t('videoPlayer.tryOtherServers')} /> : t('videoPlayer.changeServer')}
           </button>
           {isMpv && (
             <button
@@ -1006,11 +1019,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 style={{ width: `${((SKIP_COUNTDOWN_SECONDS + 1 - countdownLabel(skip.countdown)) / SKIP_COUNTDOWN_SECONDS) * 100}%` }}
               />
             )}
-            {skip.countdown !== null
-              ? t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntroIn' : 'videoPlayer.skipEndingIn', {
+            {skip.countdown !== null ? (
+              <Meme
+                spot="skipBtn"
+                plain={t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntroIn' : 'videoPlayer.skipEndingIn', {
                   seconds: countdownLabel(skip.countdown),
-                })
-              : t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntro' : 'videoPlayer.skipEnding')}
+                })}
+                vars={{ n: countdownLabel(skip.countdown) }}
+              />
+            ) : (
+              t(skip.active.kind === 'intro' ? 'videoPlayer.skipIntro' : 'videoPlayer.skipEnding')
+            )}
           </button>
           {skip.countdown !== null && (
             <button

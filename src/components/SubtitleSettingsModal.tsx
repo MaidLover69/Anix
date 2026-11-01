@@ -9,6 +9,7 @@ import type { SubtitleOption } from '../hooks/useSubtitleTracks';
 import type { MediaTrackOption } from '../hooks/usePlayerEngine';
 import { usePlayerStore } from '../stores/playerStore';
 import { t } from '../i18n';
+import { Meme } from './meme/Meme';
 
 interface SubtitleSettingsModalProps {
   isOpen: boolean;
@@ -104,7 +105,7 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
     setSubtitleDelayMs(Math.max(-5000, Math.min(5000, Math.round(delayMs))));
 
   return (
-    <PlayerSidePanel isOpen={isOpen} onClose={onClose} title={t('subtitleSettingsModal.title')} container={container}>
+    <PlayerSidePanel isOpen={isOpen} onClose={onClose} title={<Meme spot="subsBtn" plain={t('subtitleSettingsModal.title')} />} container={container}>
       <PanelSection title={t('subtitleSettingsModal.tracks')}>
             <section className="flex flex-col gap-2">
               <SectionLabel>{t('subtitleSettingsModal.subtitles')}</SectionLabel>
@@ -158,7 +159,9 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
 
             {onSelectSecondary && secondarySubtitles.length > 0 && (
               <section className="flex flex-col gap-2">
-                <SectionLabel>{t('subtitleSettingsModal.secondSubtitle')}</SectionLabel>
+                <SectionLabel>
+                  <Meme spot="subSecond" plain={t('subtitleSettingsModal.secondSubtitle')} />
+                </SectionLabel>
                 <div role="radiogroup" aria-label={t('subtitleSettingsModal.secondSubtitleTrack')} className="flex flex-col gap-1">
                   {[{ id: SUBTITLES_OFF, label: t('common.off'), format: '', isDefault: false }, ...secondarySubtitles].map(
                     (option) => {
@@ -190,7 +193,9 @@ export const SubtitleSettingsModal: React.FC<SubtitleSettingsModalProps> = ({
             )}
 
             <section className="flex flex-col gap-2">
-              <SectionLabel>{t('subtitleSettingsModal.audio')}</SectionLabel>
+              <SectionLabel>
+                <Meme spot="audio" plain={t('subtitleSettingsModal.audio')} />
+              </SectionLabel>
               <div className="flex items-center justify-between gap-3 rounded-md ui-inset bg-bg-surface px-3 py-2">
                 <span className="text-[13px] text-text-secondary">{t('subtitleSettingsModal.version')}</span>
                 <SegmentedControl

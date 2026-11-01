@@ -71,7 +71,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/tests/` | Integration tests, `*_support/` helpers, `fixtures/` |
 | `src-tauri/examples/plugin_run.rs` | CLI to run one extension in the real runtime |
 | `src-tauri/resources/` | Anime4K shaders, hardware-decoding self-test clip |
-| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in), `history-test.mjs` (when a visit counts as watch history; which episodes a bulk download queues) and `routes-test.mjs` (accepted anime ids, deep links and episode numbers; anime-page scores), all run by `i18n:test` |
+| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in), `history-test.mjs` (when a visit counts as watch history; which episodes a bulk download queues), `routes-test.mjs` (accepted anime ids, deep links and episode numbers; anime-page scores; the Meme mode level of older settings and the High line catalogue) and `memes-unpack-test.mjs`, all run by `i18n:test`; `memes-unpack.mjs` (meme pack, run by `dev`/`build`) |
 | `THIRD-PARTY-NOTICES.md` | Bundled components and licences |
 | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Contributor docs and forms. Keep them in step with the rules here |
 | `docs/` | Gitignored and out of date (describes an older stack). Do not trust or copy it. |
@@ -90,7 +90,7 @@ system `libmpv.so.2` for the embedded player in debug builds, and `ffmpeg` for d
 | Run the app (dev, hot reload) | `npx --no-install tauri dev` (starts Vite on port 1420) |
 | Frontend only | `npm run dev` |
 | Type-check | `npx --no-install tsc --noEmit -p tsconfig.json` |
-| Frontend build | `npm run build` (`tsc && vite build`) |
+| Frontend build | `npm run build` (unpacks the meme pack, then `tsc && vite build`) |
 | Debug build with the UI embedded | `npx --no-install tauri build --debug --no-bundle` → `src-tauri/target/debug/anix` |
 | Rust check | `cd src-tauri && cargo check --offline` |
 | Rust tests | `cd src-tauri && cargo test --offline` (one file: `--test <name>_tests`) |
@@ -100,6 +100,7 @@ system `libmpv.so.2` for the embedded player in debug builds, and `ffmpeg` for d
 
 Notes:
 
+- `npm run dev`/`build` first unpack `assets/memes.zip` (checked against `assets/memes.zip.sha256`) into the gitignored `public/memes/` (`scripts/memes-unpack.mjs`, tested by `scripts/memes-unpack-test.mjs`). The images are for Meme mode › High and are not under the MIT licence (`THIRD-PARTY-NOTICES.md`). To change the pack, rebuild the zip deterministically (`LC_ALL=C` sorted names, every mtime 2026-11-01 00:00 with `TZ=UTC` for both `touch` and `zip`, `zip -X -9 -D`) and update the hash; every image must be shown somewhere (`scripts/routes-test.mjs` checks it).
 - `plugin_host_reader_tests` reads `../plugins/src/<id>/provider.js`. It needs the extensions repo cloned next to this one, in a folder named exactly `plugins` (`git clone <extensions-repo-url> plugins`).
 - `cargo build` / `cargo test` replace `target/debug/anix` with a dev-mode binary that loads `http://localhost:1420`. If you need the binary with the UI embedded, rebuild it with `tauri build --debug --no-bundle` just before you use it.
 - Only one instance runs at a time (single-instance plugin). A second launch hands its arguments to the running window. Stop only the processes you started. Never kill every `anix` process.

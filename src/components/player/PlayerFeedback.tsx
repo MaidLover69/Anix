@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Meme } from '../meme/Meme';
 
 export interface FeedbackMessage {
   text: string;
@@ -55,11 +56,12 @@ export const PlayerFeedback = forwardRef<PlayerFeedbackHandle>((_props, ref) => 
   return (
     <div
       role={message.tone === 'error' ? 'alert' : 'status'}
-      className={`pointer-events-none absolute z-30 max-w-[80%] rounded-md bg-black/75 px-3 py-1.5 text-center text-[13px] font-medium tabular-nums ${
+      className={`meme-fb pointer-events-none absolute z-30 max-w-[80%] rounded-md bg-black/75 px-3 py-1.5 text-center text-[13px] font-medium tabular-nums ${
         message.tone === 'error' ? 'text-state-error' : 'text-white'
       } ${position}`}
     >
-      {message.text}
+      {/* High: seek feedback gets an "ORA" prefix at the pill's own size. */}
+      {message.side ? <Meme spot="seekFb" plain={message.text} /> : message.text}
     </div>
   );
 });

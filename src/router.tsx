@@ -16,7 +16,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { ToastContainer } from './components/Toast';
 import { AuthDialog } from './components/AuthDialog';
-import { BulkDownloadDialog } from './components/BulkDownloadDialog';
 import { UpdateDialog } from './components/UpdateDialog';
 import { EngineConfirmDialog } from './components/player/EngineConfirmDialog';
 import { CommandPalette } from './components/CommandPalette';
@@ -44,6 +43,9 @@ const Notifications = React.lazy(() =>
   import('./screens/Notifications').then((m) => ({ default: m.Notifications })),
 );
 const Downloads = React.lazy(() => import('./screens/Downloads').then((m) => ({ default: m.Downloads })));
+const BulkDownloadDialog = React.lazy(() =>
+  import('./components/BulkDownloadDialog').then((m) => ({ default: m.BulkDownloadDialog })),
+);
 
 // The URL the app was launched with is delivered once; later mounts must not replay it.
 let launchUrlHandled = false;
@@ -74,6 +76,8 @@ const AppLayout: React.FC = () => {
   const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
   const hotkeyCheatSheetOpen = useUIStore((s) => s.hotkeyCheatSheetOpen);
   const setHotkeyCheatSheetOpen = useUIStore((s) => s.setHotkeyCheatSheetOpen);
+  // The bulk download dialog loads on first open, which keeps it out of the start-up file.
+  const bulkDownloadOpen = useUIStore((s) => s.bulkDownloadDialogOpen);
 
   // Deep links: anix://anime/:id (and the older anilili://), at launch and while running (the single-instance
   // plugin forwards a second launch to this listener).
@@ -226,7 +230,11 @@ const AppLayout: React.FC = () => {
 
       <ToastContainer placement={isWatchScreen ? 'top-center' : 'bottom-right'} />
       <AuthDialog />
-      <BulkDownloadDialog />
+      {bulkDownloadOpen && (
+        <React.Suspense fallback={null}>
+          <BulkDownloadDialog />
+        </React.Suspense>
+      )}
       <UpdateDialog />
       <EngineConfirmDialog />
       <CommandPalette

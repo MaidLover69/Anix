@@ -7,7 +7,7 @@ import { t } from '../../i18n';
 interface PlayerSidePanelProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title: React.ReactNode;
   /** One muted line under the title. */
   subtitle?: string;
   children: React.ReactNode;
@@ -116,7 +116,7 @@ export const PlayerSidePanel: React.FC<PlayerSidePanelProps> = ({ isOpen, contai
   );
 };
 
-export const PanelSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => {
+export const PanelSection: React.FC<{ title: React.ReactNode; children: React.ReactNode }> = ({ title, children }) => {
   const id = useId();
   return (
     <section aria-labelledby={id} className="flex flex-col gap-2">

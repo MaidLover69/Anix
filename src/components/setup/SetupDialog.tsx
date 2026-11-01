@@ -15,6 +15,7 @@ import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { useUIStore } from '../../stores/uiStore';
 import { applyLanguageSetting, formatNumber, t, useLocale } from '../../i18n';
 import { needsSetup } from '../../lib/version';
+import { Meme, MemeImage } from '../meme/Meme';
 
 interface Draft {
   appLanguage: string;
@@ -117,10 +118,11 @@ export const SetupDialog: React.FC = () => {
       isOpen
       onClose={skip}
       size="xl"
-      title={t('setup.title')}
+      title={<Meme spot="pickLangs" plain={t('setup.title')} />}
       describedBy={introId}
       header={
         <>
+          <MemeImage name="kamina-believe" className="meme-dlg-img" />
           <p id={introId} className="mt-1 text-[13px] text-text-secondary select-text">{t('setup.intro', { version })}</p>
           <div className="mt-3 flex items-center gap-3">
             <div

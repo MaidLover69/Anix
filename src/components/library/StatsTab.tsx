@@ -7,8 +7,9 @@ import clsx from 'clsx';
 import { Button, EmptyState, ErrorState, Spinner } from '../ui';
 import { useWatchedHistory } from '../../hooks/useLibrary';
 import { useAccountStatus } from '../../hooks/useAccounts';
-import { useFunMode, usePlayful } from '../../hooks/useSettings';
+import { useFunMode, useMemeLevel, usePlayful } from '../../hooks/useSettings';
 import { FunLevelCard } from '../FunBits';
+import { Meme } from '../meme/Meme';
 import { useUIStore } from '../../stores/uiStore';
 import { ShimmerImage } from '../ShimmerImage';
 import { watchStreak } from './format';
@@ -70,7 +71,7 @@ const Card: React.FC<{ title: string; children: React.ReactNode; className?: str
   </section>
 );
 
-const Stat: React.FC<{ label: string; value: string; detail?: string }> = ({ label, value, detail }) => (
+const Stat: React.FC<{ label: React.ReactNode; value: string; detail?: string }> = ({ label, value, detail }) => (
   <div className="flex min-w-0 flex-col rounded-xl ui-card bg-bg-card p-4">
     <span className="text-xs text-text-muted">{label}</span>
     <span className="mt-1 text-2xl font-semibold tabular-nums text-text-primary">{value}</span>
@@ -210,6 +211,9 @@ export const StatsTab: React.FC = () => {
   const statsQuery = useAniListStats(connected);
   const playful = usePlayful();
   const fun = useFunMode();
+  const high = useMemeLevel() === 'high';
+  // Medium's day-combo wording; High shows the plain streak beside the seven orbs.
+  const combo = fun && !high;
 
   const rows = historyQuery.data ?? [];
   // Every day an episode was watched; a rewatch adds a day instead of moving the old one.
@@ -317,11 +321,18 @@ export const StatsTab: React.FC = () => {
     <div className="flex flex-col gap-6">
       <div className={`grid grid-cols-2 gap-3 ${connected && statsQuery.data ? 'lg:grid-cols-6' : 'lg:grid-cols-4'}`}>
         {/* The streak is the hero tile; its flame flickers softly and stands still with reduced motion. */}
-        <div className="ui-streak relative col-span-2 flex min-w-0 flex-col overflow-hidden rounded-xl ui-card bg-bg-card p-4 pe-24">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{t('statsTab.streak')}</span>
-          <span className={clsx('mt-1 text-3xl font-bold text-text-primary', fun && 'fun-combo')}>
+        <div
+          className={clsx(
+            'ui-streak relative col-span-2 flex min-w-0 flex-col overflow-hidden rounded-xl ui-card bg-bg-card p-4 pe-24',
+            high && streak.current > 0 && 'meme-aura'
+          )}
+        >
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+            <Meme spot="streakTile" plain={t('statsTab.streak')} />
+          </span>
+          <span className={clsx('mt-1 text-3xl font-bold text-text-primary', combo && 'fun-combo')}>
             {streak.current > 0
-              ? t(fun ? 'fun.combo' : 'statsTab.streakDays', { count: streak.current })
+              ? t(combo ? 'fun.combo' : 'statsTab.streakDays', { count: streak.current })
               : t('statsTab.longestValue', { count: streak.longest })}
           </span>
           <span className="mt-1 text-xs text-text-secondary">
@@ -329,6 +340,16 @@ export const StatsTab: React.FC = () => {
               ? `${t(fun ? 'fun.comboBest' : 'statsTab.longestDetail', { count: streak.longest })}${playful && streak.current >= 7 ? ' (^o^)/' : ''}`
               : t('statsTab.streakHint')}
           </span>
+          {high && (
+            // The seven Dragon Balls, one per day of the current streak (decoration; the text above says it).
+            <span aria-hidden="true" className="meme-orbs">
+              {Array.from({ length: 7 }, (_, i) => (
+                <i key={i} className={i < streak.current ? 'on' : undefined}>
+                  ★
+                </i>
+              ))}
+            </span>
+          )}
           <Flame
             aria-hidden="true"
             strokeWidth={1.5}
@@ -340,12 +361,12 @@ export const StatsTab: React.FC = () => {
           />
         </div>
         <Stat
-          label={t('statsTab.episodesHere')}
+          label={<Meme spot="epsW" plain={t('statsTab.episodesHere')} />}
           value={formatNumber(rows.length)}
           detail={t('statsTab.titleCount', { count: local.titles })}
         />
         <Stat
-          label={t('statsTab.timeHere')}
+          label={<Meme spot="timeW" plain={t('statsTab.timeHere')} />}
           value={formatHours(totalMinutes)}
           detail={
             local.estimatedMinutes > 0

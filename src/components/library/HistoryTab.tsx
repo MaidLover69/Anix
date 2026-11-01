@@ -5,7 +5,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { Button, EmptyState, ErrorState, Spinner } from '../ui';
 import type { HistoryEntry } from '../../types';
 import { isHistoryEntryFinished, watchPath } from '../../hooks/watchProgress';
-import { usePlayful } from '../../hooks/useSettings';
+import { useMemeLevel, usePlayful } from '../../hooks/useSettings';
 import { categoryLabel, episodeLabel, watchedPercent } from './format';
 import { CoverThumb } from './CoverThumb';
 import { ShowMore } from './PosterGrid';
@@ -18,6 +18,7 @@ interface HistoryTabProps {
 
 export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
   const playful = usePlayful();
+  const high = useMemeLevel() === 'high';
   const navigate = useNavigate();
   const history = query.data ?? [];
   // The whole history can be long; render it in steps like the other Library lists.
@@ -44,7 +45,8 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
     return (
       <EmptyState
         icon={<History className="w-8 h-8" aria-hidden="true" />}
-        title={playful ? t('historyTab.emptyPlayful') : t('historyTab.empty')}
+        title={playful && !high ? t('historyTab.emptyPlayful') : t('historyTab.empty')}
+        meme="histEmpty"
         description={
           playful
             ? t('historyTab.emptyHintPlayful')

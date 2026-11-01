@@ -11,6 +11,7 @@ import { hexToChannels } from './AmbientGlow';
 import { prefersLessMotion } from '../lib/motion';
 import { t } from '../i18n';
 import { useFunMode } from '../hooks/useSettings';
+import { Meme, useHighModule } from './meme/Meme';
 
 interface AnimeCardProps {
   media: Media;
@@ -62,6 +63,7 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const toggleWatchlistMutation = useToggleWatchlist();
   const fun = useFunMode();
+  const high = useHighModule();
 
   const title =
     media.title.english ||
@@ -116,6 +118,13 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
 
   const caption = [media.season_year, media.genres?.[0]].filter(Boolean).join(' · ');
   const format = media.format && media.format !== 'TV' ? media.format.replace(/_/g, ' ') : null;
+  const score = media.average_score;
+  // High: an S-rank badge for the best scores.
+  const sRank = !!high && score !== null && score !== undefined && score >= 85;
+  const watchlistLabel = t(
+    inWatchlist ? 'animeCard.removeFromWatchlist' : fun ? 'fun.addToParty' : 'animeCard.addToWatchlist',
+    { title }
+  );
 
   return (
     <div
@@ -186,9 +195,9 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
 
             {format && <span className={clsx(BADGE_CLASS, 'absolute start-2 top-2')}>{format}</span>}
 
-            {media.average_score !== null && media.average_score !== undefined && (
-              <span className={clsx(BADGE_CLASS, 'absolute end-2 top-2 tabular-nums')}>
-                {media.average_score}%
+            {score !== null && score !== undefined && (
+              <span className={clsx(BADGE_CLASS, 'absolute end-2 top-2 tabular-nums', sRank && 'meme-srank')}>
+                {sRank ? <Meme spot="sRank" plain={`${score}%`} vars={{ sc: score }} /> : `${score}%`}
               </span>
             )}
 
@@ -212,7 +221,8 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
         <button
           type="button"
           onClick={handleWatchlistClick}
-          aria-label={t(inWatchlist ? 'animeCard.removeFromWatchlist' : fun ? 'fun.addToParty' : 'animeCard.addToWatchlist', { title })}
+          aria-label={watchlistLabel}
+          title={high?.memeText(inWatchlist ? 'bmRemove' : 'bmAdd', watchlistLabel)}
           aria-pressed={inWatchlist}
           className={clsx(
             'absolute start-2 flex h-8 w-8 items-center justify-center rounded-md bg-black/70 cursor-pointer transition-[opacity,background-color] hover:bg-black/90',

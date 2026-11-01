@@ -1,8 +1,8 @@
 /*
- * Fun mode (Settings › Appearance › Fun mode, `data-fun` on <html>): a game-like layer over the
- * same screens. Colours come only from the theme tokens, so all 9 themes carry it. Movement is
+ * Meme mode › Medium (Settings › Appearance › Meme mode; `data-fun` on <html>, also on High): a
+ * game-like layer over the same screens. Colours come only from the theme tokens, so all 9 themes carry it. Movement is
  * small and stops under reduced motion (global.css) and Fewer effects (rules below); nothing
- * here moves over a playing video. Pieces that only render in fun mode (FunBits.tsx) need no
+ * here moves over a playing video. Pieces that only render on Medium and High (FunBits.tsx) need no
  * `data-fun` in their selectors. Markers use `content: "x" / ""` so screen readers skip them.
  */
 
@@ -200,7 +200,7 @@
   color: rgb(var(--accent-300));
 }
 
-/* Comic draws a speech-bubble tail with the same ::after; in Fun mode the dialog-box caret replaces it. */
+/* Comic draws a speech-bubble tail with the same ::after; on Medium and High the dialog-box caret replaces it. */
 :root[data-fun][data-theme="comic"] .ui-toast::after {
   width: auto;
   height: auto;

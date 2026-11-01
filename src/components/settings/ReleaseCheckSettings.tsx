@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, useSaveSettings, useSettings } from '../../hooks/useS
 import { useDesktopStatus } from '../../hooks/useSystem';
 import { useUIStore } from '../../stores/uiStore';
 import { t } from '../../i18n';
+import { MemeImage } from '../meme/Meme';
 import type { AppSettings } from '../../types';
 
 const hourOptions = () =>
@@ -52,15 +53,19 @@ export const ReleaseCheckSettings: React.FC = () => {
       <Row
         label={t('releaseCheckSettings.alertsClosed')}
         hint={flatpak ? t('systemSection.notInFlatpak') : t('releaseCheckSettings.alertsClosedHint')}
+        meme="alertsClosed"
       >
         {({ labelId, hintId }) => (
-          <Switch
+          <span className="flex items-center gap-3">
+            <MemeImage name="zenitsu-sleep" className="meme-row-sm" />
+            <Switch
             aria-labelledby={labelId}
             aria-describedby={hintId}
             checked={(settings?.background_alerts ?? false) && !flatpak}
             disabled={flatpak || (off && !settings?.background_alerts)}
             onChange={(checked) => update({ background_alerts: checked })}
-          />
+            />
+          </span>
         )}
       </Row>
     </>

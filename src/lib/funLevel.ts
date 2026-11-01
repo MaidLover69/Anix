@@ -1,7 +1,7 @@
 /**
- * Fun mode's game numbers, worked out from data the app already has: a player level from the
- * episodes watched (1 EXP each), a rank title per level band, and a "power level" from a score.
- * Pure, so `scripts/routes-test.mjs` can check it.
+ * Meme mode › Medium's game numbers, worked out from data the app already has: a player level
+ * from the episodes watched (1 EXP each), a rank title per level band, and a "power level" from
+ * a score. Pure, so `scripts/routes-test.mjs` can check it.
  */
 
 /** Rank titles from the lowest band up; the i18n key is `fun.rank.<id>`. */

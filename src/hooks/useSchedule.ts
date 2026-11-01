@@ -131,6 +131,7 @@ export function useSetBellLeadTime() {
         showToast({
           type: 'success',
           title: t('useSchedule.reminderSet'),
+          meme: 'reminder',
           message:
             minutes >= 60
               ? t('useSchedule.remindedHoursBefore', { count: minutes / 60 })

@@ -43,3 +43,13 @@ async fn notices_keep_only_the_newest() {
     assert_eq!(all.len() as i64, notices::KEEP);
     assert_eq!(all[0].title, format!("Notice {}", notices::KEEP + 4));
 }
+
+#[tokio::test]
+async fn no_source_notices_are_on_the_airing_tab() {
+    let pool = db::init_db_in_memory().await.expect("in-memory database");
+    let out = notices::push(&pool, notices::AIRING, "Episode 3 is out", "", None).await.unwrap();
+    let missing = notices::push(&pool, notices::AIRING_MISSING, "Show", "Episode 4 aired", None).await.unwrap();
+    notices::push(&pool, notices::DOWNLOAD, "Download failed", "", None).await.unwrap();
+    let tab: Vec<_> = notices::list(&pool, Some(notices::AIRING)).await.unwrap().iter().map(|n| n.id).collect();
+    assert_eq!(tab, vec![missing, out]);
+}

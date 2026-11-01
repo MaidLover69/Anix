@@ -17,9 +17,12 @@
 - Anime pages, the player, Library, Schedule, Downloads, Notifications (now grouped into Today and Earlier) and
   Settings got the same treatment. Extensions show a health dot from their last test, the player's main buttons
   have text labels, and the first-run setup is split into three short steps.
-- Fun mode (Settings › Appearance, off by default): a game-style layer with a level and EXP from the episodes you
-  watched, "EPISODE CLEAR!" and "QUEST COMPLETE" moments, a day combo for your watch streak, a power level on
-  scores, dialog-box toasts and playful wording. No sounds, and nothing moves over a playing video.
+- Meme mode (Settings › Appearance) with three levels: Low, the normal app and the default; Medium, the game-style
+  layer (level and EXP from the episodes you watched, "EPISODE CLEAR!" and "QUEST COMPLETE", a day combo, a power
+  level on scores, dialog-box toasts); High, real anime meme images and meme lines over every screen, one character
+  per spot, with the plain words kept on every important button and in tooltips and screen-reader text, and the
+  series and rights holders credited in Settings › About. The images ship inside the app as one meme pack, so
+  nothing is downloaded. No sounds, and nothing moves over a playing video.
 - Everything respects reduced motion and Fewer effects, and works right to left.
 - The app starts with a smaller file: screens other than Home load the first time you open them.
 

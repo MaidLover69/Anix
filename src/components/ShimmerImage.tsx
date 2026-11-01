@@ -50,7 +50,7 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
   return (
     <div ref={ref} className={`relative overflow-hidden ${className}`}>
       {!src || failed ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-bg-elevated text-text-muted">
+        <div className="ui-cover-missing absolute inset-0 flex items-center justify-center bg-bg-elevated text-text-muted">
           {fallbackIcon || <span className="text-[11px]">{t('shimmerImage.noImage')}</span>}
         </div>
       ) : (

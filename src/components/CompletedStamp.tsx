@@ -3,7 +3,8 @@ import { Check } from 'lucide-react';
 import { prefersLessMotion } from '../lib/motion';
 import { t } from '../i18n';
 import { useFunMode } from '../hooks/useSettings';
-import { Sfx } from './FunBits';
+import { Sfx } from './Sfx';
+import { Meme, useHighModule } from './meme/Meme';
 
 const CONFETTI_COLOURS = ['bg-accent-500', 'bg-state-success', 'bg-state-warning', 'bg-accent-200'];
 const CONFETTI_PIECES = 14;
@@ -50,9 +51,11 @@ const Confetti: React.FC = () => {
  * 完 in Manga, a "THE END!" tag in Comic. It slams down (detail.css) with a burst of confetti.
  */
 export const CompletedStamp: React.FC = () => {
-  // Fun mode: the stamp reads "QUEST COMPLETE" with a ドン.
+  // Medium: "Quest complete" with a ドン; High: "QUEST COMPLETE", the plain word kept in the small line.
   const fun = useFunMode();
-  const label = fun ? t('fun.questComplete') : t('completedStamp.completed');
+  const high = useHighModule();
+  const plain = t('completedStamp.completed');
+  const label = fun && !high ? t('fun.questComplete') : plain;
   return (
     <span className="ui-stamp relative inline-flex select-none">
       {fun && <Sfx text={t('fun.sfxDon')} className="fun-sfx-stamp" />}
@@ -63,9 +66,11 @@ export const CompletedStamp: React.FC = () => {
         >
           <span className="flex items-center gap-1.5 text-2xl font-black uppercase tracking-wider">
             <Check className="h-5 w-5" strokeWidth={3} />
-            {label}
+            <Meme spot="stamp" plain={plain} medium={t('fun.questComplete')} />
           </span>
-          <span className="text-[10px] font-bold uppercase tracking-widest">{t('completedStamp.theEnd')}</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            {high ? `${plain} · ${t('completedStamp.theEnd')}` : t('completedStamp.theEnd')}
+          </span>
         </span>
         <span data-art="kan">
           {/* 完, drawn as strokes: the roof, then 二 and the two legs of 儿. */}

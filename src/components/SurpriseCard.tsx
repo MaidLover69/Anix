@@ -11,6 +11,7 @@ import { errorMessage } from './ui/ErrorState';
 import { mediaFormatLabel } from './library/format';
 import { useReducedMotion } from '../hooks/useMediaQuery';
 import { t } from '../i18n';
+import { Meme } from './meme/Meme';
 import type { Media } from '../types';
 
 interface SurpriseCardProps {
@@ -178,7 +179,7 @@ const CardBody: React.FC<Omit<SurpriseCardProps, 'isOpen'>> = ({ onClose, draw }
 
 /** "Surprise me": one random pick at a time; skip it (←, drag left) or open it (→, drag right). */
 export const SurpriseCard: React.FC<SurpriseCardProps> = ({ isOpen, onClose, draw }) => (
-  <Modal isOpen={isOpen} onClose={onClose} title={t('surpriseCard.title')} size="xl">
+  <Modal isOpen={isOpen} onClose={onClose} title={<Meme spot="surprise" plain={t('surpriseCard.title')} />} size="xl">
     {/* Mounted only while open, so each visit starts with a new pick. */}
     {isOpen && <CardBody onClose={onClose} draw={draw} />}
   </Modal>

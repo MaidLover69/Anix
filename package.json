@@ -5,12 +5,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node scripts/memes-unpack.mjs && vite",
+    "build": "node scripts/memes-unpack.mjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "i18n:check": "node --experimental-strip-types scripts/i18n-check.mjs --raw",
-    "i18n:test": "node --experimental-strip-types scripts/i18n-test.mjs && node --experimental-strip-types scripts/player-test.mjs && node --experimental-strip-types scripts/history-test.mjs && node --experimental-strip-types scripts/routes-test.mjs && node --experimental-strip-types scripts/party-test.mjs",
+    "i18n:test": "node --experimental-strip-types scripts/i18n-test.mjs && node --experimental-strip-types scripts/player-test.mjs && node --experimental-strip-types scripts/history-test.mjs && node --experimental-strip-types scripts/routes-test.mjs && node --experimental-strip-types scripts/party-test.mjs && node --test scripts/memes-unpack-test.mjs",
     "floor": "node --test scripts/floor-guard-test.mjs && node scripts/floor-guard.mjs"
   },
   "dependencies": {

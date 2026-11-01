@@ -9,6 +9,7 @@ import { useSettings, AUTO_PROVIDER } from '../hooks/useSettings';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
 import { t } from '../i18n';
+import { Meme, useHighModule } from './meme/Meme';
 import type { AnimeDetails, Media } from '../types';
 
 /** Hover (or keyboard focus) this long before a card's quick look opens. */
@@ -130,6 +131,7 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({ media, title, id }
   const details = detailsQuery.data as AnimeDetails | null | undefined;
   const { data: history = [] } = useContinueWatching();
   const { data: settings } = useSettings();
+  const high = useHighModule();
 
   const description = plainText(media.description || details?.description);
   const format = media.format ?? details?.format ?? null;
@@ -172,6 +174,11 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({ media, title, id }
         aria-label={t('quickPeek.quickLook', { title })}
         className="ui-menu ui-peek-up pointer-events-auto m-1.5 flex flex-col gap-1.5 rounded-lg border border-border-strong bg-bg-elevated/95 p-2.5 text-start shadow-pop select-none"
       >
+        {high && (
+          <span className="meme-peek-tag self-start rounded-sm px-1.5 text-[0.6875rem] font-semibold">
+            <Meme spot="peek" plain={t('quickPeek.quickLook', { title })} />
+          </span>
+        )}
         <p className="text-[0.8125rem] font-semibold leading-[1.125rem] text-text-primary line-clamp-2">{title}</p>
         {meta && <p className="text-[0.6875rem] leading-4 tabular-nums text-text-muted">{meta}</p>}
         {next && next.airing_at > now - 3600 && (

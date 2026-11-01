@@ -145,7 +145,7 @@ export const AppLanguageRow: React.FC = () => {
   const showToast = useUIStore((s) => s.showToast);
   return (
     <>
-      <Row label={t('appLanguage.label')} hint={t('appLanguage.hint')} keywords="language translation">
+      <Row label={t('appLanguage.label')} hint={t('appLanguage.hint')} keywords="language translation" meme="appLang">
         {({ labelId, hintId }) => (
           <AppLanguageSelect
             aria-labelledby={labelId}

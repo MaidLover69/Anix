@@ -8,6 +8,9 @@ target/
 node_modules/
 dist/
 dist-ssr/
+# Unpacked from assets/memes.zip by scripts/memes-unpack.mjs
+/public/memes/
+/public/memes.tmp-*/
 *.local
 .vite/
 .vite-temp/

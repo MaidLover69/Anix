@@ -25,7 +25,7 @@ import {
   useWatchedEpisodes,
   useContinueWatching,
 } from '../hooks/useLibrary';
-import { useFunMode, usePlayful, useSettings, useSaveSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { useMemeLevel, usePlayful, useSettings, useSaveSettings, AUTO_PROVIDER } from '../hooks/useSettings';
 import { PowerLevelMeter, Sfx } from '../components/FunBits';
 import { useStreamingProviders } from '../hooks/usePlugins';
 import { openWith, useRememberedSource } from '../hooks/useRememberedSource';
@@ -39,6 +39,7 @@ import {
 import { useUIStore } from '../stores/uiStore';
 import { mediaFormatLabel } from '../components/library/format';
 import { CompletedStamp } from '../components/CompletedStamp';
+import { Meme, MemeImage, useHighModule } from '../components/meme/Meme';
 import { isNotFoundError } from '../lib/errorCodes';
 import { parseAnimeId } from '../lib/routes';
 import { detailScores } from '../lib/scores';
@@ -113,7 +114,7 @@ function fuzzyDateLabel(date: FuzzyDate | null | undefined): string | null {
   return String(date.year);
 }
 
-const FactRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+const FactRow: React.FC<{ label: React.ReactNode; children: React.ReactNode }> = ({ label, children }) => (
   <div className="flex flex-col gap-1">
     <dt className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{label}</dt>
     <dd className="text-[13px] text-text-secondary select-text">{children}</dd>
@@ -172,7 +173,11 @@ const DetailFacts: React.FC<{ details: AnimeDetails; seasonLabel: string; onTrai
         details.servedBy && <p className="text-xs text-text-muted">{t('detail.noTrailerFrom', { name: details.servedBy })}</p>
       )}
       <dl className="flex flex-col gap-3">
-        {studios.length > 0 && <FactRow label={studios.length === 1 ? t('detail.studio') : t('detail.studios')}>{studios.join(', ')}</FactRow>}
+        {studios.length > 0 && (
+          <FactRow label={<Meme spot="studio" plain={studios.length === 1 ? t('detail.studio') : t('detail.studios')} />}>
+            {studios.join(', ')}
+          </FactRow>
+        )}
         {aired && <FactRow label={t('detail.aired')}>{aired}</FactRow>}
         {seasonLabel && <FactRow label={t('detail.season')}>{seasonLabel}</FactRow>}
         {details.genres && details.genres.length > 0 && (
@@ -243,7 +248,9 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const { data: settings } = useSettings();
   const saveSettings = useSaveSettings();
   const playful = usePlayful();
-  const fun = useFunMode();
+  // Medium's game bits; High has Jotaro's header instead.
+  const medium = useMemeLevel() === 'medium';
+  const high = useHighModule();
   const providers = useStreamingProviders();
   // The server last picked for this anime is what its episodes open with.
   const { remembered } = useRememberedSource(anilistId ?? 0);
@@ -301,6 +308,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         <EmptyState
           icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
           title={t('detail.notFound')}
+          meme="notFound"
           description={t('detail.invalidId', { id: id ?? '' })}
           action={
             <Button variant="secondary" onClick={() => navigate('/')}>
@@ -359,6 +367,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         <EmptyState
           icon={<SearchX aria-hidden="true" className="h-8 w-8" />}
           title={t('detail.notFound')}
+          meme="notFound"
           description={t('detail.noCatalogueEntry')}
           action={
             <Button variant="secondary" onClick={() => navigate('/')}>
@@ -529,7 +538,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
         ref={heroRef}
         className="relative isolate -ms-6 -me-[18px] -mt-6 overflow-hidden pb-2 pe-[18px] ps-6 pt-4 xl:-ms-8 xl:-me-[26px] xl:-mt-8 xl:pe-[26px] xl:ps-8"
       >
-        {fun && <Sfx text={t('fun.sfxMenacing')} className="fun-sfx-hero" />}
+        {medium && <Sfx text={t('fun.sfxMenacing')} className="fun-sfx-hero" />}
         {coverChannels && (
           <div
             aria-hidden="true"
@@ -553,7 +562,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
 
         <BackButton />
 
-        <div className="mt-6 grid grid-cols-[clamp(9rem,15vw,13rem)_minmax(0,1fr)] items-end gap-[clamp(1rem,2.5vw,2rem)]">
+        <div className="ui-detail-head mt-6 grid grid-cols-[clamp(9rem,15vw,13rem)_minmax(0,1fr)] items-end gap-[clamp(1rem,2.5vw,2rem)]">
           <ShimmerImage
             src={coverImage}
             alt={t('detail.coverAlt', { title })}
@@ -565,7 +574,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
               <div className="ui-detail-tags flex flex-wrap items-center gap-1.5">
                 {headerTags.map((tag, i) => (
                   <Chip key={tag} tone={i === 0 && details.status ? 'accent' : 'neutral'}>
-                    {tag}
+                    {i === 0 && details.status === 'RELEASING' ? <Meme spot="airing" plain={tag} /> : tag}
                   </Chip>
                 ))}
               </div>
@@ -593,7 +602,7 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                 ))}
               </div>
             )}
-            {fun && <PowerLevelMeter percentScore={scores.percent?.score ?? null} malScore={scores.mal} />}
+            {medium && <PowerLevelMeter percentScore={scores.percent?.score ?? null} malScore={scores.mal} />}
 
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <Button variant="primary" onClick={handlePlay} disabled={!hasReleasedEpisodes}>
@@ -658,13 +667,24 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
               </div>
             </div>
           </div>
+          {high && (
+            // High: Jotaro's menacing pose in its own column, with ゴ drawn by CSS.
+            <div aria-hidden="true" className="meme-jojo">
+              <MemeImage name="jotaro-pose-menacing" />
+              <span className="meme-sfx meme-gogo" />
+              <span className="meme-sfx meme-gogo" />
+              <span className="meme-sfx meme-gogo" />
+            </div>
+          )}
         </div>
       </header>
 
       <div className="flex flex-col gap-8 min-[1200px]:grid min-[1200px]:grid-cols-[minmax(0,1fr)_19rem] min-[1200px]:items-start">
         <div className="flex min-w-0 flex-col gap-8">
           <section className="flex flex-col gap-2">
-            <h2 className="text-xl font-semibold text-text-primary">{t('detail.aboutThisAnime')}</h2>
+            <h2 className="text-xl font-semibold text-text-primary">
+              <Meme spot="about" plain={t('detail.aboutThisAnime')} />
+            </h2>
             <div className="max-w-[62ch]">
               <p
                 id="detail-synopsis"
@@ -682,7 +702,11 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
                   onClick={() => setDescriptionExpanded(!descriptionExpanded)}
                   className="mt-1 cursor-pointer rounded-sm text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
                 >
-                  {descriptionExpanded ? t('detail.showLess') : t('detail.showMore')}
+                  {descriptionExpanded ? (
+                    <Meme spot="showLess" plain={t('detail.showLess')} />
+                  ) : (
+                    <Meme spot="showMore" plain={t('detail.showMore')} />
+                  )}
                 </button>
               )}
             </div>
@@ -690,7 +714,9 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
 
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline gap-3">
-              <h2 className="text-xl font-semibold text-text-primary">{t('common.episodes')}</h2>
+              <h2 className="text-xl font-semibold text-text-primary">
+                <Meme spot="epsH" plain={t('common.episodes')} />
+              </h2>
               {watchedCount !== null && watchedCount > 0 && (
                 <span className="text-xs tabular-nums text-text-muted">
                   {t('detail.watchedCount', { watched: watchedCount, total: details.episodes! })}

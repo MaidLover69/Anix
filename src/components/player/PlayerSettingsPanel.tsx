@@ -11,6 +11,7 @@ import type { Anime4kPreset, Anime4kQuality } from '../../lib/anime4k';
 import { usePlayerStore } from '../../stores/playerStore';
 import type { AppSettings } from '../../types';
 import { t, type TKey } from '../../i18n';
+import { Meme, type MemeSpot } from '../meme/Meme';
 
 /** One choice of a list such as the stream's qualities. */
 export interface PlayerMenuOption {
@@ -19,6 +20,11 @@ export interface PlayerMenuOption {
 }
 
 const SPEEDS = ['0.5', '0.75', '1', '1.25', '1.5', '2', String(MAX_SPEED)];
+// Meme mode › High: the speeds with a meme caption.
+const SPEED_SPOTS: Partial<Record<string, MemeSpot>> = { '0.75': 'spd075', '1.5': 'spd15', '2': 'spd2' };
+
+/** A label with its meme, when the spot is given. */
+const labelled = (plain: string, spot?: MemeSpot) => (spot ? <Meme spot={spot} plain={plain} /> : plain);
 
 const FITS: { value: ScreenFit; labelKey: TKey }[] = [
   { value: 'fit', labelKey: 'playerSettingsPanel.fit' },
@@ -32,7 +38,7 @@ const FIT_HINTS: Record<ScreenFit, TKey> = {
   fill: 'playerSettingsPanel.fillHint',
 };
 
-const Row: React.FC<{ label: string; hint?: string; children: (labelId: string) => React.ReactNode }> = ({
+const Row: React.FC<{ label: React.ReactNode; hint?: string; children: (labelId: string) => React.ReactNode }> = ({
   label,
   hint,
   children,
@@ -94,13 +100,13 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
   const speed = SPEEDS.includes(String(rate)) ? String(rate) : '';
 
   return (
-    <PlayerSidePanel isOpen={isOpen} onClose={onClose} title={t('common.settings')} subtitle={t('playerSettingsPanel.subtitle')} container={container}>
+    <PlayerSidePanel isOpen={isOpen} onClose={onClose} title={<Meme spot="setBtn" plain={t('common.settings')} />} subtitle={t('playerSettingsPanel.subtitle')} container={container}>
       <PanelSection title={t('playerSettingsPanel.playback')}>
         <div className="flex flex-col gap-2">
           <p className="text-[13px] text-text-secondary">
             {t('playerSettingsPanel.speed')}{' '}
             <span className="tabular-nums text-text-muted">
-              {t('playerSettingsPanel.speedHint', { rate: Number(rate.toFixed(2)) })}
+              <Meme spot="spdKeys" plain={t('playerSettingsPanel.speedHint', { rate: Number(rate.toFixed(2)) })} />
             </span>
           </p>
           <SegmentedControl
@@ -108,7 +114,7 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
             aria-label={t('playerSettingsPanel.playbackSpeed')}
             value={speed}
             onChange={(value) => onRateChange(Number(value))}
-            options={SPEEDS.map((value) => ({ value, label: value === '1' ? '1×' : `${value}` }))}
+            options={SPEEDS.map((value) => ({ value, label: labelled(value === '1' ? '1×' : `${value}`, SPEED_SPOTS[value]) }))}
           />
         </div>
         {qualityOptions.length > 0 && (
@@ -127,12 +133,15 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
                     : 'ui-inset bg-bg-surface text-text-secondary hover:bg-bg-input hover:text-text-primary'
                 }`}
               >
-                {option.label}
+                {labelled(
+                  option.label,
+                  option.value === '-1' ? 'qAuto' : option.label.startsWith('1080p') ? 'q1080' : undefined
+                )}
               </button>
             ))}
           </div>
         )}
-        <Row label={t('playerSettingsPanel.autoPlayNext')} hint={t('playerSettingsPanel.autoPlayNextHint')}>
+        <Row label={<Meme spot="autoplay" plain={t('playerSettingsPanel.autoPlayNext')} />} hint={t('playerSettingsPanel.autoPlayNextHint')}>
           {(id) => <Switch aria-labelledby={id} checked={autoPlayNext} onChange={setAutoPlayNext} />}
         </Row>
       </PanelSection>
@@ -143,13 +152,13 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
           aria-label={t('playerSettingsPanel.screenSize')}
           value={screenFit}
           onChange={setScreenFit}
-          options={FITS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+          options={FITS.map(({ value, labelKey }) => ({ value, label: labelled(t(labelKey), value === 'fill' ? 'fill' : undefined) }))}
         />
         <p className="text-xs text-text-muted">{t(FIT_HINTS[screenFit])}</p>
       </PanelSection>
 
       <PanelSection title={t('playerSettingsPanel.sound')}>
-        <Row label={t('playerSettingsPanel.dialogueBoost')} hint={t('playerSettingsPanel.dialogueBoostHint')}>
+        <Row label={<Meme spot="boost" plain={t('playerSettingsPanel.dialogueBoost')} />} hint={t('playerSettingsPanel.dialogueBoostHint')}>
           {(id) => (
             <Switch
               aria-labelledby={id}
@@ -160,7 +169,7 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
         </Row>
       </PanelSection>
 
-      <PanelSection title={t('playerSettingsPanel.upscaling')}>
+      <PanelSection title={<Meme spot="a4k" plain={t('playerSettingsPanel.upscaling')} />}>
         {engine === 'mpv' ? (
           <>
             <SegmentedControl
@@ -188,7 +197,7 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
       </PanelSection>
 
       <PanelSection title={t('playerSettingsPanel.skipping')}>
-        <Row label={t('playerSettingsPanel.skipIntros')} hint={t('playerSettingsPanel.skipIntrosHint')}>
+        <Row label={<Meme spot="skipIntro" plain={t('playerSettingsPanel.skipIntros')} />} hint={t('playerSettingsPanel.skipIntrosHint')}>
           {(id) => (
             <Switch
               aria-labelledby={id}
@@ -198,7 +207,7 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
             />
           )}
         </Row>
-        <Row label={t('playerSettingsPanel.skipEndings')} hint={t('playerSettingsPanel.skipEndingsHint')}>
+        <Row label={<Meme spot="skipOutro" plain={t('playerSettingsPanel.skipEndings')} />} hint={t('playerSettingsPanel.skipEndingsHint')}>
           {(id) => (
             <Switch
               aria-labelledby={id}

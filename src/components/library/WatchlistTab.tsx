@@ -5,13 +5,21 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { Button, Chip, EmptyState, ErrorState } from '../ui';
 import { AnimeCard } from '../AnimeCard';
 import { useProgressiveList } from '../../hooks/useProgressiveList';
-import { useFunMode, usePlayful } from '../../hooks/useSettings';
+import { useMemeLevel, usePlayful } from '../../hooks/useSettings';
 import { useAccountStatus } from '../../hooks/useAccounts';
 import { LIST_STATUS_OPTIONS, useSyncListStatuses } from '../../hooks/useLibrary';
 import type { ListStatusValue, WatchlistEntry } from '../../types';
 import { mediaFromListRow } from './format';
 import { PosterGrid, PosterGridSkeleton, ShowMore } from './PosterGrid';
 import { t } from '../../i18n';
+import { Meme, type MemeSpot } from '../meme/Meme';
+
+const STATUS_MEME: Partial<Record<ListStatusValue, MemeSpot>> = {
+  PLANNING: 'stPlan',
+  COMPLETED: 'stDone',
+  PAUSED: 'stHold',
+  DROPPED: 'stDrop',
+};
 
 interface WatchlistTabProps {
   query: UseQueryResult<WatchlistEntry[]>;
@@ -23,7 +31,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
   const shown = filter === null ? watchlist : watchlist.filter((item) => item.status === filter);
   const list = useProgressiveList(shown, 60, filter);
   const playful = usePlayful();
-  const fun = useFunMode();
+  const memeLevel = useMemeLevel();
   const navigate = useNavigate();
   const accounts = useAccountStatus().data;
   // With AniList connected its statuses win; read them in once per visit.
@@ -45,7 +53,14 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
     return (
       <EmptyState
         icon={<Bookmark className="w-8 h-8" aria-hidden="true" />}
-        title={fun ? t('fun.watchlistEmpty') : playful ? t('watchlistTab.emptyPlayful') : t('watchlistTab.empty')}
+        title={
+          memeLevel === 'medium'
+            ? t('fun.watchlistEmpty')
+            : playful && memeLevel === 'low'
+              ? t('watchlistTab.emptyPlayful')
+              : t('watchlistTab.empty')
+        }
+        meme="wlEmpty"
         description={
           playful
             ? t('watchlistTab.emptyHintPlayful')
@@ -74,7 +89,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
       <div role="group" aria-label={t('watchlistTab.filterLabel')} className="flex flex-wrap gap-2">
         {chips.map((chip) => (
           <Chip key={chip.label} selected={filter === chip.value} onClick={() => setFilter(chip.value)}>
-            {chip.label}
+            {chip.value && STATUS_MEME[chip.value] ? <Meme spot={STATUS_MEME[chip.value]!} plain={chip.label} /> : chip.label}
             <span className="ms-1.5 tabular-nums opacity-70">{chip.count}</span>
           </Chip>
         ))}

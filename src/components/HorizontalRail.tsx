@@ -7,10 +7,13 @@ import { SkeletonCard } from './SkeletonCard';
 import { Button } from './ui/Button';
 import { ContinueCard } from './ContinueCard';
 import { t } from '../i18n';
+import { Meme, MemeFrame, type MemeSpot } from './meme/Meme';
 import type { Media, HistoryEntry } from '../types';
 
 interface HorizontalRailProps {
   title: string;
+  /** Meme mode: the title's meme, and its face after the title when the spot has an image (High). */
+  titleSpot?: MemeSpot;
   items?: Media[];
   historyItems?: HistoryEntry[];
   isLoading?: boolean;
@@ -21,6 +24,7 @@ const CARD_CLASS = 'w-44 flex-shrink-0 snap-start';
 
 export const HorizontalRail: React.FC<HorizontalRailProps> = ({
   title,
+  titleSpot,
   items,
   historyItems,
   isLoading = false,
@@ -45,7 +49,10 @@ export const HorizontalRail: React.FC<HorizontalRailProps> = ({
   return (
     <section className="group/rail flex flex-col gap-3">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="ui-rail-title text-xl font-semibold text-text-primary">{title}</h2>
+        <h2 className="ui-rail-title text-xl font-semibold text-text-primary">
+          {titleSpot ? <Meme spot={titleSpot} plain={title} /> : title}
+          {titleSpot && <MemeFrame spot={titleSpot} className="meme-face" />}
+        </h2>
 
         <div className="flex items-center gap-1">
           <div dir="ltr" className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">

@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { Button } from './ui/Button';
 import { PLUGIN_SETTINGS_PATH } from '../hooks/usePlugins';
 import { t } from '../i18n';
+import { Meme } from './meme/Meme';
 
 /** What is missing, in one line: nothing installed, or nothing switched on. */
 export function noPluginsTitle(installed: number): string {
@@ -43,7 +44,9 @@ export const NoPluginsNotice: React.FC<NoPluginsNoticeProps> = ({
     >
       <Puzzle aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
       <div className="min-w-0 flex-1 basis-56">
-        <p className="text-[13px] font-medium text-text-primary">{noPluginsTitle(installed)}</p>
+        <p className="text-[13px] font-medium text-text-primary">
+          {installed === 0 ? <Meme spot="noPlugins" plain={noPluginsTitle(installed)} /> : noPluginsTitle(installed)}
+        </p>
         <p className="mt-0.5 text-xs text-text-muted">{detail ?? noPluginsDetail(installed)}</p>
       </div>
       <Button

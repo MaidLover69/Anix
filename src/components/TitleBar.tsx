@@ -8,6 +8,7 @@ import { DEFAULT_DESKTOP_APPEARANCE, useDesktopAppearance } from '../hooks/useDe
 import type { WindowButtonKind, WindowButtonsSetting } from '../types';
 import { t, type TKey } from '../i18n';
 import { useFullscreenElement } from '../hooks/useFullscreen';
+import { useHighModule, type MemeSpot } from './meme/Meme';
 
 type WindowAction = 'minimize' | 'toggleMaximize' | 'close';
 
@@ -23,22 +24,28 @@ async function runWindowAction(action: WindowAction) {
 const CONTROL_CLASS =
   'flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-ink/10 hover:text-text-primary';
 
-const BUTTONS: Record<WindowButtonKind, { action: WindowAction; labelKey: TKey; icon: React.ReactNode; className: string }> = {
+const BUTTONS: Record<
+  WindowButtonKind,
+  { action: WindowAction; labelKey: TKey; spot: MemeSpot; icon: React.ReactNode; className: string }
+> = {
   minimize: {
     action: 'minimize',
     labelKey: 'titleBar.minimize',
+    spot: 'tbMin',
     icon: <Minus aria-hidden="true" className="h-3.5 w-3.5" />,
     className: CONTROL_CLASS,
   },
   maximize: {
     action: 'toggleMaximize',
     labelKey: 'titleBar.maximize',
+    spot: 'tbMax',
     icon: <Square aria-hidden="true" className="h-3 w-3" />,
     className: CONTROL_CLASS,
   },
   close: {
     action: 'close',
     labelKey: 'common.close',
+    spot: 'tbClose',
     icon: <X aria-hidden="true" className="h-3.5 w-3.5" />,
     className:
       'flex h-8 w-11 items-center justify-center text-text-muted cursor-pointer transition-colors hover:bg-state-error hover:text-bg-deepest',
@@ -63,8 +70,9 @@ export function windowButtonSides(
   return setting === 'left' ? { left: buttons, right: [] } : { left: [], right: buttons };
 }
 
-const ButtonGroup: React.FC<{ buttons: WindowButtonKind[] }> = ({ buttons }) =>
-  buttons.length === 0 ? null : (
+const ButtonGroup: React.FC<{ buttons: WindowButtonKind[] }> = ({ buttons }) => {
+  const high = useHighModule();
+  return buttons.length === 0 ? null : (
     <div className="flex items-center">
       {buttons.map((kind) => {
         const button = BUTTONS[kind];
@@ -74,6 +82,8 @@ const ButtonGroup: React.FC<{ buttons: WindowButtonKind[] }> = ({ buttons }) =>
             type="button"
             onClick={() => runWindowAction(button.action)}
             aria-label={t(button.labelKey)}
+            // High only: the meme with the plain words; below High no tooltip, as before.
+            title={high?.memeText(button.spot, t(button.labelKey))}
             className={button.className}
           >
             {button.icon}
@@ -82,6 +92,7 @@ const ButtonGroup: React.FC<{ buttons: WindowButtonKind[] }> = ({ buttons }) =>
       })}
     </div>
   );
+};
 
 /** Custom title bar; the window is created without native decorations. */
 export const TitleBar: React.FC = () => {
@@ -111,7 +122,7 @@ export const TitleBar: React.FC = () => {
       <ButtonGroup buttons={left} />
       <span
         className={clsx(
-          'pointer-events-none text-xs font-medium text-text-muted',
+          'ui-titlebar-name pointer-events-none text-xs font-medium text-text-muted',
           nameOnRight ? 'ml-auto' : left.length > 0 ? 'ml-3 mr-auto' : 'mr-auto'
         )}
       >

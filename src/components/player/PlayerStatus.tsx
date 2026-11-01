@@ -2,7 +2,8 @@ import React from 'react';
 import { CircleAlert, LoaderCircle, Puzzle } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { t } from '../../i18n';
-import { useFunMode } from '../../hooks/useSettings';
+import { useFunMode, useMemeLevel } from '../../hooks/useSettings';
+import { Meme, MemeFrame, MemeImage, useHighModule, type MemeSpot } from '../meme/Meme';
 
 export interface PlayerStatusAction {
   label: string;
@@ -34,8 +35,15 @@ interface PlayerStatusProps {
   chips?: ProviderChip[];
   /** Dims a video frame that is still visible underneath. */
   scrim?: boolean;
-  /** Fun mode: the last episode ended and auto-play moved on, so this loading screen is the end card. */
+  /** Meme mode Medium and up: the last episode ended and auto-play moved on, so this loading screen is the end card. */
   cleared?: boolean;
+  /** Meme mode › Medium: the title's own wording. */
+  medium?: string;
+  /** Meme mode › High: the title's meme; a spot with an image replaces the spinner or icon. */
+  meme?: MemeSpot;
+  memeVars?: Record<string, string | number>;
+  /** Meme mode › High: a "NANI?!" drawn over a playback error (decoration). */
+  nani?: boolean;
 }
 
 /** Centred loading or error state of the player; it always says what is going on. */
@@ -49,9 +57,16 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
   chips = [],
   scrim = false,
   cleared = false,
+  medium,
+  meme,
+  memeVars,
+  nani = false,
 }) => {
-  // Fun mode: a "charging" bar while loading, and the extensions asked shown as the party.
+  // Medium and up: a "charging" bar while loading and hearts on the extensions asked; Medium names them the party.
   const fun = useFunMode();
+  const isMedium = useMemeLevel() === 'medium';
+  const high = useHighModule();
+  const memeImage = !!(high && meme && high.spotImage(meme));
   return (
     <div
       role={kind === 'error' ? 'alert' : 'status'}
@@ -59,7 +74,9 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
         scrim ? 'bg-black/75' : ''
       }`}
     >
-      {kind === 'loading' ? (
+      {memeImage && meme ? (
+        <MemeFrame spot={meme} className={kind === 'loading' ? 'meme-st meme-run' : 'meme-st'} />
+      ) : kind === 'loading' ? (
         <LoaderCircle aria-hidden="true" className="h-8 w-8 animate-spin text-white/80" />
       ) : kind === 'setup' ? (
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white/80">
@@ -71,20 +88,29 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
           <CircleAlert aria-hidden="true" className="h-6 w-6" />
         </div>
       )}
-      {fun && cleared && kind === 'loading' && (
+      {nani && high && kind === 'error' && <span aria-hidden="true" className="meme-nani" />}
+      {high && cleared && kind === 'loading' && !memeImage && <span aria-hidden="true" className="meme-clear-big" />}
+      {isMedium && cleared && kind === 'loading' && (
         <p aria-hidden="true" dir="auto" className="fun-clear self-center text-lg">
           {t('fun.episodeClear')} <span className="fun-clear-exp">{t('fun.plusExp')}</span>
         </p>
       )}
       <p className={kind === 'loading' ? 'text-[13px] font-medium text-white/80' : 'text-base font-semibold text-white'}>
-        {title}
+        {meme ? (
+          <Meme spot={meme} plain={title} medium={medium} vars={memeVars} />
+        ) : isMedium && medium !== undefined ? (
+          medium
+        ) : (
+          title
+        )}
       </p>
-      {fun && cleared && kind === 'loading' && (
+      {high && cleared && kind === 'loading' && !memeImage && <MemeImage name="jojo-to-be-continued" className="meme-tbc" />}
+      {isMedium && cleared && kind === 'loading' && (
         <p aria-hidden="true" dir="auto" className="fun-continued">
           {t('fun.toBeContinued')}
         </p>
       )}
-      {fun && kind === 'loading' && (
+      {fun && kind === 'loading' && !memeImage && (
         <span aria-hidden="true" className="fun-charge block h-2 w-56 max-w-full">
           <span className="block h-full" />
         </span>
@@ -94,7 +120,7 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
           {detail}
         </p>
       )}
-      {fun && chips.length > 0 && (
+      {isMedium && chips.length > 0 && (
         <p aria-hidden="true" className="text-[11px] font-extrabold uppercase tracking-widest text-white/60">
           {t('fun.partyMembers')}
         </p>

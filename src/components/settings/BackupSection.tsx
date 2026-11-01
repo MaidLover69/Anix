@@ -9,6 +9,7 @@ import { Row, Section } from './SettingsLayout';
 import { INPUT_CLASS } from '../library/format';
 import { useUIStore } from '../../stores/uiStore';
 import { t } from '../../i18n';
+import { Meme } from '../meme/Meme';
 import type { BackupResult } from '../../types';
 
 /** Where Discover keeps its search history (see useSearchHistory). */
@@ -60,6 +61,7 @@ export const BackupSection: React.FC = () => {
           showToast({
             type: 'success',
             title: t(result.summary.has_logins ? 'backupSection.savedWithLogins' : 'backupSection.saved'),
+            meme: 'saved',
             message: t('backupSection.savedMessage', { summary: describe(result), path: result.path }),
           });
         }
@@ -120,11 +122,11 @@ export const BackupSection: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => run('export')} disabled={busy !== null}>
               {busy === 'export' ? <Spinner size="sm" label={t('backupSection.savingBackup')} /> : <Download aria-hidden="true" className="h-4 w-4" />}
-              {t('backupSection.export')}
+              <Meme spot="exportB" plain={t('backupSection.export')} />
             </Button>
             <Button variant="neutral" size="sm" onClick={() => run('import')} disabled={busy !== null}>
               {busy === 'import' ? <Spinner size="sm" label={t('backupSection.restoringBackup')} /> : <Upload aria-hidden="true" className="h-4 w-4" />}
-              {t('backupSection.import')}
+              <Meme spot="importB" plain={t('backupSection.import')} />
             </Button>
           </div>
         )}

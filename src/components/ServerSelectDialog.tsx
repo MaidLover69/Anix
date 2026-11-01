@@ -13,6 +13,7 @@ import { useSettings } from '../hooks/useSettings';
 import { useRememberedSource } from '../hooks/useRememberedSource';
 import type { EpisodeItem as EpisodeItemType, EpisodesResult } from '../types';
 import { t } from '../i18n';
+import { Meme, MemeFrame } from './meme/Meme';
 
 type Category = 'sub' | 'dub';
 
@@ -238,8 +239,13 @@ export const ServerSelectDialog: React.FC<ServerSelectDialogProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={t('serverSelectDialog.title')}
-      header={<p className="mt-0.5 truncate text-xs text-text-muted">{animeTitle}</p>}
+      title={<Meme spot="serverDlg" plain={t('serverSelectDialog.title')} />}
+      header={
+        <>
+          <p className="mt-0.5 truncate text-xs text-text-muted">{animeTitle}</p>
+          <MemeFrame spot="serverDlg" className="meme-dlg-img" />
+        </>
+      }
       container={container}
     >
       <ServerList

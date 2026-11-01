@@ -5,7 +5,7 @@ import type { ModalSize } from './ui/Modal';
 interface DialogProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
   /** A Tailwind max-width class, mapped to the nearest `Modal` size. */
   maxWidth?: string;

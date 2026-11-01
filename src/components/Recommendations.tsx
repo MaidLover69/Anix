@@ -2,6 +2,7 @@ import React from 'react';
 import { HorizontalRail } from './HorizontalRail';
 import { useSettings } from '../hooks/useSettings';
 import { t } from '../i18n';
+import type { MemeSpot } from './meme/Meme';
 import type { AnimeDetails, Media, RelationEdge } from '../types';
 
 /**
@@ -44,12 +45,13 @@ export function recommendationMedia(details: AnimeDetails | null | undefined, hi
 }
 
 /** A rail of recommended titles; nothing when there are none. */
-export const Recommendations: React.FC<{ details: AnimeDetails | null | undefined; title?: string }> = ({
+export const Recommendations: React.FC<{ details: AnimeDetails | null | undefined; title?: string; titleSpot?: MemeSpot }> = ({
   details,
   title = t('recommendations.title'),
+  titleSpot,
 }) => {
   const { data: settings } = useSettings();
   const items = recommendationMedia(details, settings?.hide_adult_content !== false);
   if (items.length === 0) return null;
-  return <HorizontalRail title={title} items={items} />;
+  return <HorizontalRail title={title} titleSpot={titleSpot} items={items} />;
 };

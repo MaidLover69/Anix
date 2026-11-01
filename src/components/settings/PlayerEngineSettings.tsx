@@ -13,7 +13,11 @@ import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import type { HwdecSelfTest } from '../../hooks/useEmbeddedMpv';
 import { useUIStore } from '../../stores/uiStore';
 import { locale, t, type TKey } from '../../i18n';
+import { Meme, type MemeSpot } from '../meme/Meme';
 import type { AppSettings, HwdecModeSetting, PlayerEngineSetting } from '../../types';
+
+/** Meme mode › High: the engine's meme prefix. */
+const ENGINE_MEME: Partial<Record<PlayerEngineSetting, MemeSpot>> = { mpv: 'engMpv', web: 'engWeb' };
 
 const ENGINE_OPTIONS: { value: PlayerEngineSetting; labelKey: TKey; lineKey: TKey }[] = [
   { value: 'mpv', labelKey: 'playerEngineSettings.engineMpv', lineKey: 'playerEngineSettings.engineMpvLine' },
@@ -66,7 +70,9 @@ const EngineCards: React.FC<{
               selected ? 'border-accent-500 bg-accent-tint' : 'border-border-strong bg-bg-elevated hover:bg-bg-input'
             )}
           >
-            <span className="text-[13px] font-semibold text-text-primary">{t(option.labelKey)}</span>
+            <span className="text-[13px] font-semibold text-text-primary">
+              {ENGINE_MEME[option.value] ? <Meme spot={ENGINE_MEME[option.value]!} plain={t(option.labelKey)} /> : t(option.labelKey)}
+            </span>
             <span className="text-xs text-text-muted">{t(option.lineKey)}</span>
           </button>
         );

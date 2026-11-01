@@ -14,6 +14,7 @@ import { shouldPromptUpdate } from '../lib/version';
 import { useOpenExternal } from '../hooks/useOpenExternal';
 import type { UpdateInstallSupport } from '../types';
 import { locale, t } from '../i18n';
+import { Meme, MemeImage } from './meme/Meme';
 
 /** How often a pending update window looks for a moment with no other dialog open. */
 const PROMPT_RETRY_MS = 3000;
@@ -127,9 +128,13 @@ export const UpdateDialog: React.FC = () => {
       isOpen={updateDialogOpen}
       onClose={close}
       title={
-        updateInfo.switch_build
-          ? t('updateDialog.switchTitle', { version: updateInfo.version })
-          : t('updateDialog.title', { version: updateInfo.version })
+        updateInfo.switch_build ? (
+          t('updateDialog.switchTitle', { version: updateInfo.version })
+        ) : installing ? (
+          t('updateDialog.title', { version: updateInfo.version })
+        ) : (
+          <Meme spot="upd" plain={t('updateDialog.title', { version: updateInfo.version })} />
+        )
       }
       maxWidth="max-w-md"
       footer={
@@ -164,6 +169,7 @@ export const UpdateDialog: React.FC = () => {
       }
     >
       <div className="flex flex-col gap-2">
+        {!installing && !updateInfo.switch_build && <MemeImage name="kirei-rejoice" className="meme-dlg-img" />}
         {publishedLabel && <p className="text-xs text-text-muted">{t('updateDialog.released', { date: publishedLabel })}</p>}
         <h3 className="text-[13px] font-medium text-text-primary">{t('updateDialog.releaseNotes')}</h3>
         <div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md ui-card bg-bg-card p-3 text-[13px] leading-relaxed text-text-secondary select-text">
@@ -191,10 +197,15 @@ export const UpdateDialog: React.FC = () => {
             >
               <div className="h-full rounded-full bg-accent-500" style={{ width: `${percent ?? 5}%` }} />
             </div>
-            <p className="text-xs text-text-muted">
-              {percent !== null && percent < 100
-                ? t('updateDialog.downloadingPercent', { percent })
-                : t('updateDialog.checkingInstalling')}
+            <p className="flex items-center gap-3 text-xs text-text-muted">
+              <MemeImage name="archer-unlimited-blade-works" className="meme-row-md" />
+              <span>
+                {percent !== null && percent < 100 ? (
+                  <Meme spot="updDl" plain={t('updateDialog.downloadingPercent', { percent })} />
+                ) : (
+                  t('updateDialog.checkingInstalling')
+                )}
+              </span>
             </p>
           </div>
         )}

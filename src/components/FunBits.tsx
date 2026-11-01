@@ -1,8 +1,8 @@
 /**
- * Fun mode's pieces (Settings › Appearance › Fun mode): the player level and day combo in the
- * sidebar and Stats, the power-level meter on the anime page and the manga sound-effect text.
- * All of it is drawn from data the app already has: 1 EXP per watched episode, the watch
- * streak, the anime's score. Looks live in theme/fun.css.
+ * Meme mode's game pieces (Settings › Appearance › Meme mode, Medium and up): the player level
+ * and day combo in the sidebar and Stats, and the power-level meter on the anime page. All of it
+ * is drawn from data the app already has: 1 EXP per watched episode, the watch streak, the
+ * anime's score. Looks live in theme/fun.css.
  */
 import React, { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -13,13 +13,11 @@ import { useUIStore } from '../stores/uiStore';
 import { watchStreak } from './library/format';
 import { playerLevel, powerLevel, type PlayerLevel } from '../lib/funLevel';
 import { formatNumber, t, type TKey } from '../i18n';
+import { getSeenLevel, setSeenLevel } from '../lib/funSeen';
+import { useMemeLevel } from '../hooks/useSettings';
+import { Meme, MemeImage } from './meme/Meme';
 
-/** Big outlined katakana, decoration only. */
-export const Sfx: React.FC<{ text: string; className?: string }> = ({ text, className }) => (
-  <span aria-hidden="true" className={clsx('fun-sfx', className)}>
-    {text}
-  </span>
-);
+export { Sfx } from './Sfx';
 
 const rankName = (level: PlayerLevel) => t(`fun.rank.${level.rank}` as TKey);
 
@@ -36,15 +34,6 @@ export function useFunStats() {
   return { exp: rows?.length ?? 0, level, streak };
 }
 
-// Kept outside the component: the sidebar unmounts on the player, and the level gained there
-// is announced once back on an ordinary screen, never over the video.
-let seenLevel: number | null = null;
-
-/** Fun mode was switched off: levels gained meanwhile are not announced when it comes back on. */
-export function forgetSeenLevel() {
-  seenLevel = null;
-}
-
 const ExpBar: React.FC<{ level: PlayerLevel; className?: string }> = ({ level, className }) => (
   <span aria-hidden="true" className={clsx('fun-exp block', className)}>
     <span className="fun-exp-fill block h-full" style={{ width: `${(level.intoLevel / level.levelSize) * 100}%` }} />
@@ -54,18 +43,21 @@ const ExpBar: React.FC<{ level: PlayerLevel; className?: string }> = ({ level, c
 /** The sidebar footer's level badge, EXP bar and day combo; one "LEVEL UP!" toast per level gained. */
 export const FunLevelBadge: React.FC<{ expanded: boolean }> = ({ expanded }) => {
   const { level, streak } = useFunStats();
+  const memeLevel = useMemeLevel();
   const showToast = useUIStore((s) => s.showToast);
   useEffect(() => {
     if (!level) return;
-    if (seenLevel !== null && level.level > seenLevel) {
+    const seen = getSeenLevel();
+    if (seen !== null && level.level > seen) {
       showToast({
         type: 'success',
         title: t('fun.levelUp'),
         message: t('fun.levelUpMessage', { level: level.level, rank: rankName(level) }),
         art: 'levelUp',
+        meme: level.rank === 'legend' ? 'levelTop' : undefined,
       });
     }
-    seenLevel = level.level;
+    setSeenLevel(level.level);
   }, [level, showToast]);
   if (!level) return null;
   const label = t('fun.levelLabel', { level: level.level, rank: rankName(level) });
@@ -81,7 +73,11 @@ export const FunLevelBadge: React.FC<{ expanded: boolean }> = ({ expanded }) => 
       </span>
       <ExpBar level={level} className="h-1.5" />
       {expanded && streak.current > 0 && (
-        <span className="fun-combo text-[11px]">{t('fun.combo', { count: streak.current })}</span>
+        <span className="fun-combo text-[11px]">
+          {memeLevel === 'high'
+            ? `🔥 ${t('statsTab.streakDays', { count: streak.current })}`
+            : t('fun.combo', { count: streak.current })}
+        </span>
       )}
     </div>
   );
@@ -93,7 +89,10 @@ export const FunLevelCard: React.FC = () => {
   if (!level) return null;
   return (
     <section className="ui-card fun-level-card relative flex flex-col gap-2 overflow-hidden rounded-xl bg-bg-card p-4">
-      <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{t('fun.levelCard')}</span>
+      <MemeImage name="jinwoo-arise" className="lvl" />
+      <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+        <Meme spot="levelCard" plain={t('fun.levelCard')} />
+      </span>
       <span className="flex flex-wrap items-baseline gap-x-3">
         <span className="fun-level text-3xl">{t('fun.levelShort', { level: level.level })}</span>
         <span className="text-base font-semibold text-text-primary">{rankName(level)}</span>

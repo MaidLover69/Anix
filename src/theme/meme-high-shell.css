@@ -1,0 +1,719 @@
+/*
+ * Meme mode › High: shell, Home, Discover, Detail and player rules. Loaded with the High chunk
+ * (components/meme/high.tsx); the shared base is meme-high.css. Manga sound effects and the big
+ * end-card words are CSS content on aria-hidden elements, so no meme text sits in the markup.
+ * Nothing here moves over a playing video: player rules target the paused, status and end screens.
+ */
+
+/* ---------------------------------------------------------- Title bar and sidebar */
+
+:root[data-meme="high"]:not([data-theme="hacker"]) .ui-titlebar-name::after {
+  content: "ドドド" / "";
+  margin-inline-start: 0.4rem;
+  font-weight: 900;
+  font-style: italic;
+  color: transparent;
+  -webkit-text-stroke: 1px rgb(var(--accent-500) / 0.7);
+}
+
+/* Expanded items: the meme on top, the plain words small beneath. */
+:root[data-meme="high"] .ui-sidebar :is(a, button) {
+  height: auto;
+  min-height: 2.25rem;
+  padding-block: 0.25rem;
+}
+
+.ui-sidebar .mm-k {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+  line-height: 1.15;
+}
+
+.ui-sidebar .mm-d {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: normal;
+  font-weight: 800;
+  color: inherit;
+}
+
+.ui-sidebar .mm-p {
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ui-sidebar .mm-sep {
+  display: none;
+}
+
+/* The offline banner's truck fits the thin strip. */
+.ui-banner .meme-truck {
+  width: 3.2rem;
+  color: rgb(var(--warning));
+}
+
+/* Banners: only the meme shrinks (with an ellipsis), so the plain words are never cut. */
+:root[data-meme="high"] .ui-banner > .truncate {
+  display: flex;
+  min-width: 0;
+}
+
+.ui-banner .mm-k {
+  display: flex;
+  gap: 0.3em;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ui-banner .mm-k > .mm-d {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-banner .mm-k > :is(.mm-sep, .mm-p) {
+  flex: none;
+}
+
+/* ---------------------------------------------------------- Home */
+
+.meme-greet {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: -1rem;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.meme-greet .mm-d {
+  font-size: 1.2em;
+}
+
+.meme-greet .mimg {
+  width: auto;
+  height: 2.4rem;
+  max-width: 3rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+.meme-greet .mimg.meme-run-sm {
+  height: 2.6rem;
+  max-width: none;
+  border-width: 1.5px;
+  box-shadow: none;
+}
+
+/* Rail titles: a small manga panel; the face (Anya) after the words. */
+:root[data-meme="high"] .ui-rail-title {
+  padding: 0.1rem 0.6rem 0.15rem;
+  border: 2px solid rgb(var(--ink) / 0.85);
+  border-radius: 4px;
+  background-color: rgb(var(--bg-card));
+  box-shadow: 3px 3px 0 rgb(var(--accent-500));
+  transform: rotate(-1deg);
+}
+
+:root[data-meme="high"][dir="rtl"] .ui-rail-title {
+  box-shadow: -3px 3px 0 rgb(var(--accent-500));
+  transform: rotate(1deg);
+}
+
+.ui-rail-title .mimg.meme-face {
+  width: auto;
+  height: 2.2rem;
+  max-width: 3.9rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+/* Hero: Goku's panel behind the poster and his beam across the banner behind the text.
+   --pw/--pe/--sb are the poster's width, end offset and bottom offset (HeroBanner.tsx). */
+:root[data-meme="high"] .ui-hero {
+  --pw: clamp(7rem, 12vw, 10.5rem);
+  --pe: clamp(1.5rem, 5vw, 4.5rem);
+  --sb: 2.5rem;
+}
+
+@media (min-width: 1280px) {
+  :root[data-meme="high"] .ui-hero {
+    min-height: max(clamp(260px, 40vh, 420px), calc(var(--sb) + var(--pw) * 2.12));
+  }
+
+  :root[data-meme="high"] .meme-hero-body {
+    max-width: min(40rem, calc(100% - var(--pe) - var(--pw) * 2.75 - 1.5rem));
+  }
+}
+
+.ui-hero-sticker .mimg.meme-kimg {
+  position: absolute;
+  z-index: -1;
+  width: calc(var(--pw) * 1.9);
+  max-width: none;
+  inset-inline-end: calc(var(--pw) * 0.8);
+  bottom: calc(var(--pw) * 0.04);
+  transform: rotate(-3deg);
+}
+
+:root[dir="rtl"] .ui-hero-sticker .mimg.meme-kimg {
+  transform: rotate(3deg);
+}
+
+:root[data-meme="high"] .ui-hero-sticker {
+  isolation: isolate;
+}
+
+.meme-kcap {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(var(--pw) * 1.27);
+  right: calc(var(--pw) * 0.95);
+  font: italic 900 clamp(0.95rem, 1.6vw, 1.3rem) / 1 var(--font-ui, sans-serif);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  direction: ltr;
+  color: rgb(var(--accent-200));
+  -webkit-text-stroke: 2px rgb(var(--bg-deepest));
+  paint-order: stroke fill;
+  text-shadow: 3px 3px 0 rgb(var(--bg-deepest) / 0.85);
+  transform: rotate(-3deg);
+  pointer-events: none;
+  animation: meme-kcap 0.4s var(--ease-spring) 1.1s both;
+}
+
+.meme-kcap::before {
+  content: "KA-ME-HA-ME-HAAA!" / "";
+}
+
+/* The caption is left to right, so in RTL it moves to the orb's side by hand. */
+:root[dir="rtl"] .meme-kcap {
+  right: auto;
+  left: calc(var(--pw) * 0.95);
+  transform: rotate(3deg);
+}
+
+:root:is([data-theme="light"], [data-theme="comic"]) .meme-kcap {
+  color: rgb(var(--accent-600));
+  -webkit-text-stroke-color: #fff;
+  text-shadow: 3px 3px 0 rgb(var(--ink) / 0.85);
+}
+
+:root[data-theme="manga"] .meme-kcap {
+  color: #fff;
+  -webkit-text-stroke-color: #000;
+  text-shadow: 3px 3px 0 #000;
+}
+
+@keyframes meme-kcap {
+  from { opacity: 0; scale: 0.6; }
+}
+
+/* The beam is the anime's blue-white, not the theme accent; Manga makes it grey like the images. */
+.meme-kbeam {
+  --bh: calc(var(--pw) * 0.3);
+  --k1: #effcff;
+  --k2: #5fd4ff;
+  --k3: #1f8fff;
+  position: absolute;
+  z-index: 0;
+  inset-inline-start: 1.6rem;
+  inset-inline-end: calc(var(--pe) + var(--pw) * 2.38);
+  bottom: calc(var(--sb) + var(--pw) * 0.3 - var(--bh) / 2);
+  height: var(--bh);
+  pointer-events: none;
+  transform-origin: 100% 50%;
+  transform: rotate(-2.5deg);
+  filter: drop-shadow(0 0 6px var(--k2)) drop-shadow(0 0 18px color-mix(in srgb, var(--k3) 70%, transparent));
+}
+
+:root[data-theme="manga"] .meme-kbeam {
+  --k1: #fff;
+  --k2: #bbb;
+  --k3: #666;
+}
+
+.meme-kbeam > span {
+  position: absolute;
+  inset: 0;
+  transform-origin: 100% 50%;
+  animation: meme-kfire 1s var(--ease-out) 0.3s both;
+}
+
+.meme-kbeam i {
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(0 12%, 100% 28%, 100% 72%, 0 88%);
+  background: linear-gradient(to left, var(--k1), var(--k2) 18%, color-mix(in srgb, var(--k3) 85%, transparent));
+}
+
+.meme-kbeam i::after {
+  content: "";
+  position: absolute;
+  inset: 40% 0;
+  background: linear-gradient(to left, white, var(--k1) 40%, color-mix(in srgb, var(--k2) 60%, transparent));
+}
+
+.meme-kbeam .meme-ktip {
+  position: absolute;
+  inset-inline-start: calc(var(--bh) * -0.55);
+  top: -38%;
+  height: 176%;
+  aspect-ratio: 1 / 1.05;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, white 0 30%, var(--k1) 48%, var(--k2) 78%, transparent 100%);
+}
+
+@keyframes meme-kfire {
+  from { transform: scaleX(0); opacity: 0.3; }
+}
+
+/* The beam shows only beside the poster (wide windows) and not in RTL, where the panel faces the other way. */
+:root[dir="rtl"] .meme-kbeam {
+  display: none;
+}
+
+@media (max-width: 1279px) {
+  .meme-kbeam {
+    display: none;
+  }
+}
+
+/* 960 px: a smaller panel, so the title keeps its room; beam and caption follow it. Under
+   940 CSS px (large text or zoom) the poster and panel hide, as on Low. */
+@media (min-width: 940px) and (max-width: 1279px) {
+  :root[data-meme="high"] .ui-hero-sticker {
+    display: block;
+  }
+
+  :root[data-meme="high"] .ui-hero-sticker .mimg.meme-kimg {
+    width: calc(var(--pw) * 1.45);
+  }
+
+  :root[data-meme="high"] .meme-kcap {
+    bottom: calc(var(--pw) * 0.98);
+  }
+
+  :root[data-meme="high"]:not([dir="rtl"]) .meme-kbeam {
+    display: block;
+    inset-inline-end: calc(var(--pe) + var(--pw) * 2.02);
+    bottom: calc(var(--sb) + var(--pw) * 0.24 - var(--bh) / 2);
+  }
+
+  :root[data-meme="high"] .meme-hero-body {
+    max-width: min(40rem, calc(100% - var(--pe) - var(--pw) * 2.3 - 1rem));
+  }
+}
+
+.meme-hero-kicker .mm-d {
+  color: inherit;
+}
+
+/* ---------------------------------------------------------- Cards */
+
+:root[data-meme="high"] .ui-anime-card .ui-card {
+  border: 2px solid rgb(var(--ink) / 0.85);
+  box-shadow: 4px 4px 0 rgb(var(--ink) / 0.7);
+}
+
+:root[data-meme="high"] .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt > a .ui-card {
+  border-width: 3px;
+  border-color: rgb(var(--ink));
+  box-shadow: 6px 6px 0 rgb(var(--accent-500));
+}
+
+/* A page of panels: cards lean a little, alternately. */
+:root[data-meme="high"]:not([data-effects="fewer"]) .ui-anime-card:nth-child(odd) > .ui-card-tilt {
+  rotate: -1.2deg;
+}
+
+:root[data-meme="high"]:not([data-effects="fewer"]) .ui-anime-card:nth-child(even) > .ui-card-tilt {
+  rotate: 0.8deg;
+}
+
+:root[data-meme="high"] .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt::after {
+  content: "ドン!" / "";
+  position: absolute;
+  z-index: 3;
+  top: 38%;
+  inset-inline-end: -0.55rem;
+  font: italic 900 1.45rem / 1 var(--font-ui, sans-serif);
+  color: rgb(var(--accent-300));
+  -webkit-text-stroke: 2px rgb(var(--bg-deepest));
+  paint-order: stroke fill;
+  transform: rotate(-12deg);
+  pointer-events: none;
+}
+
+:root:is([data-theme="light"], [data-theme="comic"], [data-theme="manga"])[data-meme="high"] .ui-anime-card:is(:hover, :focus-within) .ui-card-tilt::after {
+  color: rgb(var(--accent-600));
+  -webkit-text-stroke-color: #fff;
+}
+
+.meme-srank {
+  font-style: italic;
+  color: rgb(var(--bg-deepest)) !important;
+  background-color: rgb(var(--warning)) !important;
+}
+
+/* Covers that are loading or missing: a "who's that" silhouette. */
+:root[data-meme="high"] .ui-skel-cover,
+:root[data-meme="high"] .ui-anime-card .ui-cover-missing {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+:root[data-meme="high"] .ui-skel-cover::before,
+:root[data-meme="high"] .ui-anime-card .ui-cover-missing::before {
+  content: "?" / "";
+  font-size: 3rem;
+  font-weight: 900;
+  color: rgb(var(--ink) / 0.6);
+}
+
+:root[data-meme="high"] .ui-anime-card .ui-cover-missing::after {
+  content: "Who’s that anime?!" / "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0.5rem;
+  padding-inline: 0.3rem;
+  font-size: 0.68rem;
+  font-style: italic;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+/* The plain "No image" stays for screen readers, out of sight. */
+:root[data-meme="high"] .ui-anime-card .ui-cover-missing > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.meme-peek-tag {
+  color: rgb(var(--accent-300));
+  background-color: rgb(var(--bg-card));
+  box-shadow: 0 0 0 1px rgb(var(--ink) / 0.25);
+}
+
+/* ---------------------------------------------------------- Discover */
+
+.meme-page-sfx::before {
+  font-size: 2.3rem;
+}
+
+.meme-sfx-don::before {
+  content: "ドン!" / "";
+}
+
+.meme-page-sfx {
+  align-self: center;
+  margin-inline: 0.1rem 0.4rem;
+}
+
+/* ---------------------------------------------------------- Detail */
+
+/* Jotaro gets his own column beside the title; at 960 px a corner of the header. */
+:root[data-meme="high"] .ui-detail-head {
+  grid-template-columns: clamp(9rem, 15vw, 13rem) minmax(0, 1fr) 11rem;
+}
+
+.meme-jojo {
+  position: relative;
+  align-self: stretch;
+  min-height: 11rem;
+  pointer-events: none;
+}
+
+.meme-jojo > .mimg {
+  position: absolute;
+  bottom: 0;
+  inset-inline-end: 0.4rem;
+  width: 7.4rem;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.meme-gogo {
+  position: absolute;
+  font-size: 2.6rem;
+  font-style: normal;
+  color: rgb(var(--accent-500));
+  -webkit-text-stroke: 1.6px rgb(var(--ink));
+  paint-order: stroke fill;
+  animation: meme-gogo 1.8s ease-in-out infinite;
+}
+
+.meme-gogo::before {
+  content: "ゴ" / "";
+}
+
+.meme-gogo:nth-of-type(1) { top: 1.2rem; inset-inline-end: 6.8rem; }
+.meme-gogo:nth-of-type(2) { top: 4.4rem; inset-inline-end: 7.6rem; font-size: 3.6rem; animation-delay: 0.3s; }
+.meme-gogo:nth-of-type(3) { top: 8.6rem; inset-inline-end: 6.6rem; font-size: 2.2rem; animation-delay: 0.6s; }
+
+@keyframes meme-gogo {
+  50% { transform: translate(2px, -3px); }
+}
+
+@media (max-width: 1100px) {
+  :root[data-meme="high"] .ui-detail-head {
+    grid-template-columns: clamp(9rem, 15vw, 13rem) minmax(0, 1fr);
+  }
+
+  .meme-jojo {
+    position: absolute;
+    top: 0.5rem;
+    inset-inline-end: clamp(1rem, 2.5vw, 2.25rem);
+    width: 9rem;
+    height: 7.4rem;
+    min-height: 0;
+  }
+
+  .meme-jojo > .mimg { width: 4.4rem; }
+  .meme-gogo { font-size: 1.4rem; }
+  .meme-gogo:nth-of-type(1) { top: 0.2rem; inset-inline-end: 4.6rem; }
+  .meme-gogo:nth-of-type(2) { top: 2rem; inset-inline-end: 5.3rem; font-size: 2rem; }
+  .meme-gogo:nth-of-type(3) { top: 4.6rem; inset-inline-end: 4.4rem; font-size: 1.2rem; }
+}
+
+/* Under 940 CSS px (the 960 px window with large text or zoom): no room for him. */
+@media (max-width: 939px) {
+  .meme-jojo { display: none; }
+}
+
+/* The Completed stamp becomes a sticker on the cover's lower edge, off the title's line. */
+:root[data-meme="high"] .ui-detail-stamp {
+  top: auto;
+  inset-inline-end: auto;
+  bottom: 1rem;
+  inset-inline-start: calc(1.5rem + 0.3rem);
+  width: calc(clamp(9rem, 15vw, 13rem) - 0.6rem);
+  text-align: center;
+}
+
+@media (min-width: 1280px) {
+  :root[data-meme="high"] .ui-detail-stamp {
+    inset-inline-start: calc(2rem + 0.3rem);
+  }
+}
+
+:root[data-meme="high"] .ui-detail-stamp .ui-stamp [data-art="ring"] {
+  width: 100%;
+  padding-inline: 0.25rem;
+  background-color: rgb(var(--bg-page) / 0.88);
+}
+
+:root[data-meme="high"] .ui-detail-stamp .ui-stamp [data-art="ring"] > span:first-child {
+  font-size: clamp(0.9rem, 1.5vw, 1.2rem);
+  letter-spacing: 0.06em;
+  line-height: 1.05;
+}
+
+:root[data-meme="high"] .ui-detail-stamp .fun-sfx-stamp {
+  inset-inline-start: auto;
+  inset-inline-end: -0.9rem;
+  top: -1.9rem;
+  font-size: 1.9rem;
+  -webkit-text-stroke-color: rgb(var(--success) / 0.85);
+}
+
+/* Episode tiles with no still. */
+.meme-nothumb .mm {
+  display: block;
+}
+
+/* ---------------------------------------------------------- Player (paused, status and end screens only) */
+
+/* Bar buttons: the meme as a small caption over the plain word. */
+[data-player-bar] .mm-k {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  line-height: 1.05;
+}
+
+[data-player-bar] .mm-d {
+  font-size: 0.68em;
+  letter-spacing: 0.02em;
+  color: inherit;
+  opacity: 0.88;
+}
+
+[data-player-bar] .mm-sep {
+  display: none;
+}
+
+.meme-clock .mm-d {
+  font-style: italic;
+  color: #fff;
+  text-decoration: underline 2px rgb(var(--accent-500));
+  text-underline-offset: 3px;
+}
+
+/* Pause screen: Dio's frame and "ZA WARUDO", the plain "Paused" beneath. */
+.meme-pause .mimg.meme-za-img {
+  width: auto;
+  height: clamp(4.5rem, 9vw, 6.5rem);
+  margin-bottom: 0.3rem;
+}
+
+.meme-pause .mm-k {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}
+
+.meme-pause .mm-d {
+  font-size: clamp(1.6rem, 3.4vw, 2.8rem);
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #fff;
+  -webkit-text-stroke: 1.5px rgb(var(--accent-500));
+  direction: ltr;
+}
+
+.meme-pause .mm-p {
+  color: rgb(255 255 255 / 0.75);
+}
+
+.meme-pause .mm-sep {
+  display: none;
+}
+
+/* The picture under the pause screen: Dio stopped time. The embedded mpv picture is not a page element and stays as it is. */
+:root[data-meme="high"] .dark-scope:has(.meme-pause) video {
+  filter: invert(0.88) hue-rotate(180deg) saturate(0.7);
+}
+
+@media (max-height: 560px) {
+  .meme-pause .mimg.meme-za-img { display: none; }
+}
+
+/* End screens: the big words, then the plain heading. */
+.meme-clear-big {
+  font-size: clamp(2.2rem, 5vw, 3.8rem);
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  direction: ltr;
+  color: rgb(var(--accent-300));
+  -webkit-text-stroke: 2px #000;
+  paint-order: stroke fill;
+  text-shadow: 5px 5px 0 #000;
+}
+
+.meme-clear-big::before {
+  content: "EPISODE CLEAR!" / "";
+}
+
+.meme-clear-big.meme-final::before {
+  content: "THE END…?" / "";
+}
+
+:root[data-meme="high"] .dark-scope:has(.meme-clear-big) video {
+  filter: sepia(0.85) saturate(0.8) contrast(1.05);
+  opacity: 0.6;
+}
+
+/* "To be continued": the plate in the bottom-start corner, never mirrored. */
+.mimg.meme-tbc {
+  position: absolute;
+  z-index: 20;
+  bottom: 1.4rem;
+  left: 1.4rem;
+  width: clamp(12rem, 24vw, 17rem);
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  filter: drop-shadow(3px 3px 0 #000);
+  animation: meme-tbc 0.45s var(--ease-out) 0.3s both;
+}
+
+:root[dir="rtl"] .mimg.meme-tbc {
+  left: auto;
+  right: 1.4rem;
+  --tx: 40px;
+}
+
+@keyframes meme-tbc {
+  from { transform: translateX(var(--tx, -40px)); opacity: 0; }
+}
+
+/* Finding a stream (Naruto runs) and no stream (Shirou) replace the spinner and the icon. */
+.mimg.meme-st {
+  width: auto;
+  height: clamp(6rem, 14vw, 9rem);
+  max-width: min(17rem, 80%);
+}
+
+.mimg.meme-st.meme-run {
+  height: clamp(4.5rem, 9vw, 6.5rem);
+}
+
+/* PlayerStatus titles: the meme over the plain words. */
+[role="status"] > p > .mm-k,
+[role="alert"] > p > .mm-k {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+[role="status"] > p > .mm-k > .mm-sep,
+[role="alert"] > p > .mm-k > .mm-sep {
+  display: none;
+}
+
+.meme-nani::before {
+  content: "NANI?!" / "";
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  color: #fff;
+  -webkit-text-stroke: 2px rgb(var(--error));
+  text-shadow: 4px 4px 0 rgb(var(--error) / 0.5);
+}
+
+.meme-buffering .mm-sep {
+  display: none;
+}
+
+/* Seek feedback: the "ORA" at the pill's own size, never a bigger overlay on the picture. */
+.meme-fb .mm-d {
+  margin-inline-end: 0.35em;
+  font-size: inherit;
+  color: rgb(var(--accent-300));
+}
+
+.meme-fb .mm-sep {
+  display: none;
+}
+
+/* The server dialog's Iskandar under its title. */
+.mimg.meme-dlg-img {
+  width: auto;
+  height: 4.2rem;
+  max-width: 7.4rem;
+  margin-top: 0.5rem;
+}

@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { distinctEpisodeTitle } from '../hooks/watchProgress';
 import type { EpisodeItem as EpisodeItemType } from '../types';
 import { t } from '../i18n';
+import { Meme, useHighModule } from './meme/Meme';
 
 interface EpisodeItemProps {
   episode: EpisodeItemType;
@@ -33,7 +34,7 @@ const REVEAL_CLASS =
 
 const FillerBadge: React.FC = () => (
   <span className="flex-shrink-0 rounded-sm bg-state-warning/15 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-state-warning">
-    {t('episodeItem.filler')}
+    <Meme spot="filler" plain={t('episodeItem.filler')} />
   </span>
 );
 
@@ -43,9 +44,26 @@ const LocalBadge: React.FC = () => (
     className="flex flex-shrink-0 items-center gap-1 rounded-sm bg-accent-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-accent-300"
   >
     <HardDrive aria-hidden="true" className="h-3 w-3" />
-    {t('episodeItem.local')}
+    <Meme spot="localTag" plain={t('episodeItem.local')} />
   </span>
 );
+
+/** The plate of an episode with no still: its number, or on High a "who's that" caption. */
+const NoThumbPlate: React.FC<{ number: number; card: boolean }> = ({ number, card }) => {
+  const high = useHighModule();
+  if (high) {
+    return (
+      <span className="meme-nothumb px-1 text-center text-[11px] font-black italic leading-tight text-text-secondary">
+        <Meme spot="noThumb" plain={t('meme.noPicture')} />
+      </span>
+    );
+  }
+  return card ? null : (
+    <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
+      {number}
+    </span>
+  );
+};
 
 const DubBadge: React.FC<{ className?: string }> = ({ className }) => (
   <span
@@ -112,11 +130,7 @@ const Thumbnail: React.FC<{
         aria-hidden="true"
         className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br ui-plate from-ink/[0.07] to-transparent ring-1 ring-inset ring-ink/[0.06]"
       >
-        {!card && (
-          <span className="text-xl font-semibold tabular-nums text-text-disabled transition-colors group-hover:text-text-secondary">
-            {episode.number}
-          </span>
-        )}
+        <NoThumbPlate number={episode.number} card={!!card} />
       </div>
     )}
     {card && (
@@ -128,7 +142,7 @@ const Thumbnail: React.FC<{
             episode.image ? 'ui-ep-num text-white' : 'text-text-disabled'
           )}
         >
-          {episode.number}
+          <Meme spot="epNum" plain={String(episode.number)} vars={{ n: episode.number }} />
         </span>
         <span
           aria-hidden="true"
@@ -154,7 +168,7 @@ const Thumbnail: React.FC<{
             aria-hidden="true"
             className="rounded-e-sm bg-accent-600 px-2 py-0.5 text-[11px] font-black uppercase leading-[14px] tracking-wider text-on-accent shadow-pop"
           >
-            {t('episodeItem.upNext')}
+            <Meme spot="youHere" plain={t('episodeItem.upNext')} />
           </span>
         )}
         {hasDub && <DubBadge className="ms-1.5 shadow-pop" />}

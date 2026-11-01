@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // Tests for the anime ids and episode numbers routes and links accept, the anime page's
-// scores and the "not found" answer, and fun mode's level, rank and power level.
+// scores and the "not found" answer, Meme mode's level, rank and power level, how older settings
+// load the Meme mode level, and the High line catalogue.
 //   node --experimental-strip-types scripts/routes-test.mjs
 import assert from 'node:assert/strict';
 import { episodeExists, openAnimeId, parseAnimeId, parseDeepLink } from '../src/lib/routes.ts';
 import { detailScores } from '../src/lib/scores.ts';
 import { errorCode, isNotFoundError } from '../src/lib/errorCodes.ts';
+import fs from 'node:fs';
 import { expForLevel, playerLevel, powerLevel, rankFor } from '../src/lib/funLevel.ts';
+import { isMemeLevel, memeLevelOf } from '../src/lib/memeLevel.ts';
+import { ANIMATED, IMAGES, LINES, fillLine } from '../src/lib/memeCatalogue.ts';
+import { readZip } from './memes-unpack.mjs';
 
 // Ids: AniList ids and negative stand-ins; nothing else.
 assert.equal(parseAnimeId('154587'), 154587);
@@ -101,5 +106,64 @@ assert.deepEqual(powerLevel(90, 7), { value: 9000, percent: 90, over9000: true }
 assert.deepEqual(powerLevel(null, 9.12), { value: 9120, percent: 91.2, over9000: true });
 assert.equal(powerLevel(0, 0), null);
 assert.equal(powerLevel(null, undefined), null);
+
+// Meme mode level from stored settings: a valid meme_mode wins, the old fun_mode: true is Medium,
+// anything else (an unknown or null meme_mode too) is Low.
+const levelCases = [
+  [{}, 'low'],
+  [{ fun_mode: true }, 'medium'],
+  [{ fun_mode: false }, 'low'],
+  [{ fun_mode: 'yes' }, 'low'],
+  [{ meme_mode: 'high' }, 'high'],
+  [{ meme_mode: 'medium' }, 'medium'],
+  [{ meme_mode: 'high', fun_mode: false }, 'high'],
+  [{ meme_mode: 'low', fun_mode: true }, 'low'],
+  [{ meme_mode: 'max', fun_mode: true }, 'low'],
+  [{ meme_mode: 3 }, 'low'],
+  [{ meme_mode: null, fun_mode: true }, 'low'],
+  [{ meme_mode: 'HIGH' }, 'low'],
+];
+for (const [stored, level] of levelCases) assert.equal(memeLevelOf(stored), level, JSON.stringify(stored));
+assert.equal(isMemeLevel('medium'), true);
+assert.equal(isMemeLevel('nope'), false);
+
+// High's catalogue: every image is in the meme pack, animated ones have a separate still, lines
+// stay short, parody lines are the credited ones, and nothing off-limits slips in.
+const packManifest = () => {
+  const unpacked = new URL('../public/memes/manifest.json', import.meta.url);
+  if (fs.existsSync(unpacked)) return JSON.parse(fs.readFileSync(unpacked, 'utf8'));
+  const entries = readZip(fs.readFileSync(new URL('../assets/memes.zip', import.meta.url)));
+  return JSON.parse(entries.find((e) => e.name === 'memes/manifest.json').data.toString('utf8'));
+};
+const manifest = packManifest();
+assert.deepEqual([...IMAGES], manifest.memes.map((m) => m.id).sort());
+for (const id of ANIMATED) {
+  const meme = manifest.memes.find((m) => m.id === id);
+  assert.ok(meme && meme.still !== meme.file, `${id} has a still frame`);
+}
+const UBW_LINES = new Set([
+  'Life’s a crazy bag of marbles.', 'Well now what do we do?!', 'Was history just anime?', 'I can wait.', 'Not you too!',
+  'Is that something people say now?', 'THIS IS THE WORST TIMELINE!', 'Heckin’… I dunno, man.',
+]);
+for (const [spot, entry] of Object.entries(LINES)) {
+  if (entry.img) assert.ok(IMAGES.includes(entry.img), `${spot}: ${entry.img}`);
+  if (entry.plate) assert.ok(entry.img, `${spot}: a plate needs an image`);
+  assert.equal(entry.credit === 'ubw', UBW_LINES.has(entry.line), `${spot}: parody credit`);
+  for (const line of [entry.line, entry.lineRtl].filter(Boolean)) {
+    assert.ok(line.length <= 80, `${spot} is short`);
+    assert.doesNotMatch(line, /ara ara|dekai|yamete|1000-7|nice boat/i, spot);
+  }
+}
+// Every pack image is shown somewhere: a spot's own image or a <MemeImage name="…"> in the app.
+const sources = fs
+  .readdirSync(new URL('../src', import.meta.url), { recursive: true })
+  .filter((file) => file.endsWith('.tsx'))
+  .map((file) => fs.readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8'))
+  .join('\n');
+const spotImages = new Set(Object.values(LINES).map((entry) => entry.img));
+for (const id of IMAGES) assert.ok(spotImages.has(id) || sources.includes(`name="${id}"`), `${id} is never shown`);
+assert.equal(fillLine('S-rank {sc}%', { sc: 91 }), 'S-rank 91%');
+assert.equal(fillLine('Now {t} ← you are here', {}), 'Now  ← you are here');
+assert.equal(fillLine('第{n}話 {x}', { n: 3 }), '第3話 ');
 
 console.log('routes tests passed');

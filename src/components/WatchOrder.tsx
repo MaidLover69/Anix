@@ -12,6 +12,7 @@ import { mediaFormatLabel } from './library/format';
 import { MAX_ENTRIES, watchOrder, type OrderDetails } from '../lib/watchOrder';
 import type { AnimeDetails } from '../types';
 import { t } from '../i18n';
+import { Meme } from './meme/Meme';
 
 function titleOf(node: OrderDetails): string {
   return node.title?.english || node.title?.userPreferred || node.title?.romaji || t('watchOrder.untitled');
@@ -67,7 +68,7 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <h2 id="watch-order-heading" className="text-xl font-semibold text-text-primary">
-            {heading}
+            <Meme spot="order" plain={heading} />
           </h2>
           {loading && <Spinner size="sm" label={t('watchOrder.findingMore')} className="text-text-muted" />}
         </div>

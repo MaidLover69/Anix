@@ -5,6 +5,7 @@ import type { AppSettings, UpdateInfo } from '../types';
 import { DEFAULT_THEME } from '../theme/themes';
 import { isTimeFormat, type TimeFormat } from '../lib/time';
 import { isNewerVersion } from '../lib/version';
+import { memeLevelOf, type MemeLevel } from '../lib/memeLevel';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoplay: true,
@@ -31,7 +32,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   window_buttons: 'desktop',
   use_system_accent: false,
   playful_touches: true,
-  fun_mode: false,
+  meme_mode: 'low',
   release_check_hours: 3,
   background_alerts: false,
   // Settings from before the key existed (1.2.0) load as embedded mpv.
@@ -67,7 +68,9 @@ async function loadSettings(): Promise<AppSettings> {
     skip_outro: oldSkip,
     // Before `doh_mode`, the DNS-over-HTTPS switch was on or off; a saved one keeps its value.
     ...(typeof stored.enable_doh === 'boolean' ? { doh_mode: stored.enable_doh ? 'on' : 'off' } : {}),
-    ...pick(stored, (key) => !isAccountKey(key)),
+    // `fun_mode` (before 1.4) becomes `meme_mode`; the next save no longer carries it.
+    ...pick(stored, (key) => !isAccountKey(key) && key !== 'fun_mode'),
+    meme_mode: memeLevelOf(stored),
   };
 }
 
@@ -94,15 +97,20 @@ export function useTimeFormat(): TimeFormat {
   return isTimeFormat(value) ? value : 'system';
 }
 
-/** The "Playful touches" switch; on unless it was turned off (older settings lack the key). Fun mode shows them too. */
-export function usePlayful(): boolean {
-  const settings = useSettings().data;
-  return settings?.playful_touches !== false || settings?.fun_mode === true;
+/** Settings › Appearance › Meme mode; 'low' until the settings have loaded. */
+export function useMemeLevel(): MemeLevel {
+  return useSettings().data?.meme_mode ?? 'low';
 }
 
-/** Settings › Appearance › Fun mode; off unless it was turned on. */
+/** Medium's game bits (level, combo, stamp, toasts); on for Medium and High. */
 export function useFunMode(): boolean {
-  return useSettings().data?.fun_mode === true;
+  return useMemeLevel() !== 'low';
+}
+
+/** The "Playful touches" switch; on unless it was turned off (older settings lack the key). Meme mode Medium and High force it on. */
+export function usePlayful(): boolean {
+  const settings = useSettings().data;
+  return settings?.playful_touches !== false || (settings?.meme_mode ?? 'low') !== 'low';
 }
 
 export function useSaveSettings() {

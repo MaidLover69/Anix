@@ -1,0 +1,342 @@
+/*
+ * Meme mode › High (`data-meme="high"` on <html>), the shared base: meme wording, meme images,
+ * empty and error cards, toasts, dialogs and the destructive-confirm frame. Loaded only with the
+ * High chunk (components/meme/high.tsx); screen rules live in meme-high-shell.css and
+ * meme-high-pages.css. Colours only from theme tokens. Medium's fun.css stays on under High.
+ * Nothing here moves over a playing video, and nothing moves at all under reduced motion or
+ * Fewer effects (animated images show their still frame).
+ */
+
+/* ---------------------------------------------------------- Wording (MemeLabel) */
+
+/* .mm: the meme only (plain words in the tooltip and for screen readers).
+   .mm-k: the meme as decoration (.mm-d), then the plain words (.mm-p). */
+.mm-d {
+  font-style: italic;
+  font-weight: 900;
+  color: rgb(var(--accent-300));
+  unicode-bidi: isolate;
+}
+
+:root[data-theme="comic"] .mm-d {
+  color: rgb(var(--accent-600));
+}
+
+.mm-sep {
+  font-style: normal;
+}
+
+/* In buttons, tabs, chips and segments the meme is a small caption over the plain label. */
+:is(.ui-btn, .ui-chip, .ui-tab, .ui-seg button) .mm-k {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  line-height: 1.1;
+  text-align: start;
+}
+
+:is(.ui-btn, .ui-chip, .ui-tab, .ui-seg button) .mm-d {
+  font-size: 0.68em;
+  letter-spacing: 0.02em;
+  color: inherit;
+  opacity: 0.88;
+}
+
+:is(.ui-btn, .ui-chip, .ui-tab, .ui-seg button, h1, h2, h3, nav) .mm-sep {
+  display: none;
+}
+
+:root[data-meme="high"] :is(.ui-btn, .ui-chip, .ui-tab, .ui-seg button) {
+  height: auto;
+  min-height: 2.25rem;
+  padding-block: 0.2rem;
+}
+
+:root[data-meme="high"] .ui-seg button {
+  min-height: 1.85rem;
+}
+
+/* Headings: the meme in the heading's colour, the plain words small beside it. */
+:is(h1, h2, h3) .mm-d {
+  color: inherit;
+}
+
+:is(h1, h2, h3) .mm-p {
+  margin-inline-start: 0.35em;
+  font-size: max(0.62em, 11px);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+/* Empty and error cards: meme over plain words, centred. */
+:is(.ui-empty, .meme-error) h3 .mm-k {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+:is(.ui-empty, .meme-error) h3 .mm-d {
+  font-size: 1.25em;
+}
+
+:is(.ui-empty, .meme-error) h3 .mm-p {
+  margin: 0;
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+
+/* English meme lines keep their own direction in RTL, so "?" and "~♪" stay at the end. */
+:root[dir="rtl"] :is(.mm-d, .mm > [aria-hidden="true"]) {
+  unicode-bidi: plaintext;
+}
+
+/* Letter spacing breaks the joins of Arabic script. */
+:root[dir="rtl"] :is(.mm-d, .meme-sfx) {
+  letter-spacing: 0;
+}
+
+/* Manga sound effects drawn by High (aria-hidden), and the caption plate on an image. */
+.meme-sfx {
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: transparent;
+  -webkit-text-stroke: 2px rgb(var(--accent-500) / 0.6);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.cap-plate {
+  padding: 0.15rem 0.5rem;
+  border-radius: 2px;
+  font-size: 0.85rem;
+  font-style: italic;
+  font-weight: 900;
+  direction: ltr;
+  unicode-bidi: isolate;
+  color: #fff;
+  background: rgb(0 0 0 / 0.72);
+}
+
+/* ---------------------------------------------------------- Page */
+
+/* Screentone behind every ordinary screen (the player's <main> has no padding classes and no tone). */
+:root[data-meme="high"] main.overflow-y-scroll {
+  background-image: radial-gradient(rgb(var(--ink) / 0.07) 0.8px, transparent 1.2px);
+  background-size: 7px 7px;
+}
+
+/* Page titles (`meme-title`): a manga panel. Static, so reduced motion needs nothing. */
+:root[data-meme="high"] .meme-title {
+  display: inline-block;
+  padding: 0.2rem 0.8rem 0.3rem;
+  border: 3px solid rgb(var(--ink) / 0.9);
+  border-radius: 6px;
+  background: rgb(var(--bg-card));
+  box-shadow: 5px 5px 0 rgb(var(--accent-500));
+  transform: rotate(-1deg);
+}
+
+:root[data-meme="high"][dir="rtl"] .meme-title {
+  box-shadow: -5px 5px 0 rgb(var(--accent-500));
+  transform: rotate(1deg);
+}
+
+/* ---------------------------------------------------------- Images (MemeImg) */
+
+.mimg {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  height: auto;
+  object-fit: cover;
+  border: 2px solid rgb(var(--ink) / 0.85);
+  border-radius: 4px;
+  background: rgb(var(--bg-deepest));
+  box-shadow: 3px 3px 0 rgb(var(--accent-500) / 0.75);
+}
+
+/* Images are never mirrored; only the panel shadow moves to the other side. */
+:root[dir="rtl"] .mimg {
+  box-shadow: -3px 3px 0 rgb(var(--accent-500) / 0.75);
+}
+
+.mimg.miss {
+  display: none;
+}
+
+:root[data-theme="manga"] .mimg {
+  filter: grayscale(1) contrast(1.1);
+}
+
+:root[data-theme="hacker"] .mimg {
+  filter: saturate(0.6);
+}
+
+/* Animated images: the moving one normally, the still under reduced motion or Fewer effects. */
+.mimg-still {
+  display: none;
+}
+
+:root[data-effects="fewer"] .mimg-anim:not(.miss) {
+  display: none;
+}
+
+:root[data-effects="fewer"] .mimg-still:not(.miss) {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mimg-anim:not(.miss) {
+    display: none;
+  }
+
+  .mimg-still:not(.miss) {
+    display: block;
+  }
+}
+
+/* A spot whose line is a caption plate on its image (MemePlate). */
+.meme-plate {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  max-width: 100%;
+}
+
+.meme-plate > .mimg {
+  width: min(15rem, 100%);
+  height: auto;
+}
+
+.meme-art {
+  display: block;
+  flex: none;
+  overflow: visible;
+  color: var(--text-secondary);
+}
+
+.meme-truck {
+  width: 5.5rem;
+  height: auto;
+}
+
+.meme-vein {
+  width: 1.1rem;
+  height: 1.1rem;
+  stroke: rgb(var(--error));
+}
+
+/* ---------------------------------------------------------- Empty and error cards */
+
+:root[data-meme="high"] .ui-empty {
+  border-style: solid;
+  border-color: rgb(var(--ink) / 0.6);
+  background:
+    radial-gradient(rgb(var(--ink) / 0.08) 0.8px, transparent 1.2px) 0 0 / 6px 6px,
+    rgb(var(--bg-card) / 0.85);
+  box-shadow: 5px 5px 0 rgb(var(--ink) / 0.5);
+}
+
+:root[data-meme="high"][dir="rtl"] .ui-empty {
+  box-shadow: -5px 5px 0 rgb(var(--ink) / 0.5);
+}
+
+.meme-card-img {
+  margin-bottom: 0.75rem;
+}
+
+.meme-card-img.mimg,
+.meme-card-img > .mimg {
+  width: auto;
+  height: 8rem;
+  max-width: min(15rem, 100%);
+}
+
+.meme-card-img.meme-plate > .mimg {
+  width: min(15rem, 100%);
+  height: auto;
+  max-width: none;
+}
+
+/* ---------------------------------------------------------- Toasts */
+
+/* A glowing frame; the ▼ caret comes from fun.css and blinks only off the player. */
+:root[data-meme="high"] .ui-toast {
+  border: 1.5px solid rgb(var(--accent-300));
+  border-radius: 2px;
+  background:
+    linear-gradient(rgb(var(--accent-500) / 0.14), transparent 70%),
+    rgb(var(--bg-elevated));
+  box-shadow:
+    0 0 0 1px rgb(var(--accent-500) / 0.35),
+    0 0 18px rgb(var(--accent-500) / 0.4),
+    var(--shadow-pop);
+}
+
+:root[data-meme="high"][data-effects="fewer"] .ui-toast {
+  box-shadow: 0 0 0 1px rgb(var(--accent-500) / 0.35), var(--shadow-pop);
+}
+
+.ui-toast .mimg {
+  width: 3.2rem;
+  height: 3.2rem;
+  box-shadow: 2px 2px 0 rgb(var(--accent-500) / 0.75);
+}
+
+/* ---------------------------------------------------------- Dialogs */
+
+:root[data-meme="high"] .ui-modal {
+  border: 3px solid rgb(var(--ink) / 0.85);
+  background:
+    radial-gradient(rgb(var(--ink) / 0.06) 0.8px, transparent 1.2px) 0 0 / 6px 6px,
+    rgb(var(--bg-elevated));
+  box-shadow:
+    8px 8px 0 rgb(var(--accent-500) / 0.6),
+    var(--shadow-pop);
+}
+
+:root[data-meme="high"][dir="rtl"] .ui-modal {
+  box-shadow:
+    -8px 8px 0 rgb(var(--accent-500) / 0.6),
+    var(--shadow-pop);
+}
+
+/* Destructive confirms: Shirou's frame with its line as a plate (MemeFrame spot="cantUndo"). */
+.meme-cant-undo > .mimg {
+  width: min(17rem, 100%);
+  box-shadow: 3px 3px 0 rgb(var(--error) / 0.6);
+}
+
+:root[dir="rtl"] .meme-cant-undo > .mimg {
+  box-shadow: -3px 3px 0 rgb(var(--error) / 0.6);
+}
+
+/* ---------------------------------------------------------- Settings › Appearance › Meme mode */
+
+.v9k {
+  width: auto;
+  height: 3.5rem;
+}
+
+/* ---------------------------------------------------------- 960 px and large text */
+
+@media (max-width: 1100px) {
+  .meme-card-img.mimg,
+  .meme-card-img > .mimg {
+    height: 6rem;
+  }
+
+  .meme-cant-undo > .mimg {
+    width: min(13rem, 100%);
+  }
+}

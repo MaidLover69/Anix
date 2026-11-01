@@ -20,6 +20,7 @@ import type { CustomPlaylist, CustomPlaylistItem } from '../../types';
 import { categoryLabel, episodeLabel, formatDate, playerLabel, watchCategory } from './format';
 import { CoverThumb } from './CoverThumb';
 import { PlaylistCollage } from './PlaylistCollage';
+import { MemeFrame } from '../meme/Meme';
 import { t, tn } from '../../i18n';
 
 type ExternalPlayer = 'mpv' | 'vlc';
@@ -451,6 +452,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
               { count: episodeCount }
             )}
           </p>
+          <MemeFrame spot="cantUndo" className="meme-cant-undo" />
           {deleteError && (
             <p role="alert" className="text-xs text-state-error select-text">
               {deleteError}

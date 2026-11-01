@@ -16,6 +16,7 @@ import { useAccountStatus } from '../hooks/useAccounts';
 import { LocalFilesTab } from '../components/library/LocalFilesTab';
 import { StatsTab } from '../components/library/StatsTab';
 import { t } from '../i18n';
+import { Meme, MemeImage, useHighModule } from '../components/meme/Meme';
 
 const TAB_VALUES = ['watchlist', 'history', 'playlists', 'downloads', 'anilist', 'comick', 'local', 'stats'] as const;
 type LibraryTab = (typeof TAB_VALUES)[number];
@@ -40,25 +41,35 @@ export const Library: React.FC = () => {
   const localScan = useLocalScan({ active: activeTab === 'local' });
   const accounts = useAccountStatus().data;
   const showComick = Boolean(accounts?.comick_available || accounts?.comick.connected);
+  const high = useHighModule();
 
   const tabs: TabItem<LibraryTab>[] = [
-    { value: 'watchlist', label: t('library.watchlist'), count: watchlistQuery.data?.length },
-    { value: 'history', label: t('library.history'), count: historyQuery.data?.length },
-    { value: 'playlists', label: t('library.playlists'), count: playlistsQuery.data?.length },
+    { value: 'watchlist', label: <Meme spot="tabWatch" plain={t('library.watchlist')} />, count: watchlistQuery.data?.length },
+    { value: 'history', label: <Meme spot="tabHist" plain={t('library.history')} />, count: historyQuery.data?.length },
+    { value: 'playlists', label: <Meme spot="tabPlay" plain={t('library.playlists')} />, count: playlistsQuery.data?.length },
     { value: 'downloads', label: t('library.downloads'), count: downloadsQuery.data?.length },
     { value: 'anilist', label: 'AniList' },
     ...(showComick ? [{ value: 'comick' as const, label: 'Comick' }] : []),
     {
       value: 'local',
-      label: t('library.localFiles'),
+      label: <Meme spot="tabLocal" plain={t('library.localFiles')} />,
       count: localScan.status === 'done' ? localScan.files.length : undefined,
     },
-    { value: 'stats', label: t('library.stats') },
+    { value: 'stats', label: <Meme spot="tabStats" plain={t('library.stats')} /> },
   ];
 
   return (
     <div className="flex flex-col gap-6 pb-16 animate-fade-in">
       <h1 className="sr-only">{t('library.title')}</h1>
+      {high && (
+        // High only: a visible manga-panel header; the sr-only h1 above names the page.
+        <div aria-hidden="true" className="meme-page-head flex items-center gap-3">
+          <span className="meme-title text-2xl font-black text-text-primary">
+            <Meme spot="libTitle" plain={t('library.title')} />
+          </span>
+          <MemeImage name="gilgamesh-gate-of-babylon" className="meme-hdr" />
+        </div>
+      )}
       <Tabs
         aria-label={t('library.sections')}
         tabs={tabs}

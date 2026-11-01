@@ -83,6 +83,7 @@
 ### Interface & Performance
 - **Built for Linux**: Lightweight native desktop client powered by Tauri v2 and Rust. Low memory footprint and snappy performance.
 - **Customizable Themes**: Dark, Light, Mocha, Hacker, Dracula, Tokyo Night, Manga, Comic, and pure OLED Black themes with system accent color matching and dynamic cover art ambient glow.
+- **Meme mode**: Low, Medium or High in Settings › Appearance; High dresses every screen in anime meme images and lines while the plain words stay.
 - **Keyboard-Driven**: Quick search with <kbd>Ctrl</kbd> + <kbd>K</kbd> and comprehensive in-player hotkeys.
 - **Privacy First**: No analytics or telemetry.
 
@@ -195,3 +196,5 @@ Bug reports, translation fixes and pull requests are welcome. See [CONTRIBUTING.
 ## License
 
 Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
+
+The MIT License does not cover the meme images in `assets/memes.zip` (Meme mode › High). They belong to their rights holders; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

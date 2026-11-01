@@ -7,7 +7,9 @@ import { Button } from '../ui/Button';
 import { ShimmerImage } from '../ShimmerImage';
 import { useDesktopAppearance } from '../../hooks/useDesktopAppearance';
 import { parseHexColor } from '../../theme/accent';
-import { t } from '../../i18n';
+import { t, type TKey } from '../../i18n';
+import { MemeImage, useMemeText } from '../meme/Meme';
+import { MEME_LEVELS, type MemeLevel } from '../../lib/memeLevel';
 import type { AppSettings, ContrastLevel, TimeFormat, UiSize, WindowButtonsSetting } from '../../types';
 
 /** Accent swatches; each theme derives readable shades from the one picked (theme/accent.ts). */
@@ -117,9 +119,46 @@ const SOURCE_LABEL: Record<string, string> = {
   kde: 'KDE Plasma',
 };
 
+const MEME_LEVEL_KEYS: Record<MemeLevel, { label: TKey; hint: TKey }> = {
+  low: { label: 'appearanceExtras.memeLow', hint: 'appearanceExtras.memeLowHint' },
+  medium: { label: 'appearanceExtras.memeMedium', hint: 'appearanceExtras.memeMediumHint' },
+  high: { label: 'appearanceExtras.memeHigh', hint: 'appearanceExtras.memeHighHint' },
+};
+
+/** Meme mode: Low, Medium or High, with a one-line hint for each under the control. */
+const MemeModePicker: React.FC<{ value: MemeLevel; onChange: (value: MemeLevel) => void }> = ({ value, onChange }) => {
+  const memeText = useMemeText();
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <MemeImage name="vegeta-over-9000" className="v9k" />
+        <SegmentedControl<MemeLevel>
+          aria-label={t('appearanceExtras.memeMode')}
+          value={value}
+          onChange={onChange}
+          options={MEME_LEVELS.map((level) => ({
+            value: level,
+            label: level === 'high' ? memeText('memeHigh', t(MEME_LEVEL_KEYS.high.label)) : t(MEME_LEVEL_KEYS[level].label),
+          }))}
+        />
+      </div>
+      <ul className="flex flex-col gap-0.5 text-xs text-text-secondary">
+        {MEME_LEVELS.map((level) => (
+          <li key={level}>
+            <b className="font-semibold text-text-primary">{t(MEME_LEVEL_KEYS[level].label)}</b>
+            {' · '}
+            {t(MEME_LEVEL_KEYS[level].hint)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
 /**
  * The Appearance rows after the theme picker: accent (system or picked), contrast, interface
- * size, background art, time format, episode spoiler blur, window-button side and playful touches.
+ * size, background art, time format, episode spoiler blur, window-button side, playful touches,
+ * Meme mode and Fewer effects.
  */
 export const AppearanceExtras: React.FC<{
   settings: AppSettings;
@@ -128,6 +167,8 @@ export const AppearanceExtras: React.FC<{
   const { data: desktop } = useDesktopAppearance();
   const accent = desktop?.accent_color ?? null;
   const layoutSource = desktop?.button_layout_source ?? 'default';
+  // Medium and High show the playful touches whatever the switch says.
+  const playfulForced = settings.meme_mode !== 'low';
 
   const accentSource = desktop?.accent_source ?? '';
   const accentHint = !accent
@@ -287,28 +328,27 @@ export const AppearanceExtras: React.FC<{
       </Row>
       <Row
         label={t('appearanceExtras.playfulTouches')}
-        hint={t('appearanceExtras.playfulTouchesHint')}
+        hint={
+          playfulForced
+            ? `${t('appearanceExtras.playfulTouchesHint')} ${t('appearanceExtras.playfulForced')}`
+            : t('appearanceExtras.playfulTouchesHint')
+        }
       >
         {({ labelId, hintId }) => (
           <Switch
             aria-labelledby={labelId}
             aria-describedby={hintId}
-            checked={settings.playful_touches !== false}
+            checked={playfulForced || settings.playful_touches !== false}
+            disabled={playfulForced}
             onChange={(checked) => onChange('playful_touches', checked)}
           />
         )}
       </Row>
-      <Row label={t('appearanceExtras.funMode')} hint={t('appearanceExtras.funModeHint')}>
-        {({ labelId, hintId }) => (
-          <Switch
-            aria-labelledby={labelId}
-            aria-describedby={hintId}
-            checked={settings.fun_mode === true}
-            onChange={(checked) => onChange('fun_mode', checked)}
-          />
-        )}
+      <Row label={t('appearanceExtras.memeMode')} hint={t('appearanceExtras.memeModeHint')} meme="memeRow" stacked>
+        {() => <MemeModePicker value={settings.meme_mode} onChange={(value) => onChange('meme_mode', value)} />}
       </Row>
       <Row
+        meme="fewer"
         label={t('appearanceExtras.fewerEffects')}
         hint={t('appearanceExtras.fewerEffectsHint')}
         keywords={t('appearanceExtras.fewerEffectsKeywords')}

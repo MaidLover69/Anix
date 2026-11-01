@@ -3,7 +3,8 @@ import { AlertCircle, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './Button';
 import { Mascot, type MascotMood } from './Mascot';
-import { useFunMode, usePlayful } from '../../hooks/useSettings';
+import { useMemeLevel, usePlayful } from '../../hooks/useSettings';
+import { Meme, MemeFrame, useHighModule, type MemeSpot } from '../meme/Meme';
 import { errorCode, errorKeys } from '../../lib/errorCodes';
 import { isKey, language, t } from '../../i18n';
 
@@ -49,6 +50,8 @@ interface ErrorStateProps {
   action?: React.ReactNode;
   /** With "Playful touches" on, the mascot in this mood replaces the red alert icon. */
   mood?: MascotMood;
+  /** Meme mode › High: the spot whose image and meme dress the card; by default Bocchi for rate limits, else Archer. */
+  meme?: MemeSpot;
   /** Tighter padding for use inside a section rather than as a whole page. */
   compact?: boolean;
   /** More technical text for the Details section, next to the code and the message. */
@@ -64,18 +67,22 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
   retryLabel: retryLabelProp,
   action,
   mood,
+  meme: memeProp,
   compact = false,
   details,
   className,
 }) => {
   const playful = usePlayful();
-  const fun = useFunMode();
+  const level = useMemeLevel();
+  const high = useHighModule();
   const title = titleProp ?? t('common.somethingWentWrong');
-  const retryLabel = retryLabelProp ?? t(fun ? 'fun.retry' : 'common.tryAgain');
+  // On High the image is the meme; the button keeps plain words.
+  const retryLabel = retryLabelProp ?? t(level === 'medium' ? 'fun.retry' : 'common.tryAgain');
   // The code and the copied details use the backend's own words, for bug reports.
   const raw = message ?? (error !== undefined && error !== null ? rawErrorMessage(error) : undefined);
   const text = raw !== undefined ? localizeError(raw, true) : undefined;
   const code = raw ? errorCode(raw) : null;
+  const meme: MemeSpot = memeProp ?? (code === 'NET-429' ? 'rate' : 'errGeneric');
   const technical = [code && `Code: ${code}`, title && `Screen: ${title}`, raw && `Message: ${raw}`, details]
     .filter(Boolean)
     .join('\n');
@@ -84,19 +91,23 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
     <div
       role="alert"
       className={clsx(
-        'flex flex-col items-center justify-center px-6 text-center',
+        'meme-error flex flex-col items-center justify-center px-6 text-center',
         compact ? 'py-8' : 'py-16',
         className
       )}
     >
-      {mood && playful ? (
+      {high && high.spotImage(meme) ? (
+        <MemeFrame spot={meme} className="meme-card-img" />
+      ) : mood && playful && level !== 'high' ? (
         <Mascot mood={mood} className="mb-3 text-text-secondary" />
       ) : (
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-state-error/10 text-state-error">
           <AlertCircle aria-hidden="true" className="h-6 w-6" />
         </div>
       )}
-      <h3 className="text-base font-semibold text-text-primary">{title}</h3>
+      <h3 className="text-base font-semibold text-text-primary">
+        <Meme spot={meme} plain={title} />
+      </h3>
       {text && (
         <p className="mt-1 max-w-md break-words text-[13px] leading-5 text-text-muted select-text">{text}</p>
       )}

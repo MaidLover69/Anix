@@ -1,5 +1,6 @@
 import type { ThemeId } from '../theme/themes';
 import type { TimeFormat } from '../lib/time';
+import type { MemeLevel } from '../lib/memeLevel';
 
 export interface MediaTitle {
   romaji: string | null;
@@ -486,8 +487,8 @@ export interface AppSettings {
   use_system_accent: boolean;
   /** Mascot, kaomoji, friendlier wording and the completed stamp. */
   playful_touches: boolean;
-  /** Settings › Appearance › Fun mode: a game-like look and wording over the same screens; also shows the playful touches. Off by default. */
-  fun_mode: boolean;
+  /** Settings › Appearance › Meme mode: Low (default), Medium (game-style layer) or High (meme images and lines); Medium and High also show the playful touches. */
+  meme_mode: MemeLevel;
   /** Settings › Appearance › Fewer effects: no glow, no blur, motion as with reduced motion (weak graphics, old WebKit). */
   fewer_effects?: boolean;
   /** Hours after an air time during which extensions are asked whether the episode is out. */

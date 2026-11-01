@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { MPV_STATUS_KEY, useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { t } from '../../i18n';
+import { useHighModule } from '../meme/Meme';
 
 /** Seconds the question waits before Anix assumes the window is blank and switches back. */
 export const CONFIRM_SECONDS = 15;
@@ -60,12 +61,21 @@ export const EngineConfirmDialog: React.FC = () => {
     if (open && left === 0) answer('no_answer');
   }, [open, left, answer]);
 
+  const high = useHighModule();
   return (
     <Modal
       isOpen={open}
       // Whoever can close this dialog can see the window.
       onClose={() => answer('keep')}
       title={t('engineConfirmDialog.title')}
+      header={
+        high && (
+          // High: a caption above the plain title (CSS); the countdown below says the same in plain words.
+          <p aria-hidden="true" className="meme-cf-cap">
+            {high.memeLine('keepPlayer').replace(/[\s—]+$/, '')}
+          </p>
+        )
+      }
       size="md"
       footer={
         <>

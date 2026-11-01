@@ -10,12 +10,14 @@ import { categoryLabel, episodeLabel, watchedPercent } from './library/format';
 import { distinctEpisodeTitle, isHistoryEntryFinished, watchPath } from '../hooks/watchProgress';
 import { useWatchlist } from '../hooks/useLibrary';
 import { t } from '../i18n';
+import { useHighModule } from './meme/Meme';
 import type { HistoryEntry } from '../types';
 
 export const ContinueCard: React.FC<{ entry: HistoryEntry; className?: string }> = ({ entry, className = '' }) => {
   const linkRef = useRef<HTMLAnchorElement>(null);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const { data: watchlist = [] } = useWatchlist();
+  const high = useHighModule();
   const percent = watchedPercent(entry.position_ms, entry.duration_ms) ?? 0;
   const episode = `${episodeLabel(entry.episode_number)} · ${categoryLabel(entry.category)}`;
   const episodeTitle = distinctEpisodeTitle(entry.episode_number, entry.episode_title);
@@ -77,7 +79,11 @@ export const ContinueCard: React.FC<{ entry: HistoryEntry; className?: string }>
           <span className="truncate">{episodeLabel(entry.episode_number)}</span>
           {percent > 0 && <span className="flex-shrink-0 tabular-nums">{t('historyTab.watchedPercent', { percent })}</span>}
         </span>
-        <span aria-hidden="true" className="ui-hp absolute inset-x-0 bottom-0 h-[3px] bg-white/20">
+        <span
+          aria-hidden="true"
+          title={high?.memeText('contBar', t('episodeItem.watchProgress'))}
+          className="ui-hp absolute inset-x-0 bottom-0 h-[3px] bg-white/20"
+        >
           <span className="ui-hp-fill block h-full bg-accent-500" style={{ width: `${percent}%` }} />
         </span>
       </Link>

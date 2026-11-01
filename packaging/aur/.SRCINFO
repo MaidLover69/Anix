@@ -1,6 +1,6 @@
 pkgbase = anix-bin
 	pkgdesc = Anime catalogue, tracker, library and player
-	pkgver = 1.3.2
+	pkgver = 1.4.0
 	pkgrel = 1
 	url = https://anix-linux.vercel.app
 	arch = x86_64
@@ -22,9 +22,9 @@ pkgbase = anix-bin
 	conflicts = anix
 	options = !strip
 	options = !debug
-	source = https://github.com/MaidLover69/Anix/releases/download/v1.3.2/Anix_1.3.2_amd64.deb
-	source = LICENSE-1.3.2::https://raw.githubusercontent.com/MaidLover69/Anix/v1.3.2/LICENSE
-	sha256sums = 3d46b0cde393ac6bcd873d251efe3e7730ec12d64a9fbb632f542971894b0881
+	source = https://github.com/MaidLover69/Anix/releases/download/v1.4.0/Anix_1.4.0_amd64.deb
+	source = LICENSE-1.4.0::https://raw.githubusercontent.com/MaidLover69/Anix/v1.4.0/LICENSE
+	sha256sums = e482de92a82a87be390ebf8d3cb3aaec78db078e4924d53282c5f4fe19df8f14
 	sha256sums = 18b58b87a6862f3651243d210089290c8c329583702b76710d5685c2545edde2
 
 pkgname = anix-bin

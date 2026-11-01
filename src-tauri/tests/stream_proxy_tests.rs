@@ -406,3 +406,85 @@ async fn a_body_without_a_length_is_refused_once_it_passes_the_limit() {
     let small = client.get(serve_once_without_length(b"WEBVTT\n".to_vec())).send().await.unwrap();
     assert_eq!(read_limited(small, 16 * 1024).await, Ok(b"WEBVTT\n".to_vec()));
 }
+
+/// The head (lowercased) and the body of one HTTP response read from `socket`; with no
+/// `Content-Length` the body runs to the end of the connection.
+fn read_response(socket: &mut std::net::TcpStream) -> (String, Vec<u8>) {
+    use std::io::Read;
+    let mut data = Vec::new();
+    let mut byte = [0u8; 1];
+    while !data.ends_with(b"\r\n\r\n") {
+        assert_eq!(socket.read(&mut byte).unwrap(), 1, "the connection ended inside a response head");
+        data.push(byte[0]);
+    }
+    let head = String::from_utf8(data).unwrap().to_ascii_lowercase();
+    let length = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .map(|value| value.trim().parse::<usize>().unwrap());
+    let mut body = Vec::new();
+    match length {
+        Some(length) => {
+            body.resize(length, 0);
+            socket.read_exact(&mut body).unwrap();
+        }
+        None => {
+            socket.read_to_end(&mut body).unwrap();
+        }
+    }
+    (head, body)
+}
+
+/// FFmpeg 8.1 sends its next request on a connection it read to the end unless the answer said
+/// the connection closes. For an MP4 whose index is at the end (no "faststart"), that next
+/// request is the seek back to the start, and mpv played nothing ("no audio or video data
+/// played") because the proxy had closed the connection without saying so.
+#[test]
+fn a_local_file_answer_says_the_connection_closes_when_the_client_asked_for_it() {
+    use anix_lib::local_media::{register_playable, PlayableKind};
+    use std::io::{Read, Write};
+
+    let dir = std::env::temp_dir().join(format!("anix-proxy-close-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Clip - 01.mp4");
+    let data: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&path, &data).unwrap();
+    let key = register_playable(PlayableKind::Video, &path).unwrap();
+    let base = anix_lib::stream_proxy::start_allowing_private_upstream().expect("proxy starts");
+    let (host, token) = base.trim_start_matches("http://").split_once('/').unwrap();
+    let local = format!("{}/local/{}", base, key);
+    let mut proxied = Url::parse(&format!("{}/proxy", base)).unwrap();
+    proxied.query_pairs_mut().append_pair("url", &local);
+    let proxied = &proxied.as_str()[proxied.as_str().find(&format!("/{}/", token)).unwrap()..];
+
+    let mut socket = std::net::TcpStream::connect(host).unwrap();
+    socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+
+    // A client that keeps the connection gets no close notice and can send its next request.
+    let path_only = format!("/{}/local/{}", token, key);
+    write!(socket, "GET {} HTTP/1.1\r\nHost: {}\r\nRange: bytes=99990-\r\n\r\n", path_only, host).unwrap();
+    let (head, body) = read_response(&mut socket);
+    assert!(head.starts_with("http/1.1 206"), "{}", head);
+    assert!(!head.contains("connection: close"), "{}", head);
+    assert_eq!(body, &data[99_990..]);
+
+    // The request the page's URL makes (through `proxy`), as FFmpeg sends it: told that the
+    // connection closes, exactly once, and the connection really ends after the answer.
+    write!(socket, "GET {} HTTP/1.1\r\nHost: {}\r\nRange: bytes=48-\r\nConnection: close\r\n\r\n", proxied, host).unwrap();
+    let (head, body) = read_response(&mut socket);
+    assert!(head.starts_with("http/1.1 206"), "{}", head);
+    assert_eq!(head.matches("connection: close").count(), 1, "{}", head);
+    assert!(head.contains(&format!("content-range: bytes 48-99999/{}", data.len())), "{}", head);
+    assert_eq!(body, &data[48..]);
+    assert_eq!(socket.read(&mut [0u8; 1]).unwrap(), 0, "the connection stays open");
+
+    // A refusal says so too (every answer goes through the same path).
+    let mut socket = std::net::TcpStream::connect(host).unwrap();
+    socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    write!(socket, "GET /{}/local/{} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", token, "0".repeat(32), host).unwrap();
+    let (head, _) = read_response(&mut socket);
+    assert!(head.starts_with("http/1.1 404"), "{}", head);
+    assert!(head.contains("connection: close"), "{}", head);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

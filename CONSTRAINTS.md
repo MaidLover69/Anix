@@ -51,3 +51,4 @@ compare medians of three runs.
 
 | Id | Date | Rule | Reason | Owner |
 |---|---|---|---|---|
+| E1 | 2026-11-01 | assertion-removed | Dead code removed in 1.4 took one assert each with it: `clear_match` (no caller) in local_library_tests, the `SourcesUnavailable` error (now the plain APP-ERR case, still asserted in the table) in unit_tests, and the test-only `decode_text` wrapper in web_session_tests (charset lookup still asserted; decoding checked end to end in plugin_verification_tests `/guarded/latin`). | maintainer |

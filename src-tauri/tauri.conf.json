@@ -67,7 +67,7 @@
           "webkit2gtk4.1",
           "gstreamer1-plugins-base",
           "gstreamer1-plugins-good",
-          "gstreamer1-plugins-bad-free",
+          "(gstreamer1-plugins-bad-free or gstreamer-plugins-bad)",
           "xdg-utils"
         ]
       },

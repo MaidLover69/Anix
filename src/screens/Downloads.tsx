@@ -12,6 +12,7 @@ import {
   useRetryDownload,
 } from '../hooks/useDownloads';
 import { usePlayful, useSettings } from '../hooks/useSettings';
+import { useDesktopStatus } from '../hooks/useSystem';
 import { useUIStore } from '../stores/uiStore';
 import { downloadLanguageLabel } from '../lib/downloadPicks';
 import type { DownloadRecord } from '../types';
@@ -260,6 +261,8 @@ export const Downloads: React.FC = () => {
   const deleteFileLabel = useId();
   const canDeleteFile = !!pendingDelete?.file_path && pendingDelete.status.toUpperCase() === 'COMPLETED';
   const player = externalPlayerFor(settings);
+  // The Flatpak cannot start mpv or VLC on the host.
+  const flatpak = useDesktopStatus().data?.flatpak === true;
 
   const downloads = query.data ?? [];
   const byStatus = (status: string) => downloads.filter((d) => d.status.toUpperCase() === status);
@@ -421,7 +424,7 @@ export const Downloads: React.FC = () => {
             <Group title={t('downloads.saved')} count={saved.length} icon={<CheckCircle2 aria-hidden="true" />}>
               {saved.map((record) => (
                 <Row key={record.id} record={record}>
-                  {record.file_path && (
+                  {record.file_path && !flatpak && (
                     <Button
                       variant="secondary"
                       size="sm"

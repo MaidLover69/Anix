@@ -188,14 +188,6 @@ const AppLayout: React.FC = () => {
     } else {
       main.scrollTop = navigationType === 'POP' ? scrollPositions.current.get(location.key) ?? 0 : 0;
     }
-    // The clicked link is often gone with the old screen: start keyboard and screen-reader users
-    // at the new screen's heading instead of the top of the window.
-    const active = document.activeElement;
-    if (navigationType === 'PUSH' && (!active || active === document.body || !active.isConnected)) {
-      const target = main.querySelector<HTMLElement>('h1') ?? main;
-      if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
-      target.focus({ preventScroll: true });
-    }
   }, [location.key, navigationType]);
 
   return (
@@ -226,6 +218,7 @@ const AppLayout: React.FC = () => {
                   <Outlet />
                 </div>
               )}
+              <FocusNewScreen mainRef={mainRef} />
             </React.Suspense>
           </ErrorBoundary>
         </main>
@@ -246,6 +239,25 @@ const AppLayout: React.FC = () => {
       />
     </div>
   );
+};
+
+/**
+ * The clicked link is often gone with the old screen: start keyboard and screen-reader users at the new
+ * screen's heading instead of the top of the window. It sits inside the Suspense boundary, so on a screen's
+ * first visit it runs once that screen has loaded and its heading exists.
+ */
+const FocusNewScreen: React.FC<{ mainRef: React.RefObject<HTMLElement> }> = ({ mainRef }) => {
+  const location = useLocation();
+  const navigationType = useNavigationType();
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    const active = document.activeElement;
+    if (!main || navigationType !== 'PUSH' || (active && active !== document.body && active.isConnected)) return;
+    const target = main.querySelector<HTMLElement>('h1') ?? main;
+    if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }, [location.key, navigationType, mainRef]);
+  return null;
 };
 
 /** Rejects `/watch/abc/x` and the like before the player sees NaN ids. */

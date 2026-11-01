@@ -40,6 +40,11 @@ export function useFunStats() {
 // is announced once back on an ordinary screen, never over the video.
 let seenLevel: number | null = null;
 
+/** Fun mode was switched off: levels gained meanwhile are not announced when it comes back on. */
+export function forgetSeenLevel() {
+  seenLevel = null;
+}
+
 const ExpBar: React.FC<{ level: PlayerLevel; className?: string }> = ({ level, className }) => (
   <span aria-hidden="true" className={clsx('fun-exp block', className)}>
     <span className="fun-exp-fill block h-full" style={{ width: `${(level.intoLevel / level.levelSize) * 100}%` }} />

@@ -1,4 +1,4 @@
-import React, { useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useViewTransitionState } from 'react-router-dom';
 import { Bookmark } from 'lucide-react';
 import clsx from 'clsx';
@@ -24,6 +24,11 @@ interface AnimeCardProps {
 const BADGE_CLASS =
   'rounded-sm bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold leading-[14px] text-white';
 
+// One card per anime takes part in the cover transition: two elements with the same transition name
+// make the browser skip it, and the same title often sits in two rails. The clicked card claims it;
+// otherwise (going back) the first card rendered does.
+const coverOwner = new Map<number, string>();
+
 export const AnimeCard: React.FC<AnimeCardProps> = ({
   media,
   className = '',
@@ -37,6 +42,17 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
   // True while a view transition to or from this card's anime page runs.
   const opening = useViewTransitionState(detailPath);
   const peekId = useId();
+  if (opening && !coverOwner.has(media.id)) coverOwner.set(media.id, peekId);
+  const ownsCover = opening && coverOwner.get(media.id) === peekId;
+  useEffect(() => {
+    if (!opening && coverOwner.get(media.id) === peekId) coverOwner.delete(media.id);
+  }, [opening, media.id, peekId]);
+  useEffect(
+    () => () => {
+      if (coverOwner.get(media.id) === peekId) coverOwner.delete(media.id);
+    },
+    [media.id, peekId]
+  );
   const quickPeek = useQuickPeek();
   const peekOpen = peek && quickPeek.isOpen;
   // One shared query for every card on screen instead of a lookup per card.
@@ -155,12 +171,13 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
           draggable={false}
           aria-describedby={peekOpen ? peekId : undefined}
           aria-haspopup="menu"
+          onClick={() => coverOwner.set(media.id, peekId)}
           onKeyDown={(e) => {
             if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') openMenu(e);
           }}
           className="flex flex-col rounded-xl"
         >
-          <div className={clsx('relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card', opening && 'ui-vt-cover')}>
+          <div className={clsx('relative w-full aspect-[2/3] rounded-xl overflow-hidden ui-card bg-bg-card', ownsCover && 'ui-vt-cover')}>
             <ShimmerImage
               src={coverUrl}
               alt=""

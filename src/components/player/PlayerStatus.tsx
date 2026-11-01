@@ -34,6 +34,8 @@ interface PlayerStatusProps {
   chips?: ProviderChip[];
   /** Dims a video frame that is still visible underneath. */
   scrim?: boolean;
+  /** Fun mode: the last episode ended and auto-play moved on, so this loading screen is the end card. */
+  cleared?: boolean;
 }
 
 /** Centred loading or error state of the player; it always says what is going on. */
@@ -46,6 +48,7 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
   progress = [],
   chips = [],
   scrim = false,
+  cleared = false,
 }) => {
   // Fun mode: a "charging" bar while loading, and the extensions asked shown as the party.
   const fun = useFunMode();
@@ -68,9 +71,19 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
           <CircleAlert aria-hidden="true" className="h-6 w-6" />
         </div>
       )}
+      {fun && cleared && kind === 'loading' && (
+        <p aria-hidden="true" dir="auto" className="fun-clear self-center text-lg">
+          {t('fun.episodeClear')} <span className="fun-clear-exp">{t('fun.plusExp')}</span>
+        </p>
+      )}
       <p className={kind === 'loading' ? 'text-[13px] font-medium text-white/80' : 'text-base font-semibold text-white'}>
         {title}
       </p>
+      {fun && cleared && kind === 'loading' && (
+        <p aria-hidden="true" dir="auto" className="fun-continued">
+          {t('fun.toBeContinued')}
+        </p>
+      )}
       {fun && kind === 'loading' && (
         <span aria-hidden="true" className="fun-charge block h-2 w-56 max-w-full">
           <span className="block h-full" />

@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -18,7 +18,7 @@ import clsx from 'clsx';
 import { useUIStore } from '../stores/uiStore';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useFunMode } from '../hooks/useSettings';
-import { FunLevelBadge } from './FunBits';
+import { FunLevelBadge, forgetSeenLevel } from './FunBits';
 import { useUnreadNoticeCount } from '../hooks/useNotices';
 import { useActiveDownloadCount } from '../hooks/useDownloads';
 import { t, type TKey } from '../i18n';
@@ -86,6 +86,10 @@ export const Sidebar: React.FC = () => {
   const unreadNotices = useUnreadNoticeCount().data ?? 0;
   const queuedDownloads = useActiveDownloadCount();
   const fun = useFunMode();
+  // The sidebar stays mounted while Fun mode is switched in Settings (it unmounts only on the player).
+  useEffect(() => {
+    if (!fun) forgetSeenLevel();
+  }, [fun]);
 
   // One highlight slides to the current page's item instead of each item painting its own.
   const asideRef = useRef<HTMLElement>(null);

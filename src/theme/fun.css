@@ -200,6 +200,15 @@
   color: rgb(var(--accent-300));
 }
 
+/* Comic draws a speech-bubble tail with the same ::after; in Fun mode the dialog-box caret replaces it. */
+:root[data-fun][data-theme="comic"] .ui-toast::after {
+  width: auto;
+  height: auto;
+  background: none;
+  border: 0;
+  transform: none;
+}
+
 /* Blinks only on ordinary screens; on the player (no ui-toast-in) it stays still. */
 :root[data-fun]:not([data-effects="fewer"]) .ui-toast-in::after {
   animation: fun-blink 1s steps(2, jump-none) infinite;

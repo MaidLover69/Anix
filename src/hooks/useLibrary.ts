@@ -145,6 +145,7 @@ export function useUpdateWatchProgress() {
       queryClient.invalidateQueries({ queryKey: ['homeData'] });
       queryClient.invalidateQueries({ queryKey: ['watchedEpisodes', variables.anilistId] });
       queryClient.invalidateQueries({ queryKey: ['watchedHistory'] });
+      queryClient.invalidateQueries({ queryKey: ['watchTimes'] });
     },
   });
 }
@@ -181,6 +182,7 @@ export function useSetEpisodesWatched() {
       queryClient.invalidateQueries({ queryKey: ['continueWatching'] });
       queryClient.invalidateQueries({ queryKey: ['homeData'] });
       queryClient.invalidateQueries({ queryKey: ['watchedHistory'] });
+      queryClient.invalidateQueries({ queryKey: ['watchTimes'] });
     },
   });
 }

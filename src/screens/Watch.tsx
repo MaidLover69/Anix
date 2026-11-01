@@ -136,7 +136,8 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
 
   const settingsQuery = useSettings();
   // The Flatpak cannot start mpv or VLC, so "External player" plays here instead.
-  const flatpak = useDesktopStatus().data?.flatpak === true;
+  const desktopStatus = useDesktopStatus();
+  const flatpak = desktopStatus.data?.flatpak === true;
   const fun = useFunMode();
   const settings = settingsQuery.data ?? DEFAULT_SETTINGS;
   const settingsReady = !settingsQuery.isPending;
@@ -506,7 +507,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   }, [localFile, settings.external_player, externalPlayerName, notify]);
   const localErrorActions: PlayerStatusAction[] = localRequested
     ? [
-        ...(localFile ? [{ label: t('watch.openIn', { player: externalPlayerName }), onClick: openLocalExternally }] : []),
+        ...(localFile && !flatpak ? [{ label: t('watch.openIn', { player: externalPlayerName }), onClick: openLocalExternally }] : []),
         ...(streamInstead ? [{ label: t('watch.streamInstead'), onClick: streamInstead }] : []),
       ]
     : [];
@@ -514,10 +515,17 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const openEpisodes = useCallback(() => setEpisodesOpen(true), []);
 
   const autoPlayNext = usePlayerStore((s) => s.autoPlayNext);
+  // Fun mode: the episode auto-play moves on to gets "EPISODE CLEAR / To be continued" on its loading screen,
+  // since the end screen of the one that ended never shows.
+  const [clearedKey, setClearedKey] = useState<string | null>(null);
+  const cleared = fun && clearedKey === `${anilistId}:${episodeNumber}`;
   const handleEnded = () => {
     // Queued episodes always continue; otherwise the auto-play-next preference decides.
     // At the last episode there is no target and nothing happens.
-    if (nextTarget && (nextTarget.queued || autoPlayNext)) goTo(nextTarget, true);
+    if (nextTarget && (nextTarget.queued || autoPlayNext)) {
+      setClearedKey(`${nextTarget.anilistId}:${nextTarget.episode}`);
+      goTo(nextTarget, true);
+    }
   };
 
   const previousStep: EpisodeStep | null = previousTarget && {
@@ -574,7 +582,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (!details || !settingsReady || !providers.settled || (episodeMissing && episodeCheckPending)) {
-    status = <PlayerStatus kind="loading" title={t(fun ? 'fun.poweringUp' : 'common.loading')} />;
+    status = <PlayerStatus kind="loading" cleared={cleared} title={t(fun ? 'fun.poweringUp' : 'common.loading')} />;
   } else if (episodeMissing) {
     status = (
       <PlayerStatus
@@ -585,7 +593,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (localRequested && localQuery.isPending) {
-    status = <PlayerStatus kind="loading" title={t('watch.openingLocalFile', { number: episodeNumber })} />;
+    status = <PlayerStatus kind="loading" cleared={cleared} title={t('watch.openingLocalFile', { number: episodeNumber })} />;
   } else if (localRequested && localQuery.isError) {
     status = (
       <PlayerStatus
@@ -627,7 +635,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   } else if (!localRequested && (sourcesQuery.isFetching || sourcesQuery.isPending)) {
     status = (
       <PlayerStatus
-        kind="loading"
+        kind="loading" cleared={cleared}
         title={t(fun ? 'fun.findingStream' : 'watch.findingStream', { number: episodeNumber })}
         detail={
           sourcesQuery.fetchStatus === 'paused'
@@ -665,7 +673,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       />
     );
   } else if (proxyQuery.isPending) {
-    status = <PlayerStatus kind="loading" title={t('watch.preparingPlayback')} />;
+    status = <PlayerStatus kind="loading" cleared={cleared} title={t('watch.preparingPlayback')} />;
   } else if (!proxyQuery.data) {
     status = (
       <PlayerStatus
@@ -678,6 +686,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   } else {
     playable = true;
   }
+  // Once the episode plays (or another one is opened) a later loading screen is no end card.
+  useEffect(() => {
+    if (playable) setClearedKey(null);
+  }, [playable, anilistId, episodeNumber]);
 
   return (
     <div
@@ -709,7 +721,8 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           externalPlayer={settings.external_player === 'vlc' ? 'vlc' : 'mpv'}
           engineKind={useMpv ? 'mpv' : 'web'}
           onEngineFail={handleMpvFail}
-          openExternally={settings.player_engine === 'external' && !flatpak}
+          // Waits for the desktop status, so the Flatpak never tries to start mpv or VLC.
+          openExternally={settings.player_engine === 'external' && desktopStatus.isSuccess && !flatpak}
           previous={previousStep}
           next={nextStep}
           queuedCount={pendingQueue.length}

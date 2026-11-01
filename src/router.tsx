@@ -30,15 +30,20 @@ import { usePlayful } from './hooks/useSettings';
 import { useUIStore } from './stores/uiStore';
 import { t } from './i18n';
 import { Home } from './screens/Home';
-import { Discover } from './screens/Discover';
-import { Detail } from './screens/Detail';
-import { Watch } from './screens/Watch';
-import { Library } from './screens/Library';
-import { Schedule } from './screens/Schedule';
-import { Settings } from './screens/Settings';
-import { Notifications } from './screens/Notifications';
-import { Downloads } from './screens/Downloads';
 import { openAnimeId, parseAnimeId, parseDeepLink } from './lib/routes';
+
+// Home is in the first file; the other screens (and the player's hls.js) load on their first visit,
+// which keeps the start-up file small. Once loaded, a screen renders at once on later visits.
+const Discover = React.lazy(() => import('./screens/Discover').then((m) => ({ default: m.Discover })));
+const Detail = React.lazy(() => import('./screens/Detail').then((m) => ({ default: m.Detail })));
+const Watch = React.lazy(() => import('./screens/Watch').then((m) => ({ default: m.Watch })));
+const Library = React.lazy(() => import('./screens/Library').then((m) => ({ default: m.Library })));
+const Schedule = React.lazy(() => import('./screens/Schedule').then((m) => ({ default: m.Schedule })));
+const Settings = React.lazy(() => import('./screens/Settings').then((m) => ({ default: m.Settings })));
+const Notifications = React.lazy(() =>
+  import('./screens/Notifications').then((m) => ({ default: m.Notifications })),
+);
+const Downloads = React.lazy(() => import('./screens/Downloads').then((m) => ({ default: m.Downloads })));
 
 // The URL the app was launched with is delivered once; later mounts must not replay it.
 let launchUrlHandled = false;
@@ -213,13 +218,15 @@ const AppLayout: React.FC = () => {
           }`}
         >
           <ErrorBoundary resetKey={location.pathname} playful={playful}>
-            {isWatchScreen ? (
-              <Outlet />
-            ) : (
-              <div className="mx-auto w-full max-w-[1600px]">
+            <React.Suspense fallback={null}>
+              {isWatchScreen ? (
                 <Outlet />
-              </div>
-            )}
+              ) : (
+                <div className="mx-auto w-full max-w-[1600px]">
+                  <Outlet />
+                </div>
+              )}
+            </React.Suspense>
           </ErrorBoundary>
         </main>
       </div>

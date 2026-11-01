@@ -28,7 +28,7 @@ number here in the same change. The guard reads the limit, not the `(measured �
 
 | Metric | Today | Direction |
 |---|---|---|
-| Main JS chunk (`dist/assets/index-*.js`) | 1421944 bytes, must not grow | down |
+| Main JS chunk (`dist/assets/index-*.js`) | 570043 bytes, must not grow (screens other than Home load on first visit, 2026-11-01) | down |
 | Shell ready after launch, web player | at most 3.0 s (measured 2.4–2.6 s) | down |
 | Idle CPU on Home, web player | at most 1 % (measured 5.3–6.4 % in front while the banner turns, was 9–12 %; 0 % in the background or with Fewer effects), must fall | down |
 | Idle CPU on Home, embedded mpv | at most 6 % (measured 4.1 % in front, was 7–15 %; 0 % in the background or with Fewer effects), must fall | down |

@@ -2,10 +2,13 @@
 
 ## 1.4.0
 
-### Watch together
+### Watch together (beta)
 - Watch party on the local network: one person hosts from the player, others on the same Wi-Fi or LAN join with
   a short code. The host controls play, pause, seek and episode changes; guests stay in step. Each person needs
   the episode from their own extensions or files. Nothing goes over the internet, and VPN links are not used.
+- **Beta:** it was tested with two copies of Anix on one computer, but not yet on two real devices, because the
+  developer does not have a second one. Please try it and report what works and what does not (an issue on GitHub
+  or Codeberg); the window says so too.
 
 ### Look and feel
 - A livelier interface in every theme: a sliding highlight in the sidebar and tabs, cards that lift and glow in

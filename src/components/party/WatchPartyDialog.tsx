@@ -233,7 +233,23 @@ export const WatchPartyDialog: React.FC<WatchPartyDialogProps> = (props) => {
     ) : undefined;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('party.title')} size="md" container={container} footer={footer}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <span className="inline-flex items-center gap-2">
+          {t('party.title')}
+          <span className="rounded-sm bg-accent-tint px-1.5 py-0.5 text-[11px] font-bold uppercase leading-[14px] tracking-wide text-accent-300 rtl:tracking-normal">
+            {t('party.beta')}
+          </span>
+        </span>
+      }
+      // Not yet tried on two real devices (1.4.0): ask for feedback.
+      header={<p className="text-xs text-text-muted">{t('party.betaNote')}</p>}
+      size="md"
+      container={container}
+      footer={footer}
+    >
       {role === 'host' ? (
         <HostView status={party.status} />
       ) : role === 'guest' ? (

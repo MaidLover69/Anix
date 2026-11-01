@@ -71,6 +71,7 @@
 - **Dialogue Boost**: Intelligent audio speech enhancement for clearer dialogue.
 - **External Player Support (mpv & VLC)**: 1-click external player launch with active subtitle passthrough and bidirectional progress synchronization for mpv.
 - **Mini-Player**: Compact floating player mode for multitasking.
+- **Watch Together (beta)**: Watch an episode in step with up to 8 people on the same Wi-Fi or LAN. The host controls playback, guests join with a short code, and nothing goes over the internet. This feature is still untested on two real devices, because the developer does not have a second one. Please try it and share your feedback in an issue on [GitHub](https://github.com/MaidLover69/Anix/issues) or [Codeberg](https://codeberg.org/MaidLover69/Anix/issues).
 
 ### Desktop Integration & System
 - **MPRIS Media Controls**: Full desktop media keys and lockscreen playback control integration.

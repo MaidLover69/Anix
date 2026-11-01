@@ -7,6 +7,19 @@
   a short code. The host controls play, pause, seek and episode changes; guests stay in step. Each person needs
   the episode from their own extensions or files. Nothing goes over the internet, and VPN links are not used.
 
+### Look and feel
+- A livelier interface in every theme: a sliding highlight in the sidebar and tabs, cards that lift and glow in
+  their cover's colour, a quick look that slides up over the poster, a calmer Home banner, and clearer empty,
+  loading and offline screens.
+- Anime pages, the player, Library, Schedule, Downloads, Notifications (now grouped into Today and Earlier) and
+  Settings got the same treatment. Extensions show a health dot from their last test, the player's main buttons
+  have text labels, and the first-run setup is split into three short steps.
+- Fun mode (Settings › Appearance, off by default): a game-style layer with a level and EXP from the episodes you
+  watched, "EPISODE CLEAR!" and "QUEST COMPLETE" moments, a day combo for your watch streak, a power level on
+  scores, dialog-box toasts and playful wording. No sounds, and nothing moves over a playing video.
+- Everything respects reduced motion and Fewer effects, and works right to left.
+- The app starts with a smaller file: screens other than Home load the first time you open them.
+
 ### Stability
 - Safe mode: after two starts in a row that did not end cleanly, Anix starts with the web player, without
   graphics acceleration and without reopening the last screen. One clean exit ends it.
@@ -39,6 +52,7 @@
 - Flatpak preview. Start at login and alerts while Anix is closed are not available in it yet.
 - NVIDIA hardware decoding (NVDEC) in the embedded player.
 - The first-run language setup no longer opens over the player.
+- In the Flatpak, the buttons that open mpv or VLC are hidden, since the Flatpak cannot start them.
 
 ### Fixes
 - The Watch order row has its own scroll arrows.
@@ -48,6 +62,8 @@
 - Downloads never reach addresses on your own network, also through redirects or playlist entries.
 - Restoring a backup keeps the sign-ins it does not contain.
 - A very large episode range in bulk download no longer freezes the app.
+- A player opened in the first seconds after start-up no longer falls back to the web player while embedded mpv
+  is still starting.
 
 ## 1.3.2
 

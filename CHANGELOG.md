@@ -2,6 +2,11 @@
 
 ## 1.4.0
 
+### Watch together
+- Watch party on the local network: one person hosts from the player, others on the same Wi-Fi or LAN join with
+  a short code. The host controls play, pause, seek and episode changes; guests stay in step. Each person needs
+  the episode from their own extensions or files. Nothing goes over the internet, and VPN links are not used.
+
 ### Stability
 - Safe mode: after two starts in a row that did not end cleanly, Anix starts with the web player, without
   graphics acceleration and without reopening the last screen. One clean exit ends it.
@@ -37,6 +42,12 @@
 
 ### Fixes
 - The Watch order row has its own scroll arrows.
+- Local MP4 files whose index sits at the end of the file play in the embedded player instead of falling back
+  to the web player.
+- Someone on a pre-release version is offered the final release.
+- Downloads never reach addresses on your own network, also through redirects or playlist entries.
+- Restoring a backup keeps the sign-ins it does not contain.
+- A very large episode range in bulk download no longer freezes the app.
 
 ## 1.3.2
 

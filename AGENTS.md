@@ -63,6 +63,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/src/providers/` | `AnimeProvider` trait, racing/budgets/stream checks, title matching, sub/dub languages |
 | `src-tauri/src/embedded_mpv/` | libmpv player (`ffi` dlopen, GTK GL layer, `policy`, `selftest`) |
 | `src-tauri/src/stream_proxy.rs` | Loopback media proxy |
+| `src-tauri/src/party/` | LAN watch party: `lan.rs` (LAN interfaces only, mDNS `_anix-party._tcp`, port 47830), `secure.rs` (SPAKE2 join code, ChaCha20-Poly1305 frames), `protocol.rs` (strict messages, no URLs or paths), `session.rs` (host/guest, join lock, rate limits), `sync.rs` (clock offset). UI: `src/hooks/useWatchParty.ts`, `src/lib/watchParty.ts`, `src/components/party/` |
 | `src-tauri/src/web_session.rs` | In-app webview sessions for the user's site verification |
 | `src-tauri/src/db.rs` | Schema and migrations; app and config folders |
 | `src-tauri/src/error.rs` | `AppError` and stable error codes (mirrored in `src/lib/errorCodes.ts`) |

@@ -363,6 +363,8 @@ fn set_status(status: Result<(), String>) {
         tracing::warn!("Embedded mpv is not available, the web player is used: {}", e);
     }
     *STATUS.lock().unwrap_or_else(|p| p.into_inner()) = Some(status);
+    // A page that asked while start-up was still running asks again (it got "not available").
+    emit_status_changed();
 }
 
 fn emit_status_changed() {

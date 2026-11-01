@@ -5,7 +5,8 @@ name: Release AppImage, DEB and RPM
 # Linux Mint 21, Debian 12 and everything newer); the one for newer systems on Ubuntu 24.04 (glibc 2.39,
 # WebKitGTK 2.52 instead of 2.50). The in-app updater picks between them (version.json appimage_modern).
 # The files are kept as workflow artifacts for 30 days. Pushing a version tag (v1.3.2) also publishes
-# them as a GitHub release, with that version's CHANGELOG.md section as the notes.
+# them as a GitHub release, with that version's CHANGELOG.md section as the notes, plus the Flatpak
+# preview when it installed and started.
 on:
   push:
     branches: [main]
@@ -350,6 +351,9 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     continue-on-error: true
+    # The release attaches the bundle only when it installed and started here.
+    outputs:
+      tested: ${{ steps.tested.outputs.ok }}
     timeout-minutes: 40
     steps:
       - name: Checkout repository
@@ -383,6 +387,10 @@ jobs:
             || { cat out.log; exit 1; }
           tail -20 out.log
 
+      - name: Mark it tested
+        id: tested
+        run: echo ok=true >> "$GITHUB_OUTPUT"
+
   # The built AppImage on clean systems with real input: .github/workflows/smoke.yml.
   smoke:
     needs: appimage
@@ -406,8 +414,13 @@ jobs:
 
   publish:
     name: Publish the GitHub release
-    needs: [appimage, packages, deb-check, rpm-check, smoke, smoke-modern]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [appimage, packages, deb-check, rpm-check, smoke, smoke-modern, flatpak]
+    # The Flatpak is a preview: a failed Flatpak build leaves it off the release instead of stopping it.
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+      && needs.appimage.result == 'success' && needs.packages.result == 'success'
+      && needs.deb-check.result == 'success' && needs.rpm-check.result == 'success'
+      && needs.smoke.result == 'success' && needs.smoke-modern.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -433,12 +446,23 @@ jobs:
           name: anix-packages
           path: dist
 
+      - name: Download the Flatpak
+        if: needs.flatpak.outputs.tested == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: anix-x86_64.flatpak
+          path: dist-flatpak
+
       - name: Write the release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
           awk -v v="$version" '$0 == "## " v {f=1; next} /^## /{if (f) exit} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
           cat dist-modern/SHA256SUMS dist/SHA256SUMS-packages >> dist/SHA256SUMS && rm dist/SHA256SUMS-packages
+          if [ -f dist-flatpak/anix.flatpak ]; then
+            mv dist-flatpak/anix.flatpak "dist/Anix_${version}_x86_64.flatpak"
+            (cd dist && sha256sum "Anix_${version}_x86_64.flatpak") >> dist/SHA256SUMS
+          fi
           printf '\n### SHA-256\n```\n%s\n```\n' "$(cat dist/SHA256SUMS)" >> notes.md
 
       - name: Publish
@@ -451,4 +475,5 @@ jobs:
             dist-modern/*.AppImage
             dist/*.deb
             dist/*.rpm
+            dist/*.flatpak
             dist/SHA256SUMS

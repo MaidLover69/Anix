@@ -17,6 +17,7 @@ import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Chip, EmptyState, ErrorState, Spinner, errorMessage } from '../ui';
 import { useSettings } from '../../hooks/useSettings';
+import { useDesktopStatus } from '../../hooks/useSystem';
 import { useProgressiveList } from '../../hooks/useProgressiveList';
 import type { LocalScan } from '../../hooks/useLocalScan';
 import { LOCAL_PROVIDER, pickLocalMedia } from '../../hooks/useLocalMedia';
@@ -87,6 +88,8 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
   const { data: settings } = useSettings();
   const showToast = useUIStore((state) => state.showToast);
   const player = externalPlayerFor(settings);
+  // The Flatpak cannot start mpv or VLC on the host.
+  const flatpak = useDesktopStatus().data?.flatpak === true;
   const isScanning = scan.status === 'scanning';
   const library = scan.library;
   const matching = useSeriesMatching(library, scan.matches, scan.setMatches);
@@ -202,7 +205,7 @@ export const LocalFilesTab: React.FC<LocalFilesTabProps> = ({ scan }) => {
           matching={matching.state}
           onRetryMatching={matching.retry}
           playerName={playerLabel(player)}
-          onPlayFile={handlePlay}
+          onPlayFile={flatpak ? undefined : handlePlay}
         />
       )}
     </div>
@@ -238,7 +241,8 @@ interface SeriesListProps {
   matching: MatchingState;
   onRetryMatching: () => void;
   playerName: string;
-  onPlayFile: (file: LibraryFile) => void;
+  /** Missing in the Flatpak, which cannot start mpv or VLC on the host. */
+  onPlayFile?: (file: LibraryFile) => void;
 }
 
 const SeriesList: React.FC<SeriesListProps> = ({ scan, matching, onRetryMatching, playerName, onPlayFile }) => {
@@ -405,7 +409,8 @@ interface SeriesCardProps {
   linked: number[];
   busy: boolean;
   playerName: string;
-  onPlayFile: (file: LibraryFile) => void;
+  /** Missing in the Flatpak, which cannot start mpv or VLC on the host. */
+  onPlayFile?: (file: LibraryFile) => void;
   onChange: () => void;
   onLink: (candidate: MatchCandidate) => void;
   onOpen: (anilistId: number) => void;
@@ -564,7 +569,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                       .join(' · ')}
                   </span>
                 </div>
-                <Button
+                {onPlayFile && <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => onPlayFile(file)}
@@ -573,7 +578,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                 >
                   <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
                   <span>{playerName}</span>
-                </Button>
+                </Button>}
               </li>
             );
           })}

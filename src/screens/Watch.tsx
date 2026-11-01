@@ -26,6 +26,7 @@ import { describeStream, sourceLabel } from '../lib/languages';
 import { splitPlayFailure } from '../lib/playFailure';
 import { episodeExists, parseAnimeId } from '../lib/routes';
 import { useRememberedSource } from '../hooks/useRememberedSource';
+import { useDesktopStatus } from '../hooks/useSystem';
 import { invoke } from '@tauri-apps/api/core';
 import {
   LOCAL_PROVIDER,
@@ -134,6 +135,8 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   const [episodesOpen, setEpisodesOpen] = useState(false);
 
   const settingsQuery = useSettings();
+  // The Flatpak cannot start mpv or VLC, so "External player" plays here instead.
+  const flatpak = useDesktopStatus().data?.flatpak === true;
   const fun = useFunMode();
   const settings = settingsQuery.data ?? DEFAULT_SETTINGS;
   const settingsReady = !settingsQuery.isPending;
@@ -706,7 +709,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
           externalPlayer={settings.external_player === 'vlc' ? 'vlc' : 'mpv'}
           engineKind={useMpv ? 'mpv' : 'web'}
           onEngineFail={handleMpvFail}
-          openExternally={settings.player_engine === 'external'}
+          openExternally={settings.player_engine === 'external' && !flatpak}
           previous={previousStep}
           next={nextStep}
           queuedCount={pendingQueue.length}

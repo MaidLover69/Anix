@@ -46,6 +46,7 @@ import { useSkipTimes } from '../../hooks/useProviders';
 import { useFunMode, useSettings } from '../../hooks/useSettings';
 import { useStoredChoice } from '../../hooks/useStoredChoice';
 import { useSubtitleDrop } from '../../hooks/useSubtitleDrop';
+import { useDesktopStatus } from '../../hooks/useSystem';
 import { hasSkipTimes, useSkipSegments } from '../../hooks/useSkipSegments';
 import type { AutoSkip } from '../../hooks/useSkipSegments';
 import { SUBTITLES_OFF, useSubtitleTracks } from '../../hooks/useSubtitleTracks';
@@ -756,6 +757,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 
   const fun = useFunMode();
+  // The Flatpak cannot start mpv or VLC on the host.
+  const flatpak = useDesktopStatus().data?.flatpak === true;
   const errorActions: PlayerStatusAction[] = [
     { label: t(fun ? 'fun.retry' : 'common.retry'), onClick: onReload, primary: true },
     { label: t('videoPlayer.changeServer'), onClick: onOpenServers },
@@ -1096,13 +1099,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             >
               <Download aria-hidden="true" className="h-4 w-4" />
             </IconButton>
-            <IconButton
-              label={t('videoPlayer.openIn', { player: externalPlayer === 'vlc' ? 'VLC' : 'mpv' })}
-              disabled={!hasStream || inParty}
-              onClick={handleOpenExternal}
-            >
-              <ExternalLink aria-hidden="true" className="h-4 w-4" />
-            </IconButton>
+            {!flatpak && (
+              <IconButton
+                label={t('videoPlayer.openIn', { player: externalPlayer === 'vlc' ? 'VLC' : 'mpv' })}
+                disabled={!hasStream || inParty}
+                onClick={handleOpenExternal}
+              >
+                <ExternalLink aria-hidden="true" className="h-4 w-4" />
+              </IconButton>
+            )}
           </PlayerTopBar>
 
           <PlayerControls

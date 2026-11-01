@@ -425,50 +425,6 @@ impl AniListClient {
         Ok(Some(parse_media_list_context(media)))
     }
 
-    pub async fn fetch_media_list(
-        &self,
-        sort: &str,
-        per_page: i32,
-    ) -> Result<Vec<Media>, AppError> {
-        let query = format!(
-            r#"
-            query ($sort: [MediaSort], $perPage: Int, $isAdult: Boolean) {{
-                Page(perPage: $perPage) {{
-                    media(sort: $sort, type: ANIME, isAdult: $isAdult) {{
-                        {}
-                    }}
-                }}
-            }}
-            "#,
-            MEDIA_FRAGMENT
-        );
-
-        let mut variables = serde_json::Map::new();
-        variables.insert("sort".to_string(), json!([sort]));
-        variables.insert("perPage".to_string(), json!(per_page));
-        if app_settings::current().hide_adult_content {
-            variables.insert("isAdult".to_string(), json!(false));
-        }
-
-        let body = json!({
-            "query": query,
-            "variables": variables
-        });
-
-        let data = self.graphql(&body, None).await?;
-        let media_arr = data["Page"]["media"]
-            .as_array()
-            .ok_or_else(|| AppError::Parse("Invalid media array response".to_string()))?;
-
-        let mut list = Vec::new();
-        for item in media_arr {
-            if let Ok(media) = parse_media_json(item) {
-                list.push(media);
-            }
-        }
-        Ok(list)
-    }
-
     pub async fn search(&self, q: &crate::catalogue::model::SearchQuery) -> Result<Vec<Media>, AppError> {
         let gql_query = format!(
             r#"

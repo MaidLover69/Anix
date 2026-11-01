@@ -452,13 +452,13 @@ fn errors_map_to_stable_short_codes() {
         (AppError::RateLimited { retry_after_s: 30 }, "NET-429"),
         (AppError::AuthRequired, "AUTH-LOGIN"),
         (AppError::Other("disk full".into()), "APP-ERR"),
+        (AppError::SourcesUnavailable("hianime: no stream".into()), "APP-ERR"),
     ];
     for (error, code) in cases {
         assert_eq!(error.code(), code, "{:?}", error);
         // The same code comes back from the text the frontend receives.
         assert_eq!(code_for_message(&error.to_string()), code, "{}", error);
     }
-    assert_eq!(AppError::SourcesUnavailable("hianime: no stream".into()).code(), "SRC-UNAVAILABLE");
     // Plain failure messages (downloads, updates) still get a code from what they name.
     assert_eq!(code_for_message("The stream host answered HTTP 403 Forbidden."), "NET-403");
     assert_eq!(code_for_message("The stream host did not answer in time."), "APP-ERR");

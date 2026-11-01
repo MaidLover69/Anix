@@ -243,11 +243,6 @@ pub fn parse_relative_path(path: &str) -> ParsedRelease {
     parsed
 }
 
-/// [`parse_relative_path`] for each of `paths`; result `i` is for `paths[i]`.
-pub fn parse_relative_paths(paths: &[&str]) -> Vec<ParsedRelease> {
-    paths.iter().map(|p| parse_relative_path(p)).collect()
-}
-
 /// The file name of `path` without its extension, for a title when nothing was parsed.
 pub fn file_stem(file_name: &str) -> String {
     Path::new(file_name)

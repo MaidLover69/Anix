@@ -121,10 +121,6 @@ impl AnimeQuery {
             self.titles.push(title.to_string());
         }
     }
-
-    pub fn primary_title(&self) -> Option<&str> {
-        self.titles.first().map(|t| t.as_str())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -212,9 +208,4 @@ impl SourcesResult {
 pub struct ProviderEpisodes {
     pub sub: Vec<EpisodeItem>,
     pub dub: Vec<EpisodeItem>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct EpisodesResult {
-    pub providers: HashMap<String, ProviderEpisodes>,
 }

@@ -60,28 +60,6 @@ impl CoverImage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct FuzzyDate {
-    pub year: Option<i32>,
-    pub month: Option<i32>,
-    pub day: Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct MediaTag {
-    pub id: i32,
-    pub name: String,
-    pub is_general_spoiler: bool,
-    pub is_media_spoiler: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Studio {
-    pub id: i32,
-    pub name: String,
-    pub is_animation_studio: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NextAiringEpisode {
     pub id: i32,

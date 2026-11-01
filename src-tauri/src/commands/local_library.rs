@@ -262,11 +262,3 @@ pub async fn set_local_series_match(
         .await
         .map_err(|e| e.to_string())
 }
-
-/// Forgets the match of a series, so it is searched for again.
-#[tauri::command]
-pub async fn clear_local_series_match(state: State<'_, AppState>, series_key: String) -> Result<(), String> {
-    local_library::clear_match(&state.pool, &series_key)
-        .await
-        .map_err(|e| e.to_string())
-}

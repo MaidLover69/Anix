@@ -10,7 +10,7 @@ use anix_lib::local_library::{
     AUTO_MATCH_SCORE,
 };
 use anix_lib::release_parser::{
-    parse_file_name, parse_relative_path, parse_relative_paths, ParsedRelease, ReleaseKind,
+    parse_file_name, parse_relative_path, ParsedRelease, ReleaseKind,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -180,13 +180,11 @@ fn parses_folders_for_title_and_season() {
 
 #[test]
 fn batch_folder_range_does_not_hide_episodes() {
-    let results = parse_relative_paths(&[
-        "Frieren (01-12) [Batch]/Frieren - 05 [1080p].mkv",
-        "Frieren (01-12) [Batch]/Frieren - 06 [1080p].mkv",
-    ]);
-    assert_eq!(results[0].episode, Some(5.0));
-    assert_eq!(results[1].episode, Some(6.0));
-    assert_eq!(results[0].title, "Frieren");
+    let five = parse_relative_path("Frieren (01-12) [Batch]/Frieren - 05 [1080p].mkv");
+    let six = parse_relative_path("Frieren (01-12) [Batch]/Frieren - 06 [1080p].mkv");
+    assert_eq!(five.episode, Some(5.0));
+    assert_eq!(six.episode, Some(6.0));
+    assert_eq!(five.title, "Frieren");
 }
 
 #[test]
@@ -491,9 +489,6 @@ async fn match_cache_round_trip() {
     assert!(confirmed.is_fresh(i64::MAX));
     let loaded = local_library::load_matches(&pool, std::slice::from_ref(&req.key)).await.unwrap();
     assert_eq!(loaded[&req.key].media.as_ref().map(|c| c.id), Some(2));
-
-    local_library::clear_match(&pool, &req.key).await.unwrap();
-    assert!(local_library::load_matches(&pool, std::slice::from_ref(&req.key)).await.unwrap().is_empty());
 }
 
 #[tokio::test]

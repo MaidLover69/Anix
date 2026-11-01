@@ -238,11 +238,6 @@ fn set_status(app: &tauri::AppHandle, next: OfflineStatus) {
     }
 }
 
-/// An AniList read succeeded.
-pub fn mark_online(app: &tauri::AppHandle) {
-    mark_served(app, None);
-}
-
 /// A catalogue read succeeded; `fallback` names the catalogue when it was not AniList's turn.
 pub fn mark_served(app: &tauri::AppHandle, fallback: Option<&'static str>) {
     set_status(app, OfflineStatus { fallback, ..Default::default() });

@@ -108,13 +108,6 @@ pub fn first_playlist_uri(playlist: &str) -> Option<&str> {
         .find(|line| !line.is_empty() && !line.starts_with('#'))
 }
 
-/// Resolves a playlist entry against the playlist's own URL: absolute, protocol-relative,
-/// root-relative and path-relative entries all follow the usual URL rules.
-pub fn resolve_playlist_uri(playlist_url: &str, entry: &str) -> Option<String> {
-    let base = Url::parse(playlist_url).ok()?;
-    base.join(entry.trim()).ok().map(|u| u.to_string())
-}
-
 fn host_of(response: &reqwest::Response) -> String {
     response.url().host_str().unwrap_or("unknown host").to_string()
 }

@@ -1,4 +1,4 @@
-use crate::clients::update::{self, fetch_latest_release, UpdateInfo, SITE_URL};
+use crate::clients::update::{self, fetch_latest_release, UpdateInfo};
 use crate::state::AppState;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -16,12 +16,6 @@ fn for_this_install(mut info: UpdateInfo) -> UpdateInfo {
     info.appimage = update::pick_appimage(&info, modern, glibc.as_deref()).cloned();
     info.appimage_modern = None;
     info
-}
-
-/// The project's website, where the downloads and the extension list link are published.
-#[tauri::command]
-pub fn get_site_url() -> String {
-    SITE_URL.trim_end_matches('/').to_string()
 }
 
 /// Whether the update dialog can offer Install, and why not when it cannot.

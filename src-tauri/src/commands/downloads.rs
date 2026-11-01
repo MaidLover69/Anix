@@ -33,16 +33,6 @@ pub async fn retry_download(state: State<'_, AppState>, id: String) -> Result<()
 }
 
 #[tauri::command]
-pub async fn get_downloads(
-    state: State<'_, AppState>,
-    anilist_id: i64,
-) -> Result<Vec<DownloadRecord>, String> {
-    db::get_downloads(&state.pool, anilist_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn get_all_downloads(
     state: State<'_, AppState>,
 ) -> Result<Vec<DownloadRecord>, String> {
@@ -92,16 +82,6 @@ pub async fn delete_download(
         }
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn get_download_by_id(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Option<DownloadRecord>, String> {
-    db::get_download_by_id(&state.pool, &id)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

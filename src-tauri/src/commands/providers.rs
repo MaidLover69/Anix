@@ -285,13 +285,6 @@ pub async fn get_skip_times(
 }
 
 #[tauri::command]
-pub async fn get_konoha_episodes(anilist_id: i64) -> Result<Vec<EpisodeItem>, String> {
-    konoha::fetch_konoha_episodes(anilist_id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn get_filler_episodes(
     state: State<'_, AppState>,
     mal_id: i32,

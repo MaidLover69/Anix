@@ -1,6 +1,6 @@
 use crate::accounts;
 use crate::db;
-use crate::models::{HistoryEntry, MediaListEntry, WatchlistEntry};
+use crate::models::{HistoryEntry, WatchlistEntry};
 use crate::state::AppState;
 use tauri::{AppHandle, State};
 
@@ -147,26 +147,6 @@ pub async fn get_watchlist(
     state: State<'_, AppState>,
 ) -> Result<Vec<WatchlistEntry>, String> {
     db::get_watchlist(&state.pool)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn upsert_library_entry(
-    state: State<'_, AppState>,
-    entry: MediaListEntry,
-) -> Result<(), String> {
-    db::upsert_library_entry(&state.pool, &entry)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_library_entries(
-    state: State<'_, AppState>,
-    status: Option<String>,
-) -> Result<Vec<MediaListEntry>, String> {
-    db::get_library_entries(&state.pool, status)
         .await
         .map_err(|e| e.to_string())
 }

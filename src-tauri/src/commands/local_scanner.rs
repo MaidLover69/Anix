@@ -64,7 +64,6 @@ fn is_ts_but_not_mpeg_ts(path: &Path) -> bool {
     !matches!(fs::File::open(path).and_then(|mut f| f.read_exact(&mut first)), Ok(()) if first[0] == 0x47)
 }
 
-#[tauri::command]
 pub async fn scan_local_anime_directory(dir_path: String) -> Result<Vec<LocalAnimeFile>, String> {
     // Absolute so every returned file path is absolute, whatever the user typed. Symlinks are
     // kept as they are: players look for subtitles next to the name the library shows.

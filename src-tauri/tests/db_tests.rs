@@ -675,10 +675,10 @@ async fn notification_preferences_and_filler_cache() {
         cover_image: None,
     };
     db::save_notification_preference(&pool, &pref).await.unwrap();
-    let fetched = db::get_notification_preference(&pool, 404).await.unwrap().unwrap();
-    assert!(fetched.enabled);
-    assert_eq!(fetched.media_title, "Jujutsu Kaisen");
-    assert_eq!(db::list_notification_preferences(&pool).await.unwrap().len(), 1);
+    let listed = db::list_notification_preferences(&pool).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].enabled);
+    assert_eq!((listed[0].media_id, listed[0].media_title.as_str()), (404, "Jujutsu Kaisen"));
 
     db::cache_filler_episodes(&pool, 505, &[10, 11, 12, 13]).await.unwrap();
     let fillers = db::get_cached_filler_episodes(&pool, 505).await.unwrap().unwrap();
@@ -787,9 +787,9 @@ async fn adding_many_playlist_items_is_all_or_nothing() {
 
     assert_eq!(db::add_items_to_custom_playlist(&pool, &[]).await.unwrap(), 0);
 
-    // The single-item entry point reports failures too.
-    assert!(db::add_item_to_custom_playlist(&pool, playlist_item("item-1", &playlist.id, 1.0)).await.is_err());
-    db::add_item_to_custom_playlist(&pool, playlist_item("item-11", &playlist.id, 11.0)).await.unwrap();
+    // A single item reports failures too.
+    assert!(db::add_items_to_custom_playlist(&pool, &[playlist_item("item-1", &playlist.id, 1.0)]).await.is_err());
+    db::add_items_to_custom_playlist(&pool, &[playlist_item("item-11", &playlist.id, 11.0)]).await.unwrap();
 
     let listed = db::list_custom_playlists(&pool).await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -894,7 +894,7 @@ async fn download_status_transitions() {
     let pool = memory_db().await;
     db::create_download(&pool, &download("dl-1", 5.0)).await.unwrap();
 
-    let listed = db::get_downloads(&pool, 303).await.unwrap();
+    let listed = db::get_all_downloads(&pool).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].status, "QUEUED");
 

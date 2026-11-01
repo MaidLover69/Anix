@@ -106,7 +106,6 @@ pub fn run() {
             // forward, also when it is hidden in the tray.
             system::tray::show_main_window(app);
         }))
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .manage(commands::party::PartyState::default())
@@ -296,7 +295,6 @@ pub fn run() {
             commands::party::party_ready,
             // AnimeThemes & Local Media
             commands::fetch_anime_themes,
-            commands::scan_local_anime_directory,
             commands::open_file_in_player,
             commands::player::open_external,
             // Your files (local episodes linked to a title)
@@ -314,10 +312,8 @@ pub fn run() {
             commands::match_local_series,
             commands::search_local_match,
             commands::set_local_series_match,
-            commands::clear_local_series_match,
             // Updates
             commands::check_for_update,
-            commands::get_site_url,
             commands::get_update_install_support,
             commands::install_update,
             commands::restart_after_update,

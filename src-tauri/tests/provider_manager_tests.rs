@@ -8,7 +8,7 @@ use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use anix_lib::clients::anilist::MediaHint;
 use anix_lib::providers::manager::{
-    apply_order, classify_reason, explain_failure, first_playlist_uri, main_failure, resolve_playlist_uri,
+    apply_order, classify_reason, explain_failure, first_playlist_uri, main_failure,
     summarize_failures, verify_stream_segment, verify_streams, FailureKind, HintSource, ProviderManager,
 };
 use anix_lib::providers::AnimeProvider;
@@ -278,32 +278,9 @@ fn failure_message(result: Result<SourcesResult, AppError>) -> String {
 
 // ---------------------------------------------------------------- playlist URL handling
 
+// Joining entries against the playlist URL is checked end to end by the loopback test below.
 #[test]
-fn playlist_entries_follow_url_joining_rules() {
-    let master = "https://cdn.example/a/b/master.m3u8?token=x/y";
-    assert_eq!(
-        resolve_playlist_uri(master, "720/index.m3u8").as_deref(),
-        Some("https://cdn.example/a/b/720/index.m3u8"),
-        "a '/' in the playlist's query must not change the base path"
-    );
-    assert_eq!(
-        resolve_playlist_uri(master, "/m3u8-proxy?url=abc").as_deref(),
-        Some("https://cdn.example/m3u8-proxy?url=abc")
-    );
-    assert_eq!(
-        resolve_playlist_uri(master, "//other.example/v/seg.ts").as_deref(),
-        Some("https://other.example/v/seg.ts")
-    );
-    assert_eq!(
-        resolve_playlist_uri(master, "http://abs.example/seg.ts").as_deref(),
-        Some("http://abs.example/seg.ts")
-    );
-    assert_eq!(
-        resolve_playlist_uri(master, "../c/seg.ts").as_deref(),
-        Some("https://cdn.example/a/c/seg.ts")
-    );
-    assert_eq!(resolve_playlist_uri("not a url", "seg.ts"), None);
-
+fn first_playlist_entry_skips_tags_and_blanks() {
     assert_eq!(first_playlist_uri("#EXTM3U\n\n#EXTINF:6,\n  seg0.ts  \nseg1.ts\n"), Some("seg0.ts"));
     assert_eq!(first_playlist_uri("#EXTM3U\n#EXT-X-ENDLIST\n"), None);
 }

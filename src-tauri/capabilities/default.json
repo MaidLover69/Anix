@@ -19,7 +19,6 @@
     "core:window:allow-set-position",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
-    "shell:allow-open",
     "deep-link:default"
   ]
 }

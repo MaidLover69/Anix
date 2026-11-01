@@ -4,7 +4,7 @@
 
 use anix_lib::error::AppError;
 use anix_lib::plugins::net::{NetContext, WireRequest};
-use anix_lib::providers::common::{decode_text, path_and_query, session_headers, session_referrer};
+use anix_lib::providers::common::{declared_charset, path_and_query, session_headers, session_referrer};
 use anix_lib::web_session::{
     ask, document_barrier, document_script, parse_document_state, verification_probe, Asked, DocumentState,
     Outcome, PageAccess,
@@ -1058,16 +1058,16 @@ fn a_referer_on_the_same_site_becomes_the_page_request_referrer() {
     assert_eq!(session_referrer(&reqwest::header::HeaderMap::new(), &url), None);
 }
 
+// Decoding with the found set is checked end to end in plugin_verification_tests (`/guarded/latin`).
 #[test]
-fn text_is_decoded_with_the_declared_character_set() {
-    assert_eq!(decode_text(Some("text/html; charset=windows-1252"), b"caf\xe9 \x93x\x94"), "café \u{201c}x\u{201d}");
-    assert_eq!(decode_text(Some("text/plain;charset=\"Shift_JIS\""), b"\x83A\x83j\x83\x81"), "アニメ");
-    assert_eq!(decode_text(Some("application/json; Charset=UTF-8"), "é".as_bytes()), "é");
-    assert_eq!(decode_text(Some("application/json"), "日本".as_bytes()), "日本");
-    assert_eq!(decode_text(None, b"plain"), "plain");
-    // An unknown name falls back to UTF-8, and a byte order mark decides over the declaration.
-    assert_eq!(decode_text(Some("text/plain; charset=klingon"), "ok".as_bytes()), "ok");
-    assert_eq!(decode_text(Some("text/plain; charset=windows-1252"), b"\xef\xbb\xbf\xc3\xa9"), "é");
+fn the_declared_character_set_is_found() {
+    use encoding_rs::{SHIFT_JIS, UTF_8, WINDOWS_1252};
+    assert_eq!(declared_charset(Some("text/html; charset=windows-1252")), Some(WINDOWS_1252));
+    assert_eq!(declared_charset(Some("text/plain;charset=\"Shift_JIS\"")), Some(SHIFT_JIS));
+    assert_eq!(declared_charset(Some("application/json; Charset=UTF-8")), Some(UTF_8));
+    assert_eq!(declared_charset(Some("application/json")), None);
+    assert_eq!(declared_charset(None), None);
+    assert_eq!(declared_charset(Some("text/plain; charset=klingon")), None, "an unknown name is ignored");
 }
 
 #[test]

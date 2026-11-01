@@ -89,10 +89,10 @@ impl AppError {
             AppError::CaptchaRequired => "SRC-CAPTCHA".to_string(),
             AppError::VerificationRequired { .. } => "SRC-VERIFY".to_string(),
             AppError::NoSourcesFound => "SRC-NONE".to_string(),
-            AppError::SourcesUnavailable(_) => "SRC-UNAVAILABLE".to_string(),
             AppError::RateLimited { .. } => "NET-429".to_string(),
             AppError::AuthRequired => "AUTH-LOGIN".to_string(),
-            AppError::Other(m) => match network_detail(m) {
+            // The text of SourcesUnavailable reaches the page like any other message.
+            AppError::Other(m) | AppError::SourcesUnavailable(m) => match network_detail(m) {
                 Some(detail) => format!("{}-{}", domain(m), detail),
                 None => "APP-ERR".to_string(),
             },

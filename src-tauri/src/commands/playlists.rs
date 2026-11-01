@@ -40,16 +40,6 @@ pub async fn get_playlist_items(
 }
 
 #[tauri::command]
-pub async fn add_to_playlist(
-    item: CustomPlaylistItem,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    db::add_item_to_custom_playlist(&state.pool, item)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn add_multiple_to_playlist(
     items: Vec<CustomPlaylistItem>,
     state: State<'_, AppState>,

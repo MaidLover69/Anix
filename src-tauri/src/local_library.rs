@@ -345,20 +345,6 @@ pub fn group_series(files: Vec<LibraryFile>) -> Vec<LocalSeries> {
     series
 }
 
-impl LocalSeries {
-    pub fn match_request(&self) -> MatchRequest {
-        MatchRequest {
-            key: self.key.clone(),
-            title: self.title.clone(),
-            season: self.season,
-            part: self.part,
-            year: self.year,
-            kind: self.kind,
-            max_episode: self.episodes.last().copied(),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------------------
 // Scoring
 
@@ -829,14 +815,6 @@ pub async fn confirm_match(pool: &SqlitePool, key: &str, candidate: MatchCandida
     };
     save_match(pool, &m).await?;
     Ok(m)
-}
-
-pub async fn clear_match(pool: &SqlitePool, key: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM local_library_matches WHERE series_key = ?1")
-        .bind(key)
-        .execute(pool)
-        .await?;
-    Ok(())
 }
 
 /// Every file linked under "Your files", by path, with its title.

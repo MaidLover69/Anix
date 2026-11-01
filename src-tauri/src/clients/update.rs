@@ -77,23 +77,36 @@ impl UpdateInfo {
 }
 
 /// True when `candidate` is a higher dotted version than `current` ("1.3.0" > "1.2.9"), read
-/// the same way as `isNewerVersion` in the frontend.
+/// the same way as `isNewerVersion` in the frontend. A pre-release ("1.3.0-rc.1") is lower than
+/// its final release and pre-releases compare as in semver; build metadata after `+` is ignored.
 pub fn is_newer_version(candidate: &str, current: &str) -> bool {
-    let parts = |v: &str| -> Vec<u64> {
-        v.trim()
-            .trim_start_matches(['v', 'V'])
-            .split(['.', '+', '-'])
+    type Parsed<'a> = (Vec<u64>, Option<Vec<(bool, u64, &'a str)>>);
+    fn parse(v: &str) -> Parsed<'_> {
+        let v = v.trim().trim_start_matches(['v', 'V']);
+        let v = v.split('+').next().unwrap_or_default();
+        let (core, pre) = v.split_once('-').map_or((v, None), |(core, pre)| (core, Some(pre)));
+        let core: Vec<u64> = core
+            .split('.')
             .map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
-            .collect()
-    };
-    let (a, b) = (parts(candidate), parts(current));
+            .collect();
+        // Semver: numeric identifiers sort numerically and below alphanumeric ones.
+        let pre = pre.map(|pre| {
+            pre.split('.').map(|id| id.parse::<u64>().map_or((true, 0, id), |n| (false, n, ""))).collect::<Vec<_>>()
+        });
+        (core, pre)
+    }
+    let ((a, a_pre), (b, b_pre)) = (parse(candidate), parse(current));
     for i in 0..a.len().max(b.len()).max(3) {
         let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
         if x != y {
             return x > y;
         }
     }
-    false
+    match (a_pre, b_pre) {
+        (None, Some(_)) => true,
+        (Some(a), Some(b)) => a > b,
+        _ => false,
+    }
 }
 
 fn is_web_address(url: &str) -> bool {

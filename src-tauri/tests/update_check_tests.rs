@@ -218,6 +218,27 @@ fn versions_compare_like_the_frontend() {
 }
 
 #[test]
+fn a_pre_release_is_offered_its_final_release() {
+    assert!(is_newer_version("1.3.0", "1.3.0-rc1"));
+    assert!(is_newer_version("1.3.0", "1.3.0-rc.2"));
+    assert!(!is_newer_version("1.3.0-rc.2", "1.3.0"));
+    assert!(!is_newer_version("1.3.0-rc1", "1.3.0"));
+    assert!(is_newer_version("1.3.0-rc.1", "1.2.9"));
+    assert!(!is_newer_version("1.3.0-rc.1", "1.3.1"));
+    // Pre-releases of one core compare by identifier: numbers numerically, below words.
+    assert!(is_newer_version("1.3.0-rc.10", "1.3.0-rc.2"));
+    assert!(is_newer_version("1.3.0-rc", "1.3.0-beta"));
+    assert!(is_newer_version("1.3.0-alpha.1", "1.3.0-alpha"));
+    assert!(is_newer_version("1.3.0-alpha.beta", "1.3.0-alpha.1"));
+    assert!(!is_newer_version("1.3.0-rc.1", "1.3.0-rc.1"));
+    // Build metadata is ignored, a leading "v" is allowed.
+    assert!(!is_newer_version("1.3.0+build.7", "1.3.0"));
+    assert!(!is_newer_version("1.3.0", "v1.3.0+build.7"));
+    assert!(is_newer_version("v1.3.0+b-2", "1.3.0-rc.1"));
+    assert!(!is_newer_version("1.3.0-rc.1+b.9", "1.3.0-rc.1"));
+}
+
+#[test]
 fn only_a_writable_appimage_of_a_normal_user_can_be_replaced() {
     let install = Install::new("target");
     let target = install.target();

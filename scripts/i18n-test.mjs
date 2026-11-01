@@ -76,6 +76,26 @@ assert.equal(shouldPromptUpdate(null, undefined, '/'), false, 'no update');
 assert.equal(needsSetup('1.3.0', '1.3.1'), true);
 assert.equal(needsSetup('1.4.0', '1.3.0'), false, 'a downgrade does not ask');
 assert.equal(isNewerVersion('1.10.0', '1.9.9'), true);
+// Pre-releases: lower than their final release, semver order between them, `+build` ignored
+assert.equal(isNewerVersion('1.3.0', '1.3.0-rc1'), true, 'a release candidate is offered the final');
+assert.equal(isNewerVersion('1.3.0', '1.3.0-rc.2'), true);
+assert.equal(isNewerVersion('1.3.0-rc.2', '1.3.0'), false);
+assert.equal(isNewerVersion('1.3.0-rc1', '1.3.0'), false);
+assert.equal(isNewerVersion('1.3.0-rc.1', '1.2.9'), true);
+assert.equal(isNewerVersion('1.3.0-rc.1', '1.3.1'), false);
+assert.equal(isNewerVersion('1.3.0-rc.10', '1.3.0-rc.2'), true, 'numeric identifiers compare numerically');
+assert.equal(isNewerVersion('1.3.0-rc', '1.3.0-beta'), true);
+assert.equal(isNewerVersion('1.3.0-alpha.1', '1.3.0-alpha'), true);
+assert.equal(isNewerVersion('1.3.0-alpha.beta', '1.3.0-alpha.1'), true, 'words sort above numbers');
+assert.equal(isNewerVersion('1.3.0-rc.1', '1.3.0-rc.1'), false);
+assert.equal(isNewerVersion('1.3.0+build.7', '1.3.0'), false);
+assert.equal(isNewerVersion('1.3.0', 'v1.3.0+build.7'), false);
+assert.equal(isNewerVersion('v1.3.0+b-2', '1.3.0-rc.1'), true);
+assert.equal(isNewerVersion('1.2.1', '1.2'), true);
+assert.equal(isNewerVersion('1.2.0', '1.2'), false);
+assert.equal(needsSetup('1.3.0-rc.1', '1.3.0'), true, 'setup again after moving from a pre-release to the final');
+assert.equal(needsSetup('1.3.0', '1.3.0-rc.1'), false);
+assert.equal(shouldPromptUpdate('1.3.0', '1.3.0-rc.1', '/'), true);
 
 // First/second/third choice
 assert.deepEqual(withChoice(['en'], 1, 'es'), ['en', 'es']);

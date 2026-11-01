@@ -61,6 +61,7 @@
 - In the Flatpak, the buttons that open mpv or VLC are hidden, since the Flatpak cannot start them.
 
 ### Fixes
+- The RPM installs on openSUSE too: it accepts openSUSE's names for WebKitGTK and the GStreamer plugins.
 - The Watch order row has its own scroll arrows.
 - Local MP4 files whose index sits at the end of the file play in the embedded player instead of falling back
   to the web player.

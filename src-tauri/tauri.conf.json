@@ -64,9 +64,9 @@
       "rpm": {
         "desktopTemplate": "anix.desktop",
         "depends": [
-          "webkit2gtk4.1",
-          "gstreamer1-plugins-base",
-          "gstreamer1-plugins-good",
+          "(webkit2gtk4.1 or libwebkit2gtk-4_1-0)",
+          "(gstreamer1-plugins-base or gstreamer-plugins-base)",
+          "(gstreamer1-plugins-good or gstreamer-plugins-good)",
           "(gstreamer1-plugins-bad-free or gstreamer-plugins-bad)",
           "xdg-utils"
         ]

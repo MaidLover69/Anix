@@ -276,8 +276,8 @@ jobs:
           DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
             || { cat "$home/out.log"; exit 1; }
 
-  # The RPM's dependencies use Fedora's package names; openSUSE names them differently. Reported, not
-  # required, until the RPM lists openSUSE's names too.
+  # The RPM lists Fedora's and openSUSE's package names as alternatives ("(a or b)"). Reported, not
+  # required: openSUSE is not a target the release waits for.
   rpm-check-opensuse:
     name: Install the RPM on openSUSE Tumbleweed (informational)
     needs: packages

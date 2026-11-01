@@ -27,8 +27,10 @@ jobs:
         with:
           tool: cargo-audit
 
+      # RUSTSEC-2023-0071 (rsa, no fixed release): only sqlx's MySQL driver pulls rsa into Cargo.lock, and Anix
+      # does not build it (`cargo tree -i rsa --target all` prints nothing). CONSTRAINTS.md › Exceptions E2.
       - name: Rust advisories
-        run: cargo audit --file src-tauri/Cargo.lock
+        run: cargo audit --file src-tauri/Cargo.lock --ignore RUSTSEC-2023-0071
 
       - name: npm advisories (shipped packages only)
         run: npm audit --omit=dev --audit-level=high

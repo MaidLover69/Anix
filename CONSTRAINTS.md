@@ -52,3 +52,4 @@ compare medians of three runs.
 | Id | Date | Rule | Reason | Owner |
 |---|---|---|---|---|
 | E1 | 2026-11-01 | assertion-removed | Dead code removed in 1.4 took one assert each with it: `clear_match` (no caller) in local_library_tests, the `SourcesUnavailable` error (now the plain APP-ERR case, still asserted in the table) in unit_tests, and the test-only `decode_text` wrapper in web_session_tests (charset lookup still asserted; decoding checked end to end in plugin_verification_tests `/guarded/latin`). | maintainer |
+| E2 | 2026-11-01 | dependency-audit | `cargo audit` ignores RUSTSEC-2023-0071 (rsa, Marvin timing attack, no fixed release). rsa is in Cargo.lock only through sqlx's MySQL driver, which Anix never compiles (`cargo tree -i rsa --target all` is empty), so no shipped code contains it. Drop the ignore when sqlx no longer locks rsa or a fixed rsa exists. | maintainer |

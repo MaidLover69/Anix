@@ -27,6 +27,8 @@ res = {"appimage": os.path.basename(APPIMAGE), "webdriver": WEBDRIVER, "failures
 def fail(msg):
     res["failures"].append(msg)
     print("FAIL:", msg, flush=True)
+    if os.environ.get("GITHUB_ACTIONS"):  # annotations are readable without signing in, unlike job logs
+        print("::error::smoke: " + msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"), flush=True)
 
 
 def sh(*cmd, timeout=20):
@@ -144,15 +146,20 @@ SEEK = "const s=document.querySelector('[role=slider][aria-label=Seek]'); const 
 SCROLL = """const done = arguments[arguments.length - 1];
 const el = document.querySelector('main') || document.scrollingElement;
 const max = el.scrollHeight - el.clientHeight;
-const times = []; let last = performance.now(); const t0 = last; let dir = 1;
-function step(now) {
-  times.push(now - last); last = now;
-  const y = el.scrollTop + dir * 18; if (y >= max) dir = -1; if (y <= 0) dir = 1; el.scrollTop = y;
-  if (now - t0 < 4000) return requestAnimationFrame(step);
-  times.shift(); const s = [...times].sort((a, b) => a - b);
-  done({fps: +(1000 * times.length / (now - t0)).toFixed(1), p95_ms: +s[Math.floor(s.length * 0.95)].toFixed(1),
+const times = []; let last = performance.now(); const t0 = last; let dir = 1; let ended = false;
+function finish() {
+  if (ended) return; ended = true;
+  const now = performance.now(); times.shift(); const s = [...times].sort((a, b) => a - b);
+  done({fps: +(1000 * times.length / (now - t0)).toFixed(1), p95_ms: s.length ? +s[Math.floor(s.length * 0.95)].toFixed(1) : null,
         over_100ms: times.filter(t => t > 100).length, scroll_height: max});
 }
+function step(now) {
+  if (ended) return;
+  times.push(now - last); last = now;
+  const y = el.scrollTop + dir * 18; if (y >= max) dir = -1; if (y <= 0) dir = 1; el.scrollTop = y;
+  if (now - t0 < 4000) requestAnimationFrame(step); else finish();
+}
+setTimeout(finish, 5000);  // a window that gets no animation frames still answers
 requestAnimationFrame(step);"""
 DIALOGS = "const b=[...document.querySelectorAll('[role=dialog] button')].find(x=>/^\\s*(Keep|Skip|Save|Continue|Done)\\b/.test(x.textContent)); if(b){b.click(); return true} return false"
 
@@ -171,9 +178,13 @@ try:
             if not driver.run(DIALOGS):
                 break
         time.sleep(8)  # Home's rows load
-        res["scroll_home"] = step("scroll Home", lambda: driver.call(
-            "POST", f"/session/{driver.sid}/execute/async", {"script": SCROLL, "args": []}, timeout=30))
+        try:  # recorded only: a failed measurement does not fail the smoke test
+            res["scroll_home"] = driver.call("POST", f"/session/{driver.sid}/execute/async", {"script": SCROLL, "args": []}, timeout=30)
+        except Exception as e:
+            res["scroll_home"] = {"error": f"{type(e).__name__}: {e}"}
         print("scroll on Home:", res["scroll_home"], flush=True)
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::notice::scroll on Home: {json.dumps(res['scroll_home'])}", flush=True)
     else:
         app = subprocess.Popen([APPIMAGE], env=ENV, stdout=open(os.path.join(OUT, "app-stdout.log"), "w"), stderr=subprocess.STDOUT)
     win = window()

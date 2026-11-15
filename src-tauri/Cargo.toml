@@ -67,6 +67,11 @@ rand = "0.8"
 # Already part of Tauri's tree; used to place the embedded mpv GL area under the webview.
 gtk = "0.18"
 
+[features]
+# DEB and RPM (scripts/build-packages.sh): OpenSSL 3 built in, since Fedora 45 ships only OpenSSL 4
+# (no libssl.so.3). Needs perl with IPC::Cmd to build. The AppImage bundles its libraries instead.
+vendored-openssl = ["reqwest/native-tls-vendored"]
+
 [dev-dependencies]
 futures-util = "0.3"
 # Paused test clock, so budgets of tens of seconds are tested without waiting for them.

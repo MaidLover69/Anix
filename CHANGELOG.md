@@ -13,6 +13,9 @@ A small update for stability, speed and interface fixes.
 - The embedded mpv player in the AppImage now gets the fast drawing path on NVIDIA too (the bundled WebKitGTK used to turn it off for that driver). The first start afterwards asks again whether the video shows correctly, with the same 15-second fallback to the web player.
 - The diagnostics report lists `WEBKIT_FORCE_DMABUF_RENDERER`.
 
+### Packages
+- The RPM runs on Fedora 45, which ships only OpenSSL 4: the DEB and RPM now carry OpenSSL 3 built into the program instead of needing the system's `libssl.so.3`.
+
 ### Interface fixes
 - Italic text uses the real italic font instead of a slanted copy, so Meme mode captions are no longer smeared.
 - The player's speed menu lines up its captioned and plain options, and wraps instead of overflowing when the labels are long.

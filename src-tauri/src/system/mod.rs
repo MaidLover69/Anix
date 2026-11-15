@@ -4,6 +4,7 @@
 
 pub mod autostart;
 pub mod background;
+pub mod fast_drawing;
 pub mod gnutls;
 pub mod hwaccel;
 pub mod page_crash;
@@ -26,12 +27,17 @@ pub const BACKGROUND_ARG: &str = "--background";
 
 /// The launch arguments a restart passes on: the program and harmless flags such as
 /// `--web-player`. Dropped: `--minimized` (the restart is meant to show the window),
-/// `--background`, and `anix://` / `anilili://` links (the link was already opened; replaying
-/// it would compete with the route the restart reopens).
+/// `--background`, `--safe-graphics` (a one-time rescue that already turned fast drawing off;
+/// kept, it would undo turning it back on), and `anix://` / `anilili://` links (the link was
+/// already opened; replaying it would compete with the route the restart reopens).
 pub fn restart_args(args: &[OsString]) -> Vec<OsString> {
     let dropped = |arg: &OsString| {
         let arg = arg.to_string_lossy().to_ascii_lowercase();
-        arg == MINIMIZED_ARG || arg == BACKGROUND_ARG || arg.starts_with("anix:") || arg.starts_with("anilili:")
+        arg == MINIMIZED_ARG
+            || arg == BACKGROUND_ARG
+            || arg == fast_drawing::SAFE_ARG
+            || arg.starts_with("anix:")
+            || arg.starts_with("anilili:")
     };
     args.iter()
         .enumerate()

@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, ListVideo, Play, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Download, FileDown, ListVideo, Play, Trash2, X } from 'lucide-react';
 import { Button, EmptyState, ErrorState, Modal, Spinner, errorMessage } from '../ui';
 import {
   launchPlaylistExternalPlayer,
   resolvePlaylistStreams,
   useDeletePlaylist,
+  useExportPlaylist,
   usePlaylistItems,
   useRemoveFromPlaylist,
 } from '../../hooks/usePlaylists';
@@ -21,6 +22,7 @@ import { categoryLabel, episodeLabel, formatDate, playerLabel, watchCategory } f
 import { CoverThumb } from './CoverThumb';
 import { PlaylistCollage } from './PlaylistCollage';
 import { MemeFrame } from '../meme/Meme';
+import { SmartCollectionResults } from './SmartCollectionResults';
 import { t, tn } from '../../i18n';
 
 type ExternalPlayer = 'mpv' | 'vlc';
@@ -64,6 +66,18 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
   const removeItem = useRemoveFromPlaylist();
   const deletePlaylist = useDeletePlaylist();
   const queueDownloads = useQueueDownloads();
+  const exportPlaylist = useExportPlaylist();
+  const smart = !!playlist.rule;
+
+  const handleExport = async () => {
+    if (exportPlaylist.isPending) return;
+    try {
+      const saved = await exportPlaylist.mutateAsync(playlist.id);
+      if (saved) showToast({ type: 'success', title: t('playlistDetail.exported', { name: playlist.name }) });
+    } catch (err) {
+      showToast({ type: 'error', title: t('playlistDetail.exportError'), message: errorMessage(err) });
+    }
+  };
 
   const [resolving, setResolving] = useState<ResolveProgress | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -275,16 +289,22 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
           <ArrowLeft className="w-4 h-4 rtl:-scale-x-100" aria-hidden="true" />
           <span>{t('playlistDetail.allPlaylists')}</span>
         </Button>
-        <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
-          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>{t('playlistDetail.deletePlaylist')}</span>
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={handleExport} disabled={exportPlaylist.isPending}>
+            <FileDown className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{t('playlistDetail.export')}</span>
+          </Button>
+          <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
+            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{t('playlistDetail.deletePlaylist')}</span>
+          </Button>
+        </div>
       </div>
 
       <header className="flex items-center gap-5 min-w-0">
         <PlaylistCollage covers={playlist.covers} className="w-24 h-24 rounded-xl flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t('playlistDetail.playlist')}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{smart ? t('playlistDetail.smartCollection') : t('playlistDetail.playlist')}</p>
           <h2 className="mt-1 text-xl font-semibold text-text-primary truncate select-text">
             {playlist.name}
           </h2>
@@ -294,12 +314,17 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
             </p>
           )}
           <p className="mt-2 text-xs text-text-muted">
-            {t('common.episodeCount', { count: episodeCount })}
-            {created ? ` · ${t('playlistDetail.created', { date: created })}` : ''}
+            {[smart ? null : t('common.episodeCount', { count: episodeCount }), created ? t('playlistDetail.created', { date: created }) : null]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
         </div>
       </header>
 
+      {smart && playlist.rule ? (
+        <SmartCollectionResults rule={playlist.rule} />
+      ) : (
+      <>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={() => handlePlayInApp(0)} disabled={!hasItems}>
           <Play className="w-4 h-4 fill-current" aria-hidden="true" />
@@ -426,6 +451,8 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
             );
           })}
         </ol>
+      )}
+      </>
       )}
 
       <Modal

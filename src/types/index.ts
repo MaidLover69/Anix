@@ -507,6 +507,8 @@ export interface AppSettings {
   player_disk_cache_mb: number;
   /** Home row ids in the order chosen in Settings › Appearance; rows missing here follow. */
   home_row_order?: string[];
+  /** Home rows (built-in or added) that are kept but not shown. */
+  home_rows_hidden?: string[];
   /** Plugin ids in the order Auto tries them (Settings › Sources); plugins missing here follow. */
   provider_order?: string[];
   /** Settings › Plugins: test the enabled plugins in the background about once a day. */
@@ -684,6 +686,8 @@ export interface CustomPlaylist {
   updated_at: number;
   item_count: number;
   covers: string[];
+  /** A smart collection's Discover filters (a query string); null for a hand-made playlist. */
+  rule?: string | null;
 }
 
 export interface CustomPlaylistItem {

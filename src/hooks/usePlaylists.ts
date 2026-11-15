@@ -32,14 +32,41 @@ export function usePlaylistItems(playlistId: string | null) {
 export function useCreatePlaylist() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ name, description }: { name: string; description?: string }) => {
+    mutationFn: async ({ name, description, rule }: { name: string; description?: string; rule?: string }) => {
       return await invoke<CustomPlaylist>('create_playlist', {
         name,
         description: description ?? null,
+        // A Discover query string for a smart collection (src/lib/smartRule.ts); none for a playlist.
+        rule: rule ?? null,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
+    },
+  });
+}
+
+/** What `import_playlist` reports: the new playlist, and the entries it could not read. */
+export interface ImportResult {
+  playlist: CustomPlaylist;
+  added: number;
+  skipped: string[];
+}
+
+/** Saves one playlist or collection as a file the user picks. Resolves to the path, or null if cancelled. */
+export function useExportPlaylist() {
+  return useMutation({
+    mutationFn: (playlistId: string) => invoke<string | null>('export_playlist', { playlistId }),
+  });
+}
+
+/** Reads a collection file the user picks into a new playlist. Resolves to null if cancelled. */
+export function useImportPlaylist() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => invoke<ImportResult | null>('import_playlist'),
+    onSuccess: (result) => {
+      if (result) queryClient.invalidateQueries({ queryKey: ['customPlaylists'] });
     },
   });
 }

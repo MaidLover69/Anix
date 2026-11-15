@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 const VAINFO_TIMEOUT: Duration = Duration::from_secs(6);
@@ -26,23 +26,25 @@ const DMABUF_MARK: &str = "ANIX_DMABUF_SET_BY_APP";
 /// What `main` does with `WEBKIT_DISABLE_DMABUF_RENDERER` before WebKit starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmabufEnv {
-    /// Turn the renderer off (it leaves the window blank on some drivers) and mark it as Anix's.
+    /// Turn the renderer off (it leaves the window blank with NVIDIA's driver) and mark it as Anix's.
     Disable,
-    /// An earlier run of Anix turned it off and this run uses mpv, which needs it: remove both.
+    /// An earlier run of Anix turned it off and this run keeps it on: remove both.
     Clear,
-    /// Unset, and embedded mpv needs the renderer on.
+    /// Unset, and the renderer stays on.
     Untouched,
     /// The user's own value: never changed.
     User,
 }
 
-/// The rule for [`apply_dmabuf_workaround`], from the variable, its mark and the engine.
-pub fn dmabuf_env(value: Option<&str>, mark: Option<&str>, wants_mpv: bool) -> DmabufEnv {
+/// The rule for [`apply_dmabuf_workaround`], from the variable, its mark and whether the renderer
+/// should stay on. Off, WebKit draws the page through a slow copy path (about 1 frame a second
+/// while scrolling with WebKitGTK 2.54), so it is turned off only where it is known to blank the window.
+pub fn dmabuf_env(value: Option<&str>, mark: Option<&str>, keep_on: bool) -> DmabufEnv {
     let set_by_app = match value {
         None => true,
         Some(v) => v == "1" && mark == Some("1"),
     };
-    match (set_by_app, wants_mpv) {
+    match (set_by_app, keep_on) {
         (false, _) => DmabufEnv::User,
         (true, false) => DmabufEnv::Disable,
         (true, true) if value.is_some() => DmabufEnv::Clear,
@@ -63,11 +65,82 @@ pub fn dmabuf_off_by_user(value: Option<&str>, mark: Option<&str>) -> bool {
     dmabuf_env(value, mark, true) == DmabufEnv::User && value != Some("0")
 }
 
-/// Called once from `main`, before any thread or the webview starts.
-pub fn apply_dmabuf_workaround(wants_mpv: bool) {
+/// NVIDIA's own driver is loaded (not nouveau): the case where the DMA-BUF renderer blanks the window.
+pub fn nvidia_driver_loaded() -> bool {
+    Path::new("/proc/driver/nvidia/version").exists()
+}
+
+/// Debian and Ubuntu build WebKitGTK to turn the DMA-BUF renderer off by itself on NVIDIA's
+/// driver (both AppImages bundle such a build); this variable keeps it on there.
+const FORCE_VAR: &str = "WEBKIT_FORCE_DMABUF_RENDERER";
+/// Set next to `WEBKIT_FORCE_DMABUF_RENDERER=1` when Anix set it, for the same reason as [`DMABUF_MARK`].
+const FORCE_MARK: &str = "ANIX_DMABUF_FORCED_BY_APP";
+
+static FORCED_BY_APP: AtomicBool = AtomicBool::new(false);
+
+/// (keep the renderer on, force it on against WebKit's own NVIDIA check), from whether NVIDIA's
+/// driver is loaded, this run uses embedded mpv (which needs the renderer) and the user turned
+/// fast drawing on.
+pub fn renderer_plan(nvidia: bool, wants_mpv: bool, fast_drawing: bool) -> (bool, bool) {
+    let keep_on = !nvidia || wants_mpv || fast_drawing;
+    (keep_on, nvidia && keep_on)
+}
+
+/// What `main` does with `WEBKIT_FORCE_DMABUF_RENDERER`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForceEnv {
+    Set,
+    /// An earlier run of Anix set it and this run does not want it.
+    Clear,
+    Untouched,
+    /// The user's own value: never changed.
+    User,
+}
+
+pub fn force_env(value: Option<&str>, mark: Option<&str>, force: bool) -> ForceEnv {
+    let ours = match value {
+        None => true,
+        Some(v) => v == "1" && mark == Some("1"),
+    };
+    match (ours, force, value.is_some()) {
+        (false, _, _) => ForceEnv::User,
+        (true, true, false) => ForceEnv::Set,
+        (true, false, true) => ForceEnv::Clear,
+        _ => ForceEnv::Untouched,
+    }
+}
+
+/// This run forced the renderer on (embedded mpv's confirmation asks again for it).
+pub fn dmabuf_forced_by_app() -> bool {
+    FORCED_BY_APP.load(Ordering::SeqCst)
+}
+
+/// Called once from `main`, before any thread or the webview starts. Embedded mpv always needs
+/// the renderer; the web player turns it off only on NVIDIA's driver unless the user turned
+/// fast drawing on.
+pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
+    let (keep_on, force) = renderer_plan(nvidia_driver_loaded(), wants_mpv, fast_drawing);
     let value = std::env::var(DMABUF_VAR).ok();
     let mark = std::env::var(DMABUF_MARK).ok();
-    match dmabuf_env(value.as_deref(), mark.as_deref(), wants_mpv) {
+    let dmabuf = dmabuf_env(value.as_deref(), mark.as_deref(), keep_on);
+    // A user who set the off switch themselves gets no forcing either.
+    let force = force && dmabuf != DmabufEnv::User;
+    let forced = std::env::var(FORCE_VAR).ok();
+    let forced_mark = std::env::var(FORCE_MARK).ok();
+    match force_env(forced.as_deref(), forced_mark.as_deref(), force) {
+        ForceEnv::Set => {
+            std::env::set_var(FORCE_VAR, "1");
+            std::env::set_var(FORCE_MARK, "1");
+            FORCED_BY_APP.store(true, Ordering::SeqCst);
+        }
+        ForceEnv::Clear => {
+            std::env::remove_var(FORCE_VAR);
+            std::env::remove_var(FORCE_MARK);
+        }
+        ForceEnv::Untouched => FORCED_BY_APP.store(force, Ordering::SeqCst),
+        ForceEnv::User => {}
+    }
+    match dmabuf {
         DmabufEnv::Disable => {
             std::env::set_var(DMABUF_VAR, "1");
             std::env::set_var(DMABUF_MARK, "1");
@@ -428,9 +501,9 @@ pub fn tips(report: &HardwareReport) -> Vec<String> {
     }
     if report.dmabuf_disabled {
         tips.push(if report.dmabuf_set_by_app {
-            "WebKit's DMA-BUF renderer is off: Anix turns it off because it leaves the window blank on some drivers. Video plays either way; the page may draw a little slower. To try it on, start Anix with WEBKIT_DISABLE_DMABUF_RENDERER=0.".to_string()
+            "WebKit's DMA-BUF renderer is off: Anix turns it off with NVIDIA's driver because it can leave the window blank. Video plays either way; scrolling is slower. To try it on, start Anix with WEBKIT_DISABLE_DMABUF_RENDERER=0.".to_string()
         } else {
-            "WebKit's DMA-BUF renderer was turned off by your environment (WEBKIT_DISABLE_DMABUF_RENDERER).".to_string()
+            "WebKit's DMA-BUF renderer was turned off by your environment (WEBKIT_DISABLE_DMABUF_RENDERER), so scrolling is slower. Remove that variable unless the window turns blank without it.".to_string()
         });
     }
     if vendor == Some("nvidia") && report.session == "wayland" {

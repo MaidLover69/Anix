@@ -6,7 +6,9 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { useAnimeDetails, useHomeData } from '../hooks/useAniList';
 import { useContinueWatching } from '../hooks/useLibrary';
 import { usePlayful, useSettings } from '../hooks/useSettings';
-import { orderHomeRows, type HomeRowId } from '../lib/homeRows';
+import { livePlaylistRow, orderHomeRows, rowKind, visibleHomeRows, type HomeRowId } from '../lib/homeRows';
+import { CustomHomeRow } from '../components/CustomHomeRow';
+import { usePlaylists } from '../hooks/usePlaylists';
 import { t, type TKey } from '../i18n';
 import { Meme, MemeFrame, useHighModule, type MemeSpot } from '../components/meme/Meme';
 import type { AnimeDetails } from '../types';
@@ -35,11 +37,17 @@ export const Home: React.FC = () => {
   const lastWatched = continueWatching[0] ?? null;
   const { data: lastDetails } = useAnimeDetails(lastWatched?.anilist_id ?? null);
 
-  const order = orderHomeRows(settings?.home_row_order);
+  const { data: playlists } = usePlaylists();
+  const playlistIds = playlists?.map((p) => p.id);
+  const order = visibleHomeRows(orderHomeRows(settings?.home_row_order), settings?.home_rows_hidden).filter((id) =>
+    livePlaylistRow(id, playlistIds)
+  );
   // When the catalogue fails, one error takes the place of the first of its rows.
   const firstCatalogRow = order.find((id) => id in CATALOG_ROWS);
 
   const row = (id: HomeRowId): React.ReactNode => {
+    const kind = rowKind(id);
+    if (kind.kind !== 'builtin') return <CustomHomeRow key={id} kind={kind} />;
     if (id === 'continue') {
       return <HorizontalRail key={id} title={t('home.continueWatching')} titleSpot="contTitle" historyItems={continueWatching} />;
     }
@@ -71,9 +79,10 @@ export const Home: React.FC = () => {
         />
       );
     }
-    const { title, link, spot } = CATALOG_ROWS[id];
+    const catalogId = kind.id as keyof typeof CATALOG_ROWS;
+    const { title, link, spot } = CATALOG_ROWS[catalogId];
     return (
-      <HorizontalRail key={id} title={t(title)} titleSpot={spot} items={data?.[id]} isLoading={isLoading} viewAllLink={link} />
+      <HorizontalRail key={id} title={t(title)} titleSpot={spot} items={data?.[catalogId]} isLoading={isLoading} viewAllLink={link} />
     );
   };
 

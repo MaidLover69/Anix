@@ -11,7 +11,27 @@ import { useHighModule } from '../meme/Meme';
 /** Seconds the question waits before Anix assumes the window is blank and switches back. */
 export const CONFIRM_SECONDS = 15;
 
-type Answer = 'keep' | 'switch_back' | 'no_answer';
+export type Answer = 'keep' | 'switch_back' | 'no_answer';
+
+/**
+ * Seconds left of a Keep / Switch back question, counted only while the user is looking: shown
+ * and focused (not on another workspace, behind other windows or hidden to the tray), like the
+ * backend's own deadline. Calls `onTimeout` once it reaches zero.
+ */
+export function useConfirmCountdown(open: boolean, onTimeout: () => void): number {
+  const [left, setLeft] = useState(CONFIRM_SECONDS);
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && document.hasFocus()) setLeft((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [open]);
+  useEffect(() => {
+    if (open && left === 0) onTimeout();
+  }, [open, left, onTimeout]);
+  return left;
+}
 
 /**
  * After a switch to embedded mpv (or an update of libmpv or WebKit), asks whether the window
@@ -27,7 +47,6 @@ export const EngineConfirmDialog: React.FC = () => {
   const routeRef = useRef('');
   routeRef.current = `${location.pathname}${location.search}`;
   const [answered, setAnswered] = useState(false);
-  const [left, setLeft] = useState(CONFIRM_SECONDS);
   const open = status?.ask_confirm === true && !answered;
 
   useEffect(() => {
@@ -48,18 +67,8 @@ export const EngineConfirmDialog: React.FC = () => {
     [queryClient]
   );
 
-  useEffect(() => {
-    if (!open) return;
-    // Only counts while the user is looking: shown and focused (not on another workspace,
-    // behind other windows or hidden to the tray), like the backend's own deadline.
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && document.hasFocus()) setLeft((s) => Math.max(0, s - 1));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [open]);
-  useEffect(() => {
-    if (open && left === 0) answer('no_answer');
-  }, [open, left, answer]);
+  const timeout = useCallback(() => answer('no_answer'), [answer]);
+  const left = useConfirmCountdown(open, timeout);
 
   const high = useHighModule();
   return (

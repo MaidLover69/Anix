@@ -27,6 +27,18 @@ export interface VaInfo {
 }
 
 /** `get_hardware_report`. */
+/** Settings › System › Fast drawing (does something only on NVIDIA's own driver). */
+export interface FastDrawingStatus {
+  nvidia: boolean;
+  on: boolean;
+  /** This run draws the fast way. */
+  active: boolean;
+  /** "Does Anix look right?" is asked now. */
+  ask: boolean;
+  /** Why Anix turned it off: not_confirmed, declined or safe_graphics. */
+  reason: string | null;
+}
+
 export interface HardwareReport {
   session: 'wayland' | 'x11' | 'unknown';
   wayland_display: string | null;

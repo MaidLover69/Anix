@@ -18,6 +18,7 @@ import { ToastContainer } from './components/Toast';
 import { AuthDialog } from './components/AuthDialog';
 import { UpdateDialog } from './components/UpdateDialog';
 import { EngineConfirmDialog } from './components/player/EngineConfirmDialog';
+import { FastDrawingConfirmDialog } from './components/FastDrawingConfirmDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { HotkeyCheatSheet } from './components/HotkeyCheatSheet';
 import { Button } from './components/ui/Button';
@@ -237,6 +238,7 @@ const AppLayout: React.FC = () => {
       )}
       <UpdateDialog />
       <EngineConfirmDialog />
+      <FastDrawingConfirmDialog />
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}

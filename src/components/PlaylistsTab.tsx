@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ListVideo, Plus } from 'lucide-react';
-import { Button, EmptyState, ErrorState, Spinner } from './ui';
-import { usePlaylists } from '../hooks/usePlaylists';
+import { FileUp, ListVideo, Plus, X } from 'lucide-react';
+import { Button, EmptyState, ErrorState, Spinner, errorMessage } from './ui';
+import { useImportPlaylist, usePlaylists, type ImportResult } from '../hooks/usePlaylists';
 import { usePlayful } from '../hooks/useSettings';
 import type { CustomPlaylist } from '../types';
 import { CreatePlaylistModal } from './library/CreatePlaylistModal';
@@ -22,6 +22,9 @@ export const PlaylistsTab: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   // Shown until the refreshed list includes the playlist that was just created.
   const [justCreated, setJustCreated] = useState<CustomPlaylist | null>(null);
+  const importPlaylist = useImportPlaylist();
+  const [imported, setImported] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const selected = selectedId
     ? playlists.find((playlist) => playlist.id === selectedId) ??
@@ -42,6 +45,18 @@ export const PlaylistsTab: React.FC = () => {
     if (selectionIsStale) selectPlaylist(null);
   }, [selectionIsStale]);
 
+  const runImport = async () => {
+    if (importPlaylist.isPending) return;
+    setImportError(null);
+    setImported(null);
+    try {
+      const result = await importPlaylist.mutateAsync();
+      if (result) setImported(result);
+    } catch (err) {
+      setImportError(errorMessage(err, t('playlistsTab.importError')));
+    }
+  };
+
   if (selected) {
     return (
       <PlaylistDetail
@@ -59,11 +74,67 @@ export const PlaylistsTab: React.FC = () => {
         <p className="text-[13px] text-text-muted">
           {t('playlistsTab.intro')}
         </p>
-        <Button variant="primary" onClick={() => setShowCreateModal(true)}>
-          <Plus className="w-4 h-4" aria-hidden="true" />
-          <span>{t('playlistsTab.newPlaylist')}</span>
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="secondary" onClick={runImport} disabled={importPlaylist.isPending}>
+            {importPlaylist.isPending ? (
+              <Spinner size="sm" label={t('playlistsTab.importing')} />
+            ) : (
+              <FileUp className="w-4 h-4" aria-hidden="true" />
+            )}
+            <span>{t('playlistsTab.import')}</span>
+          </Button>
+          <Button variant="primary" onClick={() => setShowCreateModal(true)}>
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            <span>{t('playlistsTab.newPlaylist')}</span>
+          </Button>
+        </div>
       </div>
+
+      {(imported || importError) && (
+        <div
+          role={importError ? 'alert' : 'status'}
+          className={`flex items-start gap-3 p-4 rounded-lg ${importError ? 'bg-state-error/10' : 'bg-bg-elevated'}`}
+        >
+          <div className="min-w-0 flex-1 text-[13px] select-text">
+            {importError ? (
+              <p className="text-state-error">{importError}</p>
+            ) : imported ? (
+              <>
+                <p className="text-text-primary">
+                  {t('playlistsTab.imported', { name: imported.playlist.name, count: imported.added })}
+                </p>
+                {imported.skipped.length > 0 && (
+                  <>
+                    <p className="mt-2 text-text-secondary">{t('playlistsTab.importSkipped', { count: imported.skipped.length })}</p>
+                    <ul className="mt-1 max-h-32 overflow-y-auto list-disc ps-5 text-xs text-text-muted">
+                      {imported.skipped.map((entry, i) => (
+                        <li key={i}>{entry}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </>
+            ) : null}
+          </div>
+          {imported && (
+            <Button variant="ghost" size="sm" onClick={() => selectPlaylist(imported.playlist.id)}>
+              {t('playlistsTab.openImported')}
+            </Button>
+          )}
+          <Button
+            icon
+            variant="ghost"
+            size="sm"
+            aria-label={t('playlistDetail.dismiss')}
+            onClick={() => {
+              setImported(null);
+              setImportError(null);
+            }}
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+          </Button>
+        </div>
+      )}
 
       {playlistsQuery.isLoading || (selectedId && playlistsQuery.isFetching) ? (
         <div className="flex justify-center py-16">
@@ -110,7 +181,7 @@ export const PlaylistsTab: React.FC = () => {
                     {playlist.name}
                   </span>
                   <span className="text-xs text-text-muted truncate">
-                    {t('common.episodeCount', { count: playlist.item_count })}
+                    {playlist.rule ? t('playlistDetail.smartCollection') : t('common.episodeCount', { count: playlist.item_count })}
                     {playlist.description ? ` · ${playlist.description}` : ''}
                   </span>
                 </span>

@@ -667,6 +667,7 @@ fn a_restart_drops_the_minimised_background_and_link_arguments_but_keeps_other_f
         "anix://anime/123",
         "ANILILI://anime/-300000099",
         "--background",
+        "--safe-graphics",
         "--verbose",
     ]
     .iter()

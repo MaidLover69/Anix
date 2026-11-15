@@ -15,10 +15,12 @@ fn main() {
         // After two crashes in a row: the web player, no compositing (see system/safe_mode.rs).
         anix_lib::system::safe_mode::apply(anix_lib::db::app_dir_path().as_deref());
 
-        // Fix white/blank screen on modern Linux distros (Fedora/Ubuntu/Arch) with WebKitGTK 2.42+,
-        // except for the embedded mpv player, which needs WebKit's DMA-BUF renderer to draw the
-        // page over the video.
-        anix_lib::system::hwaccel::apply_dmabuf_workaround(anix_lib::embedded_mpv::wants_embedded_player());
+        // WebKit's DMA-BUF renderer blanks the window with some NVIDIA drivers; everywhere else it
+        // stays on (off, scrolling drops to about 1 frame a second). Embedded mpv always needs it,
+        // and on NVIDIA the user can turn it on for the web player too (Settings › System).
+        let wants_mpv = anix_lib::embedded_mpv::wants_embedded_player();
+        let fast_drawing = anix_lib::system::fast_drawing::decide_at_start(wants_mpv);
+        anix_lib::system::hwaccel::apply_dmabuf_workaround(wants_mpv, fast_drawing);
     }
 
     anix_lib::run();

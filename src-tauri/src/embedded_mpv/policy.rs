@@ -46,6 +46,8 @@ pub const NO_ANSWER_REASON: &str =
 pub fn forced_web(args: &[String], env_engine: Option<&str>) -> Option<String> {
     if args.iter().any(|a| a == "--web-player") {
         Some("Anix was started with --web-player.".to_string())
+    } else if args.iter().any(|a| a == crate::system::fast_drawing::SAFE_ARG) {
+        Some("Anix was started with --safe-graphics.".to_string())
     } else if env_engine.is_some_and(|v| v.trim().eq_ignore_ascii_case("web")) {
         Some("ANIX_PLAYER_ENGINE=web is set.".to_string())
     } else {

@@ -1,23 +1,116 @@
+use crate::collection_file;
 use crate::commands::player::{resolve_player_bin, sanitized_command, single_line, validate_media_url};
 use crate::db;
 use crate::models::{CustomPlaylist, CustomPlaylistItem, ExternalPlaylistItem};
 use crate::state::AppState;
 use std::fs::OpenOptions;
-use std::io::Write;
+use serde::Serialize;
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
+/// `rule` is a smart collection's filter (a URL query string); absent or empty for a normal playlist.
 #[tauri::command]
 pub async fn create_playlist(
     name: String,
     description: Option<String>,
+    rule: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<CustomPlaylist, String> {
-    db::create_custom_playlist(&state.pool, &name, description.as_deref())
+    let rule = collection_file::validate_rule(rule.as_deref())?;
+    db::create_custom_playlist(&state.pool, &name, description.as_deref(), rule.as_deref())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// What `import_playlist` made: the new playlist, how many items it got, and the labels of
+/// the items it skipped (title, or `#<n>`).
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportResult {
+    pub playlist: CustomPlaylist,
+    pub added: usize,
+    pub skipped: Vec<String>,
+}
+
+/// Asks where to save, then writes one playlist as a collection file. `None` when cancelled.
+#[tauri::command]
+pub async fn export_playlist(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    playlist_id: String,
+) -> Result<Option<String>, String> {
+    let playlist = db::list_custom_playlists(&state.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|p| p.id == playlist_id)
+        .ok_or_else(|| "This playlist no longer exists.".to_string())?;
+    let items = db::get_custom_playlist_items(&state.pool, &playlist.id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let json = collection_file::to_json(&playlist, &items);
+
+    let name = collection_file::file_name(&playlist.name);
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title(crate::i18n::text(crate::i18n::current(), "picker_save_collection"))
+            .set_file_name(&name)
+            .add_filter(crate::i18n::text(crate::i18n::current(), "picker_collection_files"), &["json"])
+            .blocking_save_file()
+            .and_then(|p| p.into_path().ok())
+    })
+    .await
+    .map_err(|e| format!("The file picker failed: {}", e))?;
+    let Some(path) = picked else { return Ok(None) };
+
+    write_atomic(&path, json.as_bytes()).map_err(|e| format!("Could not save the collection: {}", e))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+/// Writes next to `path` first, then renames, so a cut-short write never leaves half a file.
+fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(format!(".tmp{}", std::process::id()));
+    let tmp = path.with_file_name(tmp_name);
+    let written = std::fs::write(&tmp, data).and_then(|_| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// Asks for a collection file and adds it as a new playlist. `None` when cancelled.
+#[tauri::command]
+pub async fn import_playlist(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<ImportResult>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title(crate::i18n::text(crate::i18n::current(), "picker_open_collection"))
+            .add_filter(crate::i18n::text(crate::i18n::current(), "picker_collection_files"), &["json"])
+            .blocking_pick_file()
+            .and_then(|p| p.into_path().ok())
+    })
+    .await
+    .map_err(|e| format!("The file picker failed: {}", e))?;
+    let Some(path) = picked else { return Ok(None) };
+
+    // One byte over the limit is enough for `parse` to refuse the file without reading all of it.
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .and_then(|f| f.take(collection_file::MAX_FILE_BYTES as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("Could not read the collection file: {}", e))?;
+    let parsed = collection_file::parse(&bytes).map_err(|e| e.to_string())?;
+    let (playlist, added) = db::import_custom_playlist(&state.pool, &parsed)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(ImportResult { playlist, added, skipped: parsed.skipped }))
 }
 
 #[tauri::command]

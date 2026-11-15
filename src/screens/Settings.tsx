@@ -777,7 +777,12 @@ export const Settings: React.FC = () => {
             )}
           </Row>
           <AppearanceExtras settings={settings} onChange={(key, value) => updateSetting(key, value)} />
-          <HomeRowOrder value={settings.home_row_order} onChange={(order) => updateSetting('home_row_order', order)} />
+          <HomeRowOrder
+            value={settings.home_row_order}
+            hidden={settings.home_rows_hidden}
+            onChange={(order) => updateSetting('home_row_order', order)}
+            onHiddenChange={(hidden) => updateSetting('home_rows_hidden', hidden)}
+          />
         </Section>
 
         <Section title={t('settingsLayout.playback')} id="playback">

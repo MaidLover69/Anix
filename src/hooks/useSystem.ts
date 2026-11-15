@@ -2,7 +2,17 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { DesktopStatus, HardwareReport, OfflineStatus } from '../types';
+import type { DesktopStatus, FastDrawingStatus, HardwareReport, OfflineStatus } from '../types';
+
+/** Fast drawing on NVIDIA; changes only with a restart, so it is read once. */
+export function useFastDrawingStatus() {
+  return useQuery<FastDrawingStatus>({
+    queryKey: ['fastDrawing'],
+    queryFn: () => invoke<FastDrawingStatus>('fast_drawing_status'),
+    staleTime: Infinity,
+    retry: false,
+  });
+}
 
 const ONLINE: OfflineStatus = { offline: false, saved_at: null, fallback: null };
 

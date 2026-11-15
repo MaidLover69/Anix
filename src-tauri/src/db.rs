@@ -371,6 +371,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     crate::notices::create_tables(&mut tx).await?;
     migrate_watchlist_status(&mut tx).await?;
     migrate_download_languages(&mut tx).await?;
+    migrate_playlist_rule(&mut tx).await?;
 
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_history_updated ON watch_history(updated_at DESC)")
         .execute(&mut *tx)
@@ -1057,6 +1058,21 @@ async fn migrate_watchlist_status(conn: &mut SqliteConnection) -> Result<(), App
     Ok(())
 }
 
+/// 1.4.1: smart collections keep their filter in `custom_playlists.rule` (NULL for a normal playlist).
+async fn migrate_playlist_rule(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let has_rule = sqlx::query("PRAGMA table_info(custom_playlists)")
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .any(|r| r.get::<String, _>("name") == "rule");
+    if !has_rule {
+        sqlx::query("ALTER TABLE custom_playlists ADD COLUMN rule TEXT")
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Puts the anime on the watchlist with `status`, or changes the status of its row.
 #[allow(clippy::too_many_arguments)]
 pub async fn set_watchlist_status(
@@ -1713,17 +1729,29 @@ fn new_playlist_id() -> std::io::Result<String> {
     Ok(format!("pl-{:x}-{:x}-{}", millis, counter, random))
 }
 
+/// `rule` must already be checked with `collection_file::validate_rule`.
 pub async fn create_custom_playlist(
     pool: &SqlitePool,
     name: &str,
     description: Option<&str>,
+    rule: Option<&str>,
+) -> Result<CustomPlaylist, AppError> {
+    let mut conn = pool.acquire().await?;
+    insert_custom_playlist(&mut *conn, name, description, rule).await
+}
+
+async fn insert_custom_playlist(
+    conn: &mut SqliteConnection,
+    name: &str,
+    description: Option<&str>,
+    rule: Option<&str>,
 ) -> Result<CustomPlaylist, AppError> {
     let now = current_unix_timestamp();
     let id = new_playlist_id().map_err(|e| AppError::Other(e.to_string()))?;
     sqlx::query(
         r#"
-        INSERT INTO custom_playlists (id, name, description, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO custom_playlists (id, name, description, created_at, updated_at, rule)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         "#,
     )
     .bind(&id)
@@ -1731,7 +1759,8 @@ pub async fn create_custom_playlist(
     .bind(description)
     .bind(now)
     .bind(now)
-    .execute(pool)
+    .bind(rule)
+    .execute(&mut *conn)
     .await?;
 
     Ok(CustomPlaylist {
@@ -1742,7 +1771,48 @@ pub async fn create_custom_playlist(
         updated_at: now,
         item_count: 0,
         covers: vec![],
+        rule: rule.map(|s| s.to_string()),
     })
+}
+
+/// Makes a new playlist from an imported collection file: never merges into an existing one,
+/// so a taken name gets " (2)", " (3)"… The playlist and its items go in one transaction.
+/// Returns the playlist (with its item count) and the number of items added.
+pub async fn import_custom_playlist(
+    pool: &SqlitePool,
+    parsed: &crate::collection_file::ParsedCollection,
+) -> Result<(CustomPlaylist, usize), AppError> {
+    let mut tx = pool.begin().await?;
+    let existing: Vec<String> = sqlx::query_scalar("SELECT name FROM custom_playlists")
+        .fetch_all(&mut *tx)
+        .await?;
+    let name = crate::collection_file::unique_name(&parsed.name, &existing);
+    let mut playlist =
+        insert_custom_playlist(&mut *tx, &name, parsed.description.as_deref(), parsed.rule.as_deref()).await?;
+    let now = current_unix_timestamp();
+    for (index, item) in parsed.items.iter().enumerate() {
+        let id = format!("{}-{}", playlist.id, index);
+        sqlx::query(
+            r#"
+            INSERT INTO custom_playlist_items
+            (id, playlist_id, anilist_id, mal_id, episode_num, episode_title, series_title, series_cover, category, sort_order, added_at)
+            VALUES (?1, ?2, ?3, NULL, ?4, NULL, ?5, NULL, ?6, ?7, ?8)
+            "#,
+        )
+        .bind(&id)
+        .bind(&playlist.id)
+        .bind(item.anilist_id)
+        .bind(item.episode)
+        .bind(&item.title)
+        .bind(&item.category)
+        .bind(index as i64)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    playlist.item_count = parsed.items.len() as i64;
+    Ok((playlist, parsed.items.len()))
 }
 
 pub async fn list_custom_playlists(
@@ -1751,7 +1821,7 @@ pub async fn list_custom_playlists(
     let rows = sqlx::query(
         r#"
         SELECT 
-            p.id, p.name, p.description, p.created_at, p.updated_at,
+            p.id, p.name, p.description, p.created_at, p.updated_at, p.rule,
             COUNT(i.id) as item_count,
             GROUP_CONCAT(DISTINCT i.series_cover) as covers_str
         FROM custom_playlists p
@@ -1784,6 +1854,10 @@ pub async fn list_custom_playlists(
             updated_at: r.get("updated_at"),
             item_count: r.get("item_count"),
             covers,
+            // A rule restored from a crafted backup is dropped rather than handed to the page.
+            rule: crate::collection_file::validate_rule(r.get::<Option<String>, _>("rule").as_deref())
+                .ok()
+                .flatten(),
         });
     }
 

@@ -3,6 +3,7 @@ pub mod backup;
 pub mod cache;
 pub mod catalogue;
 pub mod clients;
+pub mod collection_file;
 pub mod commands;
 pub mod db;
 pub mod diagnostics;
@@ -251,6 +252,8 @@ pub fn run() {
             // Backup & restore
             commands::export_backup,
             commands::import_backup,
+            commands::export_playlist,
+            commands::import_playlist,
             commands::fetch_anilist_stats,
             // Downloads
             commands::create_download,
@@ -324,6 +327,9 @@ pub fn run() {
             embedded_mpv::embedded_mpv,
             embedded_mpv::embedded_mpv_status,
             embedded_mpv::embedded_mpv_answer,
+            system::fast_drawing::fast_drawing_status,
+            system::fast_drawing::fast_drawing_set,
+            system::fast_drawing::fast_drawing_answer,
             embedded_mpv::embedded_mpv_engine_changed,
             embedded_mpv::embedded_mpv_restart,
             embedded_mpv::embedded_mpv_take_route,

@@ -7,7 +7,7 @@ Needs an X server on $DISPLAY with a window manager, xdotool, and a D-Bus sessio
 Without --webdriver: start, real clicks and keys, stay alive 30 s, quit on SIGTERM, leave nothing behind.
 With --webdriver (only where WebKitWebDriver comes from the same WebKit build the AppImage bundles,
 i.e. Ubuntu 22.04): also link the clip as a local episode, play it 30 s through the stream proxy, and
-check a real click and the fullscreen key while it plays.
+check a real click and the fullscreen key while it plays, and record how smoothly Home scrolls.
 Fails on an exit, a stopped web process (the app logs "web process stopped"), or leftover processes.
 Writes <out-dir>/result.json and screenshots; exit code 1 on any failure."""
 import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request
@@ -139,6 +139,21 @@ class Driver:
 
 
 SEEK = "const s=document.querySelector('[role=slider][aria-label=Seek]'); const t=s&&s.getAttribute('aria-valuenow'); return t==null?null:Number(t)"
+# Scrolls Home's scrolling element for 4 s and reports frame rate and slow frames. 1.4.0 drew about
+# 1 frame a second here with WebKit's DMA-BUF renderer turned off. Recorded only: CI draws in software.
+SCROLL = """const done = arguments[arguments.length - 1];
+const el = document.querySelector('main') || document.scrollingElement;
+const max = el.scrollHeight - el.clientHeight;
+const times = []; let last = performance.now(); const t0 = last; let dir = 1;
+function step(now) {
+  times.push(now - last); last = now;
+  const y = el.scrollTop + dir * 18; if (y >= max) dir = -1; if (y <= 0) dir = 1; el.scrollTop = y;
+  if (now - t0 < 4000) return requestAnimationFrame(step);
+  times.shift(); const s = [...times].sort((a, b) => a - b);
+  done({fps: +(1000 * times.length / (now - t0)).toFixed(1), p95_ms: +s[Math.floor(s.length * 0.95)].toFixed(1),
+        over_100ms: times.filter(t => t > 100).length, scroll_height: max});
+}
+requestAnimationFrame(step);"""
 DIALOGS = "const b=[...document.querySelectorAll('[role=dialog] button')].find(x=>/^\\s*(Keep|Skip|Save|Continue|Done)\\b/.test(x.textContent)); if(b){b.click(); return true} return false"
 
 # The runtime part of the file: a static one needs no libfuse2 on the host.
@@ -155,6 +170,10 @@ try:
             time.sleep(1.5)
             if not driver.run(DIALOGS):
                 break
+        time.sleep(8)  # Home's rows load
+        res["scroll_home"] = step("scroll Home", lambda: driver.call(
+            "POST", f"/session/{driver.sid}/execute/async", {"script": SCROLL, "args": []}, timeout=30))
+        print("scroll on Home:", res["scroll_home"], flush=True)
     else:
         app = subprocess.Popen([APPIMAGE], env=ENV, stdout=open(os.path.join(OUT, "app-stdout.log"), "w"), stderr=subprocess.STDOUT)
     win = window()

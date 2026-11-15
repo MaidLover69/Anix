@@ -100,7 +100,7 @@ fn system_language_follows_gettext_order() {
 
 /// Keys for the play-failure headline, the failed-download notice, the file pickers and the
 /// fatal database dialog.
-const SHOWN_BY_COMMANDS: [&str; 21] = [
+const SHOWN_BY_COMMANDS: [&str; 24] = [
     "play_verify",
     "play_removed",
     "play_unreadable_host",
@@ -122,6 +122,9 @@ const SHOWN_BY_COMMANDS: [&str; 21] = [
     "picker_backup_files",
     "picker_save_report",
     "picker_text_files",
+    "picker_save_collection",
+    "picker_open_collection",
+    "picker_collection_files",
 ];
 
 #[test]

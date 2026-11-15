@@ -8,10 +8,12 @@ import { t, tn } from '../../i18n';
 interface CreatePlaylistModalProps {
   onClose: () => void;
   onCreated: (playlist: CustomPlaylist) => void;
+  /** Set to save a smart collection: the Discover filters it fills itself from. */
+  rule?: string;
 }
 
 /** Mount it to open it; unmounting clears the form. */
-export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClose, onCreated }) => {
+export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClose, onCreated, rule }) => {
   const formId = useId();
   const createPlaylist = useCreatePlaylist();
   const [name, setName] = useState('');
@@ -36,6 +38,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
       const playlist = await createPlaylist.mutateAsync({
         name: trimmedName,
         description: description.trim() || undefined,
+        rule,
       });
       onCreated(playlist);
     } catch (err) {
@@ -49,7 +52,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
     <Modal
       isOpen
       onClose={handleClose}
-      title={t('createPlaylistModal.title')}
+      title={rule ? t('createPlaylistModal.smartTitle') : t('createPlaylistModal.title')}
       size="md"
       footer={
         <>
@@ -57,12 +60,13 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({ onClos
             {t('common.cancel')}
           </Button>
           <Button type="submit" form={formId} variant="primary" disabled={!trimmedName || pending}>
-            {pending ? t('createPlaylistModal.creating') : t('createPlaylistModal.create')}
+            {pending ? t('createPlaylistModal.creating') : rule ? t('createPlaylistModal.smartCreate') : t('createPlaylistModal.create')}
           </Button>
         </>
       }
     >
       <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {rule && <p className="text-[13px] text-text-secondary">{t('createPlaylistModal.smartHint')}</p>}
         <div>
           <label htmlFor={`${formId}-name`} className={LABEL_CLASS}>
             {t('createPlaylistModal.name')}

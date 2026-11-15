@@ -9,6 +9,9 @@ pub struct CustomPlaylist {
     pub updated_at: i64,
     pub item_count: i64,
     pub covers: Vec<String>,
+    /// A smart collection's filter as a URL query string; `None` for a normal playlist.
+    #[serde(default)]
+    pub rule: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,7 +18,7 @@ Streaming sources are not built in. They come from **extensions**: JavaScript fi
 from extension repositories (see [Extensions](#extensions)). The extensions live in a separate
 repository (`../plugins`, which has its own `AGENTS.md`).
 
-- Version 1.4.0, identifier `io.anix.app`, licence MIT.
+- Version 1.4.1, identifier `io.anix.app`, licence MIT.
 - Public site: https://anix-linux.vercel.app (download page, extension list, `version.json` for update checks).
 - The app was first called **Anilili**. Old names still work and must keep working: `ANILILI_*`
   env vars, the `$anilili` plugin global, `anilili://` links, and old data folders (migrated by
@@ -71,7 +71,7 @@ React/TS UI (src/)  ──invoke()──▶  Tauri 2 commands (src-tauri/src/com
 | `src-tauri/tests/` | Integration tests, `*_support/` helpers, `fixtures/` |
 | `src-tauri/examples/plugin_run.rs` | CLI to run one extension in the real runtime |
 | `src-tauri/resources/` | Anime4K shaders, hardware-decoding self-test clip |
-| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in), `history-test.mjs` (when a visit counts as watch history; which episodes a bulk download queues), `routes-test.mjs` (accepted anime ids, deep links and episode numbers; anime-page scores; the Meme mode level of older settings and the High line catalogue) and `memes-unpack-test.mjs`, all run by `i18n:test`; `memes-unpack.mjs` (meme pack, run by `dev`/`build`) |
+| `scripts/` | `build-appimage.sh`, `build-libmpv-lgpl.sh`, `i18n-check.mjs`, `i18n-test.mjs`, `player-test.mjs` (embedded mpv stand-in), `history-test.mjs` (when a visit counts as watch history; which episodes a bulk download queues), `routes-test.mjs` (accepted anime ids, deep links and episode numbers; anime-page scores; the Meme mode level of older settings and the High line catalogue), `home-test.mjs` (Home rows and smart-collection rules) and `memes-unpack-test.mjs`, all run by `i18n:test`; `memes-unpack.mjs` (meme pack, run by `dev`/`build`) |
 | `THIRD-PARTY-NOTICES.md` | Bundled components and licences |
 | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Contributor docs and forms. Keep them in step with the rules here |
 | `docs/` | Gitignored and out of date (describes an older stack). Do not trust or copy it. |

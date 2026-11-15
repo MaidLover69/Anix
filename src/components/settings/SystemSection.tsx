@@ -11,6 +11,7 @@ import { useSaveSettings, useSettings } from '../../hooks/useSettings';
 import {
   DESKTOP_STATUS_KEY,
   useDesktopStatus,
+  useFastDrawingStatus,
   useHardwareReport,
   useOpenLogFolder,
   useSaveDiagnosticsReport,
@@ -19,7 +20,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { HardwareReport, RollbackInfo } from '../../types';
 import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { selfTestSummary } from './PlayerEngineSettings';
-import { t } from '../../i18n';
+import { t, type TKey } from '../../i18n';
 import { Meme, MemeImage } from '../meme/Meme';
 
 const VENDOR_LABELS: Record<string, string> = { intel: 'Intel', amd: 'AMD', nvidia: 'NVIDIA' };
@@ -184,6 +185,41 @@ const GoBackRow: React.FC = () => {
   );
 };
 
+const FAST_DRAWING_REASONS: Record<string, TKey> = {
+  not_confirmed: 'fastDrawing.reasonNotConfirmed',
+  declined: 'fastDrawing.reasonDeclined',
+  safe_graphics: 'fastDrawing.reasonSafe',
+};
+
+/**
+ * NVIDIA only: draw pages through WebKit's DMA-BUF renderer with the web player too. Changing it
+ * restarts Anix, which then asks whether the window looks right.
+ */
+const FastDrawingRow: React.FC = () => {
+  const status = useFastDrawingStatus().data;
+  const engine = useEmbeddedMpvStatus().data?.running_engine;
+  const showToast = useUIStore((s) => s.showToast);
+  const [busy, setBusy] = useState(false);
+  if (!status?.nvidia) return null;
+  const reason = !status.on && status.reason ? FAST_DRAWING_REASONS[status.reason] : undefined;
+  const hint = [t(engine === 'mpv' ? 'fastDrawing.hintMpv' : 'fastDrawing.hint'), reason && t(reason)].filter(Boolean).join(' ');
+  const change = (on: boolean) => {
+    setBusy(true);
+    // Anix restarts when this succeeds.
+    invoke('fast_drawing_set', { on }).catch((err) => {
+      setBusy(false);
+      showToast({ type: 'error', title: t('fastDrawing.changeFailed'), message: errorMessage(err) });
+    });
+  };
+  return (
+    <Row label={t('fastDrawing.label')} hint={hint} keywords={t('fastDrawing.keywords')}>
+      {({ labelId, hintId }) => (
+        <Switch aria-labelledby={labelId} aria-describedby={hintId} checked={status.on} disabled={busy} onChange={change} />
+      )}
+    </Row>
+  );
+};
+
 export const SystemSection: React.FC = () => {
   const queryClient = useQueryClient();
   const showToast = useUIStore((s) => s.showToast);
@@ -241,6 +277,7 @@ export const SystemSection: React.FC = () => {
           />
         )}
       </Row>
+      <FastDrawingRow />
       <Row
         label={t('systemSection.hardwareDecoding')}
         hint={t('systemSection.hardwareDecodingHint')}

@@ -31,7 +31,8 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
   episodes,
 }) => {
   const playlistsQuery = usePlaylists();
-  const playlists = playlistsQuery.data ?? [];
+  // A smart collection fills itself from its filters, so episodes cannot be added to one.
+  const playlists = (playlistsQuery.data ?? []).filter((playlist) => !playlist.rule);
   const createPlaylist = useCreatePlaylist();
   const addItems = useAddMultipleToPlaylist();
   const showToast = useUIStore((state) => state.showToast);

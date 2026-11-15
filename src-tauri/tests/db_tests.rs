@@ -749,7 +749,7 @@ async fn playlists_created_in_the_same_instant_get_different_ids() {
 
     let mut ids = std::collections::HashSet::new();
     for i in 0..200 {
-        let playlist = db::create_custom_playlist(&pool, &format!("List {}", i), None)
+        let playlist = db::create_custom_playlist(&pool, &format!("List {}", i), None, None)
             .await
             .expect("creating playlists back to back must not collide");
         assert!(playlist.id.starts_with("pl-"));
@@ -761,7 +761,7 @@ async fn playlists_created_in_the_same_instant_get_different_ids() {
 #[tokio::test]
 async fn adding_many_playlist_items_is_all_or_nothing() {
     let pool = memory_db().await;
-    let playlist = db::create_custom_playlist(&pool, "Queue", Some("to watch")).await.unwrap();
+    let playlist = db::create_custom_playlist(&pool, "Queue", Some("to watch"), None).await.unwrap();
 
     let good: Vec<CustomPlaylistItem> = (1..=5)
         .map(|n| playlist_item(&format!("item-{}", n), &playlist.id, n as f64))
@@ -1038,6 +1038,65 @@ async fn watchlist_rows_from_1_2_0_become_plan_to_watch() {
     // Running the migration again changes nothing.
     let pool = db::init_db_at(&path).await.expect("reopen");
     assert_eq!(db::get_watchlist(&pool).await.unwrap().len(), 2);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn playlists_from_1_4_0_get_an_empty_rule_and_keep_their_items() {
+    let tmp = TempDir::new("playlist-rule");
+    let path = tmp.db_path();
+    let old = raw_pool(&path).await;
+    sqlx::query(
+        r#"
+        CREATE TABLE custom_playlists (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            description TEXT,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
+        );
+        CREATE TABLE custom_playlist_items (
+            id            TEXT PRIMARY KEY,
+            playlist_id   TEXT NOT NULL,
+            anilist_id    INTEGER NOT NULL,
+            mal_id        INTEGER,
+            episode_num   REAL NOT NULL,
+            episode_title TEXT,
+            series_title  TEXT NOT NULL,
+            series_cover  TEXT,
+            category      TEXT NOT NULL DEFAULT 'sub',
+            sort_order    INTEGER NOT NULL DEFAULT 0,
+            added_at      INTEGER NOT NULL,
+            FOREIGN KEY(playlist_id) REFERENCES custom_playlists(id) ON DELETE CASCADE
+        );
+        INSERT INTO custom_playlists VALUES ('pl-a', 'Weekend', 'two shows', 1, 2), ('pl-b', 'Empty', NULL, 3, 4);
+        INSERT INTO custom_playlist_items VALUES
+            ('i1', 'pl-a', 1, 2, 1.0, NULL, 'One', 'c.jpg', 'sub', 0, 10),
+            ('i2', 'pl-a', -100000021, NULL, 2.5, 'Two', 'Stand-in', NULL, 'dub', 1, 11);
+        "#,
+    )
+    .execute(&old)
+    .await
+    .unwrap();
+    old.close().await;
+
+    let pool = db::init_db_at(&path).await.expect("migrate");
+    let playlists = db::list_custom_playlists(&pool).await.unwrap();
+    assert_eq!(playlists.len(), 2);
+    for playlist in &playlists {
+        assert_eq!(playlist.rule, None, "{}", playlist.name);
+    }
+    let weekend = playlists.iter().find(|p| p.id == "pl-a").unwrap();
+    assert_eq!((weekend.name.as_str(), weekend.description.as_deref(), weekend.item_count), ("Weekend", Some("two shows"), 2));
+    let items = db::get_custom_playlist_items(&pool, "pl-a").await.unwrap();
+    assert_eq!(items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), vec!["i1", "i2"]);
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM custom_playlists WHERE rule IS NULL").await, 2);
+    pool.close().await;
+
+    // Running the migration again changes nothing.
+    let pool = db::init_db_at(&path).await.expect("reopen");
+    assert_eq!(db::list_custom_playlists(&pool).await.unwrap().len(), 2);
+    assert_eq!(count(&pool, "SELECT COUNT(*) FROM custom_playlist_items").await, 2);
     pool.close().await;
 }
 

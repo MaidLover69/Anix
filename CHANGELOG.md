@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.1
+
+A small update for stability, speed and interface fixes.
+
+### Performance
+- Smooth scrolling again: on most systems the app scrolled at about 1–2 frames per second with the web player (always the case for the RPM and DEB). The cause was a WebKitGTK setting meant only for NVIDIA's proprietary driver, which Anix had switched on for everyone. It now applies only when that driver is loaded, and scrolling on Home and Discover runs at about 56–59 frames per second in our tests. A value you set yourself in `WEBKIT_DISABLE_DMABUF_RENDERER` is still respected.
+- Home rows you add load only when they scroll near the screen, so any number of rows keeps Home fast.
+
+### NVIDIA's proprietary driver
+- **Fast drawing** (Settings › System, shown only with NVIDIA's own driver): an opt-in switch for smooth scrolling with the web player. Anix restarts, then asks whether everything looks right; without an answer within 15 seconds it switches back and restarts again. If the window is blank and you cannot answer, start Anix with `--safe-graphics` to turn it off.
+- The embedded mpv player in the AppImage now gets the fast drawing path on NVIDIA too (the bundled WebKitGTK used to turn it off for that driver). The first start afterwards asks again whether the video shows correctly, with the same 15-second fallback to the web player.
+- The diagnostics report lists `WEBKIT_FORCE_DMABUF_RENDERER`.
+
+### Interface fixes
+- Italic text uses the real italic font instead of a slanted copy, so Meme mode captions are no longer smeared.
+- The player's speed menu lines up its captioned and plain options, and wraps instead of overflowing when the labels are long.
+
+### Home rows (Settings › Appearance)
+- Hide or show any row on Home.
+- Add rows: anime airing this week, one of your list statuses (Watching, Plan to watch, On hold), or any playlist or collection. Added rows can be moved and removed like the others.
+
+### Playlists and collections (Library › Playlists)
+- Export a playlist or collection to a file, and import one back. An import always creates a new playlist (a name already in use gets a number), and entries the file cannot describe are listed and left out instead of failing the whole file. The file holds titles, episode numbers and sub/dub only: no covers, links or personal data.
+- Smart collections: in Discover, **Save as collection** keeps the current filters (genres, left-out genres, format, status, season, year, minimum score, sort and search text). The collection shows whatever those filters find, so it stays up to date by itself, and can be added to Home as a row.
+
 ## 1.4.0
 
 ### Local Watch Together (Beta)

@@ -848,7 +848,12 @@ fn start(app: &AppHandle) -> Result<(), String> {
     }
     let mpv_version = player.get("mpv-version").unwrap_or_default();
     let webkit = crate::system::hwaccel::webkitgtk_version().unwrap_or_default();
-    let _ = FINGERPRINT.set(policy::fingerprint(&mpv_version, &webkit));
+    let mut fingerprint = policy::fingerprint(&mpv_version, &webkit);
+    // Forced on NVIDIA, the window may draw differently than when the pair was confirmed: ask again.
+    if crate::system::hwaccel::dmabuf_forced_by_app() {
+        fingerprint.push_str(" / DMA-BUF forced");
+    }
+    let _ = FINGERPRINT.set(fingerprint);
     let _ = MPV_VERSION.set(mpv_version);
     SELFTEST_DUE.store(mode == HwdecMode::Auto, Ordering::SeqCst);
 

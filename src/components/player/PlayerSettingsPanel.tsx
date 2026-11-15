@@ -111,6 +111,7 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
           </p>
           <SegmentedControl
             size="sm"
+            className="max-w-full flex-wrap"
             aria-label={t('playerSettingsPanel.playbackSpeed')}
             value={speed}
             onChange={(value) => onRateChange(Number(value))}

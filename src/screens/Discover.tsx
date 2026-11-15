@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Search, ChevronLeft, ChevronRight, ChevronDown, X, SearchX, Dices, History, Check, EyeOff, Info, SlidersHorizontal } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, ChevronDown, X, SearchX, Dices, History, Check, EyeOff, Info, SlidersHorizontal, BookmarkPlus } from 'lucide-react';
 import clsx from 'clsx';
 import { AnimeCard } from '../components/AnimeCard';
 import { SkeletonCard } from '../components/SkeletonCard';
@@ -12,6 +12,8 @@ import { Switch } from '../components/ui/Switch';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { SurpriseCard } from '../components/SurpriseCard';
+import { CreatePlaylistModal } from '../components/library/CreatePlaylistModal';
+import { ruleFromSearch } from '../lib/smartRule';
 import { useSearchAnime } from '../hooks/useAniList';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSearchHistory } from '../hooks/useSearchHistory';
@@ -128,6 +130,9 @@ function oneOf(value: string | null, options: { value: string }[], fallback: str
 export const Discover: React.FC = () => {
   // The URL is the single source of truth for filters and page, so Back restores them.
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // The rule being saved as a smart collection (the name dialog is open while set).
+  const [saveRule, setSaveRule] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { data: settings } = useSettings();
   const playful = usePlayful();
@@ -325,6 +330,9 @@ export const Discover: React.FC = () => {
     hideWatched ||
     sort !== DEFAULT_SORT;
 
+  // The filters in the URL as a smart-collection rule; null when only a sort order is set.
+  const smartRule = ruleFromSearch(searchParams);
+
   const isTyping = input.trim() !== urlQuery;
   // A fallback catalogue's pages can be short (smaller pages, results filtered afterwards), so
   // while one serves, any non-empty page may have a next one.
@@ -400,6 +408,12 @@ export const Discover: React.FC = () => {
             {t('discover.hideWatched')}
           </label>
 
+          {smartRule && !isTyping && (
+            <Button variant="ghost" onClick={() => setSaveRule(smartRule)} title={t('discover.saveCollectionHint')}>
+              <BookmarkPlus aria-hidden="true" className="h-4 w-4" />
+              {t('discover.saveCollection')}
+            </Button>
+          )}
           {hasActiveFilters && (
             <Button variant="ghost" onClick={clearFilters}>
               <X aria-hidden="true" className="h-4 w-4" />
@@ -612,6 +626,16 @@ export const Discover: React.FC = () => {
       )}
 
       <SurpriseCard isOpen={surpriseOpen} onClose={() => setSurpriseOpen(false)} draw={drawSurprise} />
+      {saveRule && (
+        <CreatePlaylistModal
+          rule={saveRule}
+          onClose={() => setSaveRule(null)}
+          onCreated={(collection) => {
+            setSaveRule(null);
+            navigate(`/library?tab=playlists&playlist=${encodeURIComponent(collection.id)}`);
+          }}
+        />
+      )}
     </div>
   );
 };

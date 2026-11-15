@@ -113,6 +113,7 @@ fn engine_decision_follows_setting_flags_and_unanswered_trials() {
     assert_eq!(decide("mpv", None, &fresh), Start::Mpv);
     let forced = forced_web(&["anix".into(), "--web-player".into()], None);
     assert!(matches!(decide("mpv", forced, &fresh), Start::Web { reason: Some(_) }));
+    assert!(forced_web(&["anix".into(), "--safe-graphics".into()], None).is_some());
     assert!(forced_web(&[], Some(" WEB ")).is_some());
     assert!(forced_web(&[], Some("mpv")).is_none());
     // Killed during the question: the next start is on the web engine, with the reason.
@@ -245,13 +246,16 @@ fn second_subtitle_track_and_position() {
 #[test]
 fn a_restart_drops_the_dmabuf_switch_anix_set_itself() {
     use anix_lib::system::hwaccel::{dmabuf_env, DmabufEnv};
-    // Fresh start, web player: Anix turns the renderer off and marks the value as its own.
+    // The last argument says whether the renderer stays on: true with mpv, and with the web player
+    // unless NVIDIA's driver is loaded.
+    // Fresh start, web player on NVIDIA: Anix turns the renderer off and marks the value as its own.
     assert_eq!(dmabuf_env(None, None, false), DmabufEnv::Disable);
-    // Fresh start, mpv: the renderer stays on.
+    // Fresh start, mpv or any other GPU: the renderer stays on.
     assert_eq!(dmabuf_env(None, None, true), DmabufEnv::Untouched);
-    // "Restart now" (web → mpv) inherits Anix's own value: it is removed again.
+    // "Restart now" (web → mpv), or the first start of 1.4.1 after 1.4.0 turned it off on a
+    // non-NVIDIA GPU, inherits Anix's own value: it is removed again.
     assert_eq!(dmabuf_env(Some("1"), Some("1"), true), DmabufEnv::Clear);
-    // A restart that stays on the web player keeps it off, still as Anix's own.
+    // A restart that still needs it off keeps it off, still as Anix's own.
     assert_eq!(dmabuf_env(Some("1"), Some("1"), false), DmabufEnv::Disable);
     // A value the user set is never touched, with or without a stray mark.
     assert_eq!(dmabuf_env(Some("1"), None, true), DmabufEnv::User);

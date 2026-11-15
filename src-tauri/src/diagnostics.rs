@@ -105,6 +105,7 @@ pub async fn build_report(pool: &SqlitePool) -> String {
     ));
     line(format!("{}: {}", crate::system::gnutls::PRIORITY_VAR, env(crate::system::gnutls::PRIORITY_VAR)));
     line(format!("WEBKIT_DISABLE_DMABUF_RENDERER: {}", env("WEBKIT_DISABLE_DMABUF_RENDERER")));
+    line(format!("WEBKIT_FORCE_DMABUF_RENDERER: {}", env("WEBKIT_FORCE_DMABUF_RENDERER")));
 
     let hardware = crate::system::hwaccel::report().await;
     line(String::new());

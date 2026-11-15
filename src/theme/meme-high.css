@@ -36,6 +36,12 @@
   text-align: start;
 }
 
+/* A segment row mixes captioned and plain options: centre each so the numbers line up. */
+.ui-seg button .mm-k {
+  align-items: center;
+  text-align: center;
+}
+
 :is(.ui-btn, .ui-chip, .ui-tab, .ui-seg button) .mm-d {
   font-size: 0.68em;
   letter-spacing: 0.02em;

@@ -71,7 +71,7 @@ async fn filled() -> Profile {
         .await
         .unwrap();
     }
-    let playlist = db::create_custom_playlist(pool, "Weekend", Some("Two episodes")).await.unwrap();
+    let playlist = db::create_custom_playlist(pool, "Weekend", Some("Two episodes"), Some("genre=Drama&sort=score")).await.unwrap();
     let item = |n: f64| CustomPlaylistItem {
         id: format!("item-{}", n),
         playlist_id: playlist.id.clone(),
@@ -129,6 +129,7 @@ async fn backup_round_trip_restores_the_same_counts_without_logins() {
     assert_eq!(db::get_episode_progress(&target.pool, 1, 12.5).await.unwrap(), Some((10, 1_440_000)));
     let playlists = db::list_custom_playlists(&target.pool).await.unwrap();
     assert_eq!((playlists[0].name.as_str(), playlists[0].description.as_deref()), ("Weekend", Some("Two episodes")));
+    assert_eq!(playlists[0].rule.as_deref(), Some("genre=Drama&sort=score"), "the smart-collection rule comes back");
     assert_eq!(db::get_custom_playlist_items(&target.pool, &playlists[0].id).await.unwrap().len(), 2);
     assert_eq!(summary.search_history, json!(["frieren", "one piece"]));
     assert!(!summary.has_logins && !summary.logins_restored);
@@ -143,6 +144,38 @@ async fn backup_round_trip_restores_the_same_counts_without_logins() {
     backup::restore(&target.pool, &target.settings_path(), &parsed, None).await.unwrap();
     assert_eq!(count(&target.pool, "watch_history").await, 3);
     assert_eq!(count(&target.pool, "custom_playlist_items").await, 2);
+}
+
+#[tokio::test]
+async fn backup_from_before_smart_collections_restores_playlists_without_a_rule() {
+    let source = filled().await;
+    let mut made = backup::create(&source.pool, &source.settings_path(), json!([]), None).await.unwrap();
+    // A 1.4.0 backup: playlist rows have no `rule` key at all.
+    for row in made.tables["custom_playlists"].as_array_mut().unwrap() {
+        assert!(row.as_object_mut().unwrap().remove("rule").is_some(), "1.4.1 backups carry the rule");
+    }
+    let old = String::from_utf8(backup::to_bytes(&made, false).unwrap()).unwrap();
+    assert!(!old.contains("\"rule\""));
+
+    let target = Profile::new().await;
+    let parsed = backup::from_bytes(old.as_bytes()).unwrap();
+    backup::restore(&target.pool, &target.settings_path(), &parsed, None).await.unwrap();
+    let playlists = db::list_custom_playlists(&target.pool).await.unwrap();
+    assert_eq!(playlists.len(), 1);
+    assert_eq!((playlists[0].name.as_str(), playlists[0].rule.as_deref()), ("Weekend", None));
+    assert_eq!(count(&target.pool, "custom_playlist_items").await, 2);
+}
+
+#[tokio::test]
+async fn restored_playlist_rule_that_is_not_valid_is_not_handed_to_the_page() {
+    let source = filled().await;
+    let mut made = backup::create(&source.pool, &source.settings_path(), json!([]), None).await.unwrap();
+    made.tables["custom_playlists"][0]["rule"] = json!("<img src=x>");
+
+    let target = Profile::new().await;
+    backup::restore(&target.pool, &target.settings_path(), &made, None).await.unwrap();
+    let playlists = db::list_custom_playlists(&target.pool).await.unwrap();
+    assert_eq!((playlists[0].name.as_str(), playlists[0].rule.as_deref()), ("Weekend", None));
 }
 
 #[tokio::test]

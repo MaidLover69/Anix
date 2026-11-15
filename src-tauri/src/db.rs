@@ -1737,7 +1737,7 @@ pub async fn create_custom_playlist(
     rule: Option<&str>,
 ) -> Result<CustomPlaylist, AppError> {
     let mut conn = pool.acquire().await?;
-    insert_custom_playlist(&mut *conn, name, description, rule).await
+    insert_custom_playlist(&mut conn, name, description, rule).await
 }
 
 async fn insert_custom_playlist(
@@ -1788,7 +1788,7 @@ pub async fn import_custom_playlist(
         .await?;
     let name = crate::collection_file::unique_name(&parsed.name, &existing);
     let mut playlist =
-        insert_custom_playlist(&mut *tx, &name, parsed.description.as_deref(), parsed.rule.as_deref()).await?;
+        insert_custom_playlist(&mut tx, &name, parsed.description.as_deref(), parsed.rule.as_deref()).await?;
     let now = current_unix_timestamp();
     for (index, item) in parsed.items.iter().enumerate() {
         let id = format!("{}-{}", playlist.id, index);

@@ -206,12 +206,15 @@ try:
         folder = os.path.join(HOME, "Videos", "Smoke")
         os.makedirs(folder, exist_ok=True)
         shutil.copy(CLIP, os.path.join(folder, "Smoke - 01.mp4"))
-        linked = driver.invoke("link_local_folder", {"anilistId": 154587, "folderPath": folder})
+        linked = step("link the clip folder", lambda: driver.invoke("link_local_folder", {"anilistId": 154587, "folderPath": folder}))
         res["linked"] = "ok" in (linked or {})
-        driver.run("location.hash = '#/watch/154587/1?cat=sub&prov=local'")
+        step("open the player", lambda: driver.run("location.hash = '#/watch/154587/1?cat=sub&prov=local'"))
         t0 = time.time(); first = None
         while time.time() - t0 < 60:
-            v = driver.run(SEEK)
+            try:
+                v = driver.run(SEEK)
+            except Exception:  # WebDriver can refuse a script while the page changes route
+                v = None
             if isinstance(v, (int, float)) and v > 0:
                 first = round(time.time() - t0, 1)
                 break

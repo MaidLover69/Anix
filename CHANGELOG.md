@@ -16,6 +16,7 @@ A small update for stability, speed and interface fixes.
 ### Packages
 - The RPM runs on Fedora 45, which ships only OpenSSL 4: the DEB and RPM now make HTTPS connections with rustls and the system's certificates instead of needing the system's `libssl.so.3`.
 - The AppImage starts on systems without OpenGL ES (`libGLESv2.so.2`), such as minimal Debian installs: there, the web player draws the way 1.4.0 did instead of the web view stopping at start.
+- Updated tokio and rustix past two security advisories (RUSTSEC-2026-0386, RUSTSEC-2026-0486).
 
 ### Interface fixes
 - Italic text uses the real italic font instead of a slanted copy, so Meme mode captions are no longer smeared.

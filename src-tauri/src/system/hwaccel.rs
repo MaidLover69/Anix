@@ -85,22 +85,21 @@ pub struct Gpu {
     pub nvidia: bool,
     /// `libGLESv2.so.2` loads. Without it WebKit's web process stops at start when the renderer is on.
     pub gles: bool,
-    /// A `/dev/dri/renderD*` node exists (none in VMs without 3D and in containers).
-    pub render_node: bool,
 }
 
 impl Gpu {
     pub fn detect() -> Gpu {
-        Gpu { nvidia: nvidia_driver_loaded(), gles: gles_loadable(), render_node: first_render_node().is_some() }
+        Gpu { nvidia: nvidia_driver_loaded(), gles: gles_loadable() }
     }
 }
 
 /// (keep the renderer on, force it on against WebKit's own NVIDIA check), from the machine, whether
 /// this run uses embedded mpv (which needs the renderer) and whether the user turned fast drawing on.
-/// Where the renderer cannot work, the web player draws the slow, safe way, as 1.4.0 did everywhere.
+/// Without OpenGL ES the renderer cannot work, so the web player draws the slow, safe way, as 1.4.0
+/// did everywhere. No GPU render device is fine: Mesa draws in software (turning the renderer off
+/// there made the modern AppImage stop on Ubuntu 24.04 in CI).
 pub fn renderer_plan(gpu: Gpu, wants_mpv: bool, fast_drawing: bool) -> (bool, bool) {
-    let web_player_may = gpu.render_node && (!gpu.nvidia || fast_drawing);
-    let keep_on = gpu.gles && (wants_mpv || web_player_may);
+    let keep_on = gpu.gles && (wants_mpv || !gpu.nvidia || fast_drawing);
     (keep_on, gpu.nvidia && keep_on)
 }
 
@@ -144,7 +143,7 @@ pub fn dmabuf_forced_by_app() -> bool {
 
 /// Called once from `main`, before any thread or the webview starts. Embedded mpv needs the
 /// renderer; the web player turns it off on NVIDIA's driver (unless the user turned fast drawing
-/// on) and wherever the renderer cannot work (see [`renderer_plan`]).
+/// on) and without OpenGL ES (see [`renderer_plan`]).
 pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
     let (keep_on, force) = renderer_plan(Gpu::detect(), wants_mpv, fast_drawing);
     let value = std::env::var(DMABUF_VAR).ok();

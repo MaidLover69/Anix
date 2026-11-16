@@ -3,8 +3,8 @@
 use anix_lib::system::fast_drawing::{answer, at_start, needs_question, FastDrawingState, NOT_CONFIRMED, SAFE_STARTED};
 use anix_lib::system::hwaccel::{force_env, renderer_plan, ForceEnv, Gpu};
 
-const GPU: Gpu = Gpu { nvidia: false, gles: true, render_node: true };
-const NVIDIA: Gpu = Gpu { nvidia: true, gles: true, render_node: true };
+const GPU: Gpu = Gpu { nvidia: false, gles: true };
+const NVIDIA: Gpu = Gpu { nvidia: true, gles: true };
 
 #[test]
 fn only_nvidia_without_mpv_or_opt_in_turns_the_renderer_off() {
@@ -25,15 +25,6 @@ fn without_opengl_es_the_renderer_stays_off_even_for_mpv() {
     assert_eq!(renderer_plan(no_gles, false, false), (false, false));
     assert_eq!(renderer_plan(no_gles, true, true), (false, false));
     assert_eq!(renderer_plan(Gpu { gles: false, ..NVIDIA }, true, true), (false, false));
-}
-
-#[test]
-fn without_a_render_node_only_embedded_mpv_keeps_the_renderer() {
-    // As in 1.4.0: the web player draws the slow, safe way; embedded mpv still needs the renderer.
-    let no_node = Gpu { render_node: false, ..GPU };
-    assert_eq!(renderer_plan(no_node, false, false), (false, false));
-    assert_eq!(renderer_plan(no_node, false, true), (false, false));
-    assert_eq!(renderer_plan(no_node, true, false), (true, false));
 }
 
 #[test]

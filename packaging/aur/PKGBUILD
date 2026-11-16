@@ -19,7 +19,6 @@ depends=(
   'gtk3'
   'libayatana-appindicator'
   'librsvg'
-  'openssl'
   'gst-plugins-base'
   'gst-plugins-good'
   'gst-plugins-bad'

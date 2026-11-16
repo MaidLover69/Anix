@@ -32,7 +32,7 @@ echo "Building the Anix DEB and RPM for $site"
 export RUSTFLAGS="--remap-path-prefix=$HOME=/build ${RUSTFLAGS:-}"
 export CFLAGS="-ffile-prefix-map=$HOME=/build ${CFLAGS:-}"
 export CXXFLAGS="-ffile-prefix-map=$HOME=/build ${CXXFLAGS:-}"
-ANIX_SITE_URL="$site" CARGO_TARGET_DIR="$work/target" npx --no-install tauri build --bundles deb,rpm --features vendored-openssl
+ANIX_SITE_URL="$site" CARGO_TARGET_DIR="$work/target" npx --no-install tauri build --bundles deb,rpm --features rustls -- --no-default-features
 
 bundle="$work/target/release/bundle"
 deb="$(ls -t "$bundle"/deb/*.deb | head -1)"

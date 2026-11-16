@@ -8,12 +8,6 @@ Anix uses open-source components. Components under licences that ask for a notic
 - Licence: Mozilla Public License 2.0 (https://www.mozilla.org/en-US/MPL/2.0/).
 - Used unmodified. Source code: https://crates.io/crates/anitomy-ng (version 1.0.10).
 
-## OpenSSL
-
-- Used for: HTTPS in the DEB and RPM packages, built into the program so they run on systems without OpenSSL 3 (such as Fedora 45). Other builds link OpenSSL dynamically; the AppImage carries the shared library from its build system.
-- Licence: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright The OpenSSL Project Authors.
-- Used unmodified, statically linked. Source code: https://crates.io/crates/openssl-src (version 300.6.1+3.6.3, OpenSSL 3.6.3).
-
 ## libmpv (mpv)
 
 - Used for: the embedded video player (Settings › Playback › Player engine), loaded at run time.

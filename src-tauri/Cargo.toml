@@ -22,7 +22,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.38", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "gzip", "brotli"] }
+# The TLS backend comes from this crate's `native-tls` (default) or `rustls` feature.
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "brotli", "charset", "http2", "system-proxy"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 moka = { version = "0.12", features = ["future"] }
 regex = "1.10"
@@ -68,9 +69,12 @@ rand = "0.8"
 gtk = "0.18"
 
 [features]
-# DEB and RPM (scripts/build-packages.sh): OpenSSL 3 built in, since Fedora 45 ships only OpenSSL 4
-# (no libssl.so.3). Needs perl with IPC::Cmd to build. The AppImage bundles its libraries instead.
-vendored-openssl = ["reqwest/native-tls-vendored"]
+default = ["native-tls"]
+# The system's OpenSSL. The AppImage carries the shared library from its build system.
+native-tls = ["reqwest/default-tls"]
+# DEB and RPM (scripts/build-packages.sh, with --no-default-features): TLS in Rust with the
+# system's certificates, so they run whatever OpenSSL the system has (Fedora 45 has only OpenSSL 4).
+rustls = ["reqwest/rustls-tls-native-roots"]
 
 [dev-dependencies]
 futures-util = "0.3"

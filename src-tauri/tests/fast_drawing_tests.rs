@@ -1,18 +1,39 @@
 //! Fast drawing on NVIDIA (Settings › System) and the renderer variables Anix sets at start.
 
 use anix_lib::system::fast_drawing::{answer, at_start, needs_question, FastDrawingState, NOT_CONFIRMED, SAFE_STARTED};
-use anix_lib::system::hwaccel::{force_env, renderer_plan, ForceEnv};
+use anix_lib::system::hwaccel::{force_env, renderer_plan, ForceEnv, Gpu};
+
+const GPU: Gpu = Gpu { nvidia: false, gles: true, render_node: true };
+const NVIDIA: Gpu = Gpu { nvidia: true, gles: true, render_node: true };
 
 #[test]
 fn only_nvidia_without_mpv_or_opt_in_turns_the_renderer_off() {
     // (keep the renderer on, force it on against WebKit's own NVIDIA check)
-    assert_eq!(renderer_plan(false, false, false), (true, false));
-    assert_eq!(renderer_plan(false, true, true), (true, false));
-    assert_eq!(renderer_plan(true, false, false), (false, false));
+    assert_eq!(renderer_plan(GPU, false, false), (true, false));
+    assert_eq!(renderer_plan(GPU, true, true), (true, false));
+    assert_eq!(renderer_plan(NVIDIA, false, false), (false, false));
     // Embedded mpv needs the renderer, and distro WebKit builds turn it off on NVIDIA unless forced.
-    assert_eq!(renderer_plan(true, true, false), (true, true));
+    assert_eq!(renderer_plan(NVIDIA, true, false), (true, true));
     // The user opted in to fast drawing.
-    assert_eq!(renderer_plan(true, false, true), (true, true));
+    assert_eq!(renderer_plan(NVIDIA, false, true), (true, true));
+}
+
+#[test]
+fn without_opengl_es_the_renderer_stays_off_even_for_mpv() {
+    // WebKit's web process stops at start when libGLESv2.so.2 cannot be loaded (seen on Debian 12 without libgles2).
+    let no_gles = Gpu { gles: false, ..GPU };
+    assert_eq!(renderer_plan(no_gles, false, false), (false, false));
+    assert_eq!(renderer_plan(no_gles, true, true), (false, false));
+    assert_eq!(renderer_plan(Gpu { gles: false, ..NVIDIA }, true, true), (false, false));
+}
+
+#[test]
+fn without_a_render_node_only_embedded_mpv_keeps_the_renderer() {
+    // As in 1.4.0: the web player draws the slow, safe way; embedded mpv still needs the renderer.
+    let no_node = Gpu { render_node: false, ..GPU };
+    assert_eq!(renderer_plan(no_node, false, false), (false, false));
+    assert_eq!(renderer_plan(no_node, false, true), (false, false));
+    assert_eq!(renderer_plan(no_node, true, false), (true, false));
 }
 
 #[test]

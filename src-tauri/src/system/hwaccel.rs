@@ -78,12 +78,42 @@ const FORCE_MARK: &str = "ANIX_DMABUF_FORCED_BY_APP";
 
 static FORCED_BY_APP: AtomicBool = AtomicBool::new(false);
 
-/// (keep the renderer on, force it on against WebKit's own NVIDIA check), from whether NVIDIA's
-/// driver is loaded, this run uses embedded mpv (which needs the renderer) and the user turned
-/// fast drawing on.
-pub fn renderer_plan(nvidia: bool, wants_mpv: bool, fast_drawing: bool) -> (bool, bool) {
-    let keep_on = !nvidia || wants_mpv || fast_drawing;
-    (keep_on, nvidia && keep_on)
+/// What the machine offers WebKit's DMA-BUF renderer, read once at start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Gpu {
+    /// NVIDIA's own driver is loaded.
+    pub nvidia: bool,
+    /// `libGLESv2.so.2` loads. Without it WebKit's web process stops at start when the renderer is on.
+    pub gles: bool,
+    /// A `/dev/dri/renderD*` node exists (none in VMs without 3D and in containers).
+    pub render_node: bool,
+}
+
+impl Gpu {
+    pub fn detect() -> Gpu {
+        Gpu { nvidia: nvidia_driver_loaded(), gles: gles_loadable(), render_node: first_render_node().is_some() }
+    }
+}
+
+/// (keep the renderer on, force it on against WebKit's own NVIDIA check), from the machine, whether
+/// this run uses embedded mpv (which needs the renderer) and whether the user turned fast drawing on.
+/// Where the renderer cannot work, the web player draws the slow, safe way, as 1.4.0 did everywhere.
+pub fn renderer_plan(gpu: Gpu, wants_mpv: bool, fast_drawing: bool) -> (bool, bool) {
+    let web_player_may = gpu.render_node && (!gpu.nvidia || fast_drawing);
+    let keep_on = gpu.gles && (wants_mpv || web_player_may);
+    (keep_on, gpu.nvidia && keep_on)
+}
+
+/// Whether OpenGL ES loads, the way WebKit loads it.
+fn gles_loadable() -> bool {
+    let name = c"libGLESv2.so.2";
+    // SAFETY: a NUL-terminated name; the handle is closed at once and nothing from it is used.
+    let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return false;
+    }
+    unsafe { libc::dlclose(handle) };
+    true
 }
 
 /// What `main` does with `WEBKIT_FORCE_DMABUF_RENDERER`.
@@ -115,11 +145,11 @@ pub fn dmabuf_forced_by_app() -> bool {
     FORCED_BY_APP.load(Ordering::SeqCst)
 }
 
-/// Called once from `main`, before any thread or the webview starts. Embedded mpv always needs
-/// the renderer; the web player turns it off only on NVIDIA's driver unless the user turned
-/// fast drawing on.
+/// Called once from `main`, before any thread or the webview starts. Embedded mpv needs the
+/// renderer; the web player turns it off on NVIDIA's driver (unless the user turned fast drawing
+/// on) and wherever the renderer cannot work (see [`renderer_plan`]).
 pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
-    let (keep_on, force) = renderer_plan(nvidia_driver_loaded(), wants_mpv, fast_drawing);
+    let (keep_on, force) = renderer_plan(Gpu::detect(), wants_mpv, fast_drawing);
     let value = std::env::var(DMABUF_VAR).ok();
     let mark = std::env::var(DMABUF_MARK).ok();
     let dmabuf = dmabuf_env(value.as_deref(), mark.as_deref(), keep_on);

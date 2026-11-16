@@ -24,6 +24,9 @@ fn without_opengl_es_the_renderer_stays_off_even_for_mpv() {
     let no_gles = Gpu { gles: false, ..GPU };
     assert_eq!(renderer_plan(no_gles, false, false), (false, false));
     assert_eq!(renderer_plan(no_gles, true, true), (false, false));
+    assert_eq!(renderer_plan(no_gles, true, false), (false, false));
+    assert_eq!(renderer_plan(no_gles, false, true), (false, false));
+    assert_eq!(renderer_plan(Gpu { gles: false, ..NVIDIA }, false, false), (false, false));
     assert_eq!(renderer_plan(Gpu { gles: false, ..NVIDIA }, true, true), (false, false));
 }
 

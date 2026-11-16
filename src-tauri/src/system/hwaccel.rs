@@ -107,13 +107,10 @@ pub fn renderer_plan(gpu: Gpu, wants_mpv: bool, fast_drawing: bool) -> (bool, bo
 /// Whether OpenGL ES loads, the way WebKit loads it.
 fn gles_loadable() -> bool {
     let name = c"libGLESv2.so.2";
-    // SAFETY: a NUL-terminated name; the handle is closed at once and nothing from it is used.
+    // SAFETY: a NUL-terminated name; nothing from the handle is used. It stays open on purpose:
+    // unloading a GL library (libglvnd) in a running program crashed later GL users on Ubuntu.
     let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        return false;
-    }
-    unsafe { libc::dlclose(handle) };
-    true
+    !handle.is_null()
 }
 
 /// What `main` does with `WEBKIT_FORCE_DMABUF_RENDERER`.

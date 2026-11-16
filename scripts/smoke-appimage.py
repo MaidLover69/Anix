@@ -285,6 +285,14 @@ finally:
     if "web process stopped" in text:
         fail("the log reports a stopped web process")
     res["log_errors"] = [l[:200] for l in text.splitlines() if " ERROR " in l][:10]
+    if res["failures"] and os.environ.get("GITHUB_ACTIONS"):
+        # The last lines the app printed, readable in the annotations without signing in.
+        try:
+            tail = open(os.path.join(OUT, "app-stdout.log"), errors="replace").read().splitlines()[-12:]
+        except OSError:
+            tail = []
+        for line in tail + res["log_errors"][:5]:
+            print("::notice::app: " + line[:300].replace("%", "%25").replace("\r", "%0D"), flush=True)
     json.dump(res, open(os.path.join(OUT, "result.json"), "w"), indent=1)
     print(json.dumps(res, indent=1))
     sys.exit(1 if res["failures"] else 0)

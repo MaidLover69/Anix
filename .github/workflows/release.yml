@@ -368,13 +368,20 @@ jobs:
       - name: Put the DEB next to the manifest
         run: cp dist/*.deb packaging/flatpak/anix.deb
 
+      # flatpak-builder by hand, without --install-deps-from: the image's GNOME 50 SDK is used as shipped.
+      # The action always updates it from Flathub, which failed on some runners ("Invalid cross-device
+      # link", then a segfault: flatpak/flatpak-github-actions#267).
       - name: Build the Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        run: |
+          flatpak-builder --repo=repo --disable-rofiles-fuse --force-clean --default-branch=master --arch=x86_64 \
+            --state-dir .flatpak-builder flatpak_app packaging/flatpak/io.anix.app.yml
+          flatpak build-bundle repo anix.flatpak io.anix.app master
+
+      - name: Upload the Flatpak
+        uses: actions/upload-artifact@v4
         with:
-          bundle: anix.flatpak
-          manifest-path: packaging/flatpak/io.anix.app.yml
-          cache: false
-          upload-artifact: true
+          name: anix-x86_64.flatpak
+          path: anix.flatpak
 
       - name: Install and start it
         run: |

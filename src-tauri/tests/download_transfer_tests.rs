@@ -1443,3 +1443,30 @@ async fn an_oversized_subtitle_without_a_length_is_cut_off_and_the_video_still_d
     }
     panic!("the whole oversized subtitle was read");
 }
+
+#[test]
+fn an_init_section_after_an_aes_key_is_encrypted_and_the_key_is_not() {
+    let text = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2,\na.m4s\n#EXT-X-ENDLIST\n";
+    let plan = downloads::plan_hls_download(text, "https://cdn.example/a/i.m3u8").unwrap();
+    assert_eq!(plan.encrypted, vec![false, true, true], "{:?}", plan.files);
+}
+
+#[test]
+fn a_renewed_stream_with_another_media_sequence_is_another_stream() {
+    let plan = |seq: u32| {
+        let text = format!("#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:{}\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:2,\na.ts\n#EXT-X-ENDLIST\n", seq);
+        downloads::plan_hls_download(&text, "https://cdn.example/a/i.m3u8").unwrap().playlist
+    };
+    assert!(downloads::same_hls_shape(&plan(5), &plan(5)));
+    assert!(!downloads::same_hls_shape(&plan(5), &plan(6)));
+}
+
+#[test]
+fn a_stream_the_player_picked_is_used_only_while_it_is_fresh() {
+    let now = std::time::Instant::now();
+    downloads::queue_with_source_at("fresh-src", source("https://cdn.example/a.m3u8".into()), now);
+    downloads::queue_with_source_at("stale-src", source("https://cdn.example/b.m3u8".into()), now - std::time::Duration::from_secs(10 * 60));
+    assert_eq!(downloads::take_queued_source("fresh-src").map(|s| s.url), Some("https://cdn.example/a.m3u8".to_string()));
+    assert!(downloads::take_queued_source("stale-src").is_none(), "its signed link may have expired");
+    assert!(downloads::take_queued_source("fresh-src").is_none(), "taken once");
+}

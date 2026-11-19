@@ -197,7 +197,7 @@ fn host_limit_halves_on_pressure_and_never_climbs_back_past_the_refusal() {
     }
     assert_eq!(limits.limit("h"), 5);
 
-    limits.record_pressure("h"); // 429, 503 or a timeout at 5 connections
+    limits.record_pressure("h", 5); // 429, 503 or a timeout at 5 connections
 
     assert_eq!(limits.limit("h"), 2, "halved (rounded down)");
     assert_eq!(limits.ceiling("h"), Some(4), "the host refused 5, so 4 is the most to try");
@@ -209,7 +209,7 @@ fn host_limit_halves_on_pressure_and_never_climbs_back_past_the_refusal() {
     assert_eq!(limits.limit("other"), 4);
     // A burst of pushback from requests started under the old limit halves it only once.
     for _ in 0..10 {
-        limits.record_pressure("h");
+        limits.record_pressure("h", 4);
     }
     assert_eq!(limits.limit("h"), 2);
     // After it has grown, pushback halves it again, and it never drops below one connection.
@@ -217,14 +217,14 @@ fn host_limit_halves_on_pressure_and_never_climbs_back_past_the_refusal() {
         limits.record_success("h");
     }
     assert_eq!(limits.limit("h"), 3);
-    limits.record_pressure("h");
+    limits.record_pressure("h", 3);
     assert_eq!(limits.limit("h"), 1);
 }
 
 #[test]
 fn a_ceiling_rises_again_after_a_long_run_of_successes() {
     let limits = HostLimits::new(4, 8);
-    limits.record_pressure("h");
+    limits.record_pressure("h", 4);
     assert_eq!(limits.ceiling("h"), Some(3));
     for _ in 0..engine::SUCCESSES_PER_STEP * 100 {
         limits.record_success("h");
@@ -268,6 +268,24 @@ async fn a_host_that_answers_429_above_three_connections_ends_at_three_or_fewer(
     let host = host_key(&urls[0]).expect("host");
     assert!(limits.limit(&host) <= 3, "limit stayed at {}", limits.limit(&host));
     assert!(limits.ceiling(&host).map_or(false, |c| c <= 3), "ceiling {:?}", limits.ceiling(&host));
+}
+
+#[tokio::test]
+async fn a_host_that_allows_one_connection_is_found_from_a_start_of_four() {
+    let server = TestServer::start(|r| {
+        if r.active > 1 {
+            return Reply::status(429);
+        }
+        Reply::ok(ts_segment(index_of(&r.path))).delay(15)
+    });
+    let dir = TempDir::new("adaptive-one");
+    let urls = segment_urls(&server, "a", 12);
+    let limits = Arc::new(HostLimits::new(4, 8));
+
+    let report = fetch_segments(&client(), &urls, &dir.0, &options(limits.clone())).await.expect("fetch");
+
+    assert_eq!(report.fetched, 12, "pushback from requests started under the old limit must not use up the tries");
+    assert_eq!(limits.limit(&host_key(&urls[0]).expect("host")), 1);
 }
 
 // ---- 4. Link renewal -----------------------------------------------------------------------

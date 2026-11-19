@@ -57,6 +57,7 @@ pub async fn delete_download(
     delete_file: Option<bool>,
 ) -> Result<(), String> {
     downloads::cancel_download(&id).await;
+    downloads::forget_queued_source(&id);
     let record = db::get_download_by_id(&state.pool, &id)
         .await
         .map_err(|e| e.to_string())?;

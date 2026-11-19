@@ -2452,5 +2452,12 @@
   "downloadSettings.downloadResolutionHint": "حجم الصورة الذي تبدأ به التنزيلات. إذا لم يوفره المصدر، تُستخدم أقرب دقة أدنى ثم أقرب دقة أعلى.",
   "settings.defaultPlaybackSpeed": "سرعة التشغيل الافتراضية",
   "settings.defaultPlaybackSpeedHint": "تبدأ كل حلقة بهذه السرعة (من 0.5× إلى 4×). السرعة التي تغيّرها أثناء المشاهدة تسري على تلك الحلقة فقط.",
-  "playerSettingsPanel.customSpeed": "مخصص"
+  "playerSettingsPanel.customSpeed": "مخصص",
+  "downloadSettings.parallel": "التنزيلات المتزامنة",
+  "downloadSettings.parallelHint": "عدد الحلقات التي تُنزَّل في الوقت نفسه. حلقة واحدة هي الألطف على الخادم.",
+  "downloadSettings.speedLimit": "حد السرعة",
+  "downloadSettings.speedLimitHint": "يحدّ من السرعة المجمّعة لكل التنزيلات.",
+  "downloadSettings.speedLimitOff": "إيقاف",
+  "downloads.speed": "{speed}/ث",
+  "downloads.speedLeft": "{speed}/ث · متبقي {time}"
 }

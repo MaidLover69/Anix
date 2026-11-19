@@ -2116,5 +2116,12 @@
   "downloadSettings.downloadResolutionHint": "डाउनलोड जिस चित्र आकार से शुरू होते हैं। किसी स्रोत में न हो तो सबसे नज़दीकी कम रिज़ॉल्यूशन लिया जाता है, फिर सबसे नज़दीकी अधिक।",
   "settings.defaultPlaybackSpeed": "डिफ़ॉल्ट प्लेबैक गति",
   "settings.defaultPlaybackSpeedHint": "हर एपिसोड इसी गति से शुरू होता है (0.5× से 4×)। देखते समय बदली गई गति केवल उसी एपिसोड पर लागू होती है।",
-  "playerSettingsPanel.customSpeed": "कस्टम"
+  "playerSettingsPanel.customSpeed": "कस्टम",
+  "downloadSettings.parallel": "एक साथ डाउनलोड",
+  "downloadSettings.parallelHint": "एक समय में कितने एपिसोड डाउनलोड हों। एक सर्वर के लिए सबसे कम बोझ वाला है।",
+  "downloadSettings.speedLimit": "गति सीमा",
+  "downloadSettings.speedLimitHint": "सभी डाउनलोड की कुल गति सीमित करता है।",
+  "downloadSettings.speedLimitOff": "बंद",
+  "downloads.speed": "{speed}/से",
+  "downloads.speedLeft": "{speed}/से · {time} बाकी"
 }

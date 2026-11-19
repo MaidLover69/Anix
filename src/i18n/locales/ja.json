@@ -2032,5 +2032,12 @@
   "downloadSettings.downloadResolutionHint": "ダウンロードで使う画質です。ソースにない場合は、近い低い解像度、次に近い高い解像度を使います。",
   "settings.defaultPlaybackSpeed": "デフォルトの再生速度",
   "settings.defaultPlaybackSpeedHint": "すべてのエピソードはこの速度で始まります（0.5倍〜4倍）。視聴中に変えた速度は、そのエピソードだけに適用されます。",
-  "playerSettingsPanel.customSpeed": "カスタム"
+  "playerSettingsPanel.customSpeed": "カスタム",
+  "downloadSettings.parallel": "同時ダウンロード数",
+  "downloadSettings.parallelHint": "同時にダウンロードするエピソード数。1つがサーバーに最も優しい設定です。",
+  "downloadSettings.speedLimit": "速度制限",
+  "downloadSettings.speedLimitHint": "すべてのダウンロードの合計速度を制限します。",
+  "downloadSettings.speedLimitOff": "オフ",
+  "downloads.speed": "{speed}/秒",
+  "downloads.speedLeft": "{speed}/秒 · 残り {time}"
 }

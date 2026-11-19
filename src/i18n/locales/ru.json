@@ -2284,5 +2284,12 @@
   "downloadSettings.downloadResolutionHint": "Размер картинки, с которого начинаются загрузки. Если в источнике его нет, берётся ближайшее меньшее, затем ближайшее большее.",
   "settings.defaultPlaybackSpeed": "Скорость воспроизведения по умолчанию",
   "settings.defaultPlaybackSpeedHint": "Каждая серия начинается с этой скорости (от 0,5× до 4×). Скорость, изменённая во время просмотра, действует только для этой серии.",
-  "playerSettingsPanel.customSpeed": "Своя"
+  "playerSettingsPanel.customSpeed": "Своя",
+  "downloadSettings.parallel": "Одновременные загрузки",
+  "downloadSettings.parallelHint": "Сколько серий загружается одновременно. Одна — самый щадящий вариант для сервера.",
+  "downloadSettings.speedLimit": "Ограничение скорости",
+  "downloadSettings.speedLimitHint": "Ограничивает суммарную скорость всех загрузок.",
+  "downloadSettings.speedLimitOff": "Выкл.",
+  "downloads.speed": "{speed}/с",
+  "downloads.speedLeft": "{speed}/с · осталось {time}"
 }

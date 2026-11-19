@@ -2200,5 +2200,12 @@
   "downloadSettings.downloadResolutionHint": "La dimensione dell'immagine con cui partono i download. Se una fonte non la ha, si usa la più vicina inferiore, poi la più vicina superiore.",
   "settings.defaultPlaybackSpeed": "Velocità di riproduzione predefinita",
   "settings.defaultPlaybackSpeedHint": "Ogni episodio parte a questa velocità (da 0,5× a 4×). Una velocità cambiata durante la visione vale solo per quell'episodio.",
-  "playerSettingsPanel.customSpeed": "Personalizzata"
+  "playerSettingsPanel.customSpeed": "Personalizzata",
+  "downloadSettings.parallel": "Download contemporanei",
+  "downloadSettings.parallelHint": "Quanti episodi vengono scaricati nello stesso momento. Uno è il più leggero per il server.",
+  "downloadSettings.speedLimit": "Limite di velocità",
+  "downloadSettings.speedLimitHint": "Limita la velocità complessiva di tutti i download.",
+  "downloadSettings.speedLimitOff": "Disattivato",
+  "downloads.speed": "{speed}/s",
+  "downloads.speedLeft": "{speed}/s · restano {time}"
 }

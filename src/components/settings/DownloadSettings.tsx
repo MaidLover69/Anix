@@ -10,7 +10,12 @@ import { useSaveSettings, useSettings } from '../../hooks/useSettings';
 import { DOWNLOAD_QUALITY_VALUES } from '../../lib/resolution';
 import { useDownloadDirectory, useDownloadFolder } from '../../hooks/useDownloads';
 import { useUIStore } from '../../stores/uiStore';
+import { formatBytes } from '../library/format';
 import { t } from '../../i18n';
+
+const PARALLEL_CHOICES = [1, 2, 3];
+/** KB/s; 0 is off. */
+const SPEED_LIMIT_CHOICES = [0, 512, 1024, 2048, 5120, 10240];
 
 /** Settings › Downloads: the folder new downloads are saved in. */
 export const DownloadSettings: React.FC = () => {
@@ -92,6 +97,33 @@ export const DownloadSettings: React.FC = () => {
             options={DOWNLOAD_QUALITY_VALUES.map((value) => ({
               value,
               label: value === 'best' ? t('bulkDownloadDialog.best') : value,
+            }))}
+          />
+        )}
+      </Row>
+      <Row label={t('downloadSettings.parallel')} hint={t('downloadSettings.parallelHint')}>
+        {({ labelId, hintId }) => (
+          <CustomSelect
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            className="w-36"
+            value={String(PARALLEL_CHOICES.includes(settings?.max_parallel_downloads ?? 1) ? settings?.max_parallel_downloads : 1)}
+            onChange={(value) => save.mutate({ max_parallel_downloads: Number(value) })}
+            options={PARALLEL_CHOICES.map((n) => ({ value: String(n), label: String(n) }))}
+          />
+        )}
+      </Row>
+      <Row label={t('downloadSettings.speedLimit')} hint={t('downloadSettings.speedLimitHint')}>
+        {({ labelId, hintId }) => (
+          <CustomSelect
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            className="w-36"
+            value={String(SPEED_LIMIT_CHOICES.includes(settings?.download_speed_limit_kbps ?? 0) ? settings?.download_speed_limit_kbps : 0)}
+            onChange={(value) => save.mutate({ download_speed_limit_kbps: Number(value) })}
+            options={SPEED_LIMIT_CHOICES.map((kbps) => ({
+              value: String(kbps),
+              label: kbps === 0 ? t('downloadSettings.speedLimitOff') : t('downloads.speed', { speed: formatBytes(kbps * 1024) }),
             }))}
           />
         )}

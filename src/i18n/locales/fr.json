@@ -2200,5 +2200,12 @@
   "downloadSettings.downloadResolutionHint": "La taille d'image des téléchargements. Si une source ne l'a pas, la plus proche en dessous est utilisée, puis la plus proche au-dessus.",
   "settings.defaultPlaybackSpeed": "Vitesse de lecture par défaut",
   "settings.defaultPlaybackSpeedHint": "Chaque épisode démarre à cette vitesse (0,5× à 4×). Une vitesse modifiée pendant le visionnage ne vaut que pour cet épisode.",
-  "playerSettingsPanel.customSpeed": "Personnalisée"
+  "playerSettingsPanel.customSpeed": "Personnalisée",
+  "downloadSettings.parallel": "Téléchargements simultanés",
+  "downloadSettings.parallelHint": "Nombre d'épisodes téléchargés en même temps. Un seul est le plus doux pour un hébergeur.",
+  "downloadSettings.speedLimit": "Limite de vitesse",
+  "downloadSettings.speedLimitHint": "Plafonne la vitesse cumulée de tous les téléchargements.",
+  "downloadSettings.speedLimitOff": "Désactivée",
+  "downloads.speed": "{speed}/s",
+  "downloads.speedLeft": "{speed}/s · {time} restant"
 }

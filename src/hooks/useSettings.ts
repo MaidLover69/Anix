@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   default_playback_speed: 1,
   download_dir: '',
   download_all_subtitles: false,
+  max_parallel_downloads: 1,
+  download_speed_limit_kbps: 0,
   theme: DEFAULT_THEME,
   minimize_to_tray: false,
   start_with_desktop: false,

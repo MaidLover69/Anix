@@ -2116,5 +2116,12 @@
   "downloadSettings.downloadResolutionHint": "The picture size downloads start with. A source without it falls back to the closest lower one, then the closest higher one.",
   "settings.defaultPlaybackSpeed": "Default playback speed",
   "settings.defaultPlaybackSpeedHint": "Every episode starts at this speed (0.5× to 4×). A speed changed while watching applies to that episode only.",
-  "playerSettingsPanel.customSpeed": "Custom"
+  "playerSettingsPanel.customSpeed": "Custom",
+  "downloadSettings.parallel": "Downloads at once",
+  "downloadSettings.parallelHint": "How many episodes download at the same time. One is the gentlest on a host.",
+  "downloadSettings.speedLimit": "Speed limit",
+  "downloadSettings.speedLimitHint": "Caps the combined speed of all downloads.",
+  "downloadSettings.speedLimitOff": "Off",
+  "downloads.speed": "{speed}/s",
+  "downloads.speedLeft": "{speed}/s · {time} left"
 }

@@ -2032,5 +2032,12 @@
   "downloadSettings.downloadResolutionHint": "下载时使用的画面大小。如果片源没有，就使用最接近的较低分辨率，再其次是最接近的较高分辨率。",
   "settings.defaultPlaybackSpeed": "默认播放速度",
   "settings.defaultPlaybackSpeedHint": "每一集都以此速度开始（0.5 倍到 4 倍）。观看时更改的速度只对该集有效。",
-  "playerSettingsPanel.customSpeed": "自定义"
+  "playerSettingsPanel.customSpeed": "自定义",
+  "downloadSettings.parallel": "同时下载数",
+  "downloadSettings.parallelHint": "同时下载的剧集数量。一个对服务器最友好。",
+  "downloadSettings.speedLimit": "速度限制",
+  "downloadSettings.speedLimitHint": "限制所有下载的总速度。",
+  "downloadSettings.speedLimitOff": "关闭",
+  "downloads.speed": "{speed}/秒",
+  "downloads.speedLeft": "{speed}/秒 · 剩余 {time}"
 }

@@ -2032,5 +2032,12 @@
   "downloadSettings.downloadResolutionHint": "다운로드에 사용할 화질입니다. 소스에 없으면 가장 가까운 낮은 해상도, 그다음 가장 가까운 높은 해상도를 사용합니다.",
   "settings.defaultPlaybackSpeed": "기본 재생 속도",
   "settings.defaultPlaybackSpeedHint": "모든 에피소드는 이 속도로 시작합니다(0.5배~4배). 시청 중에 바꾼 속도는 해당 에피소드에만 적용됩니다.",
-  "playerSettingsPanel.customSpeed": "사용자 지정"
+  "playerSettingsPanel.customSpeed": "사용자 지정",
+  "downloadSettings.parallel": "동시 다운로드 수",
+  "downloadSettings.parallelHint": "동시에 내려받는 에피소드 수입니다. 1개가 서버에 가장 부담이 적습니다.",
+  "downloadSettings.speedLimit": "속도 제한",
+  "downloadSettings.speedLimitHint": "모든 다운로드의 합산 속도를 제한합니다.",
+  "downloadSettings.speedLimitOff": "끔",
+  "downloads.speed": "{speed}/초",
+  "downloads.speedLeft": "{speed}/초 · {time} 남음"
 }

@@ -566,6 +566,8 @@ pub struct DownloadSource {
     pub language: Option<String>,
     /// Subtitle languages to fetch, as codes in order; `None` fetches every track.
     pub subtitle_languages: Option<Vec<String>>,
+    /// The picture height the extension labelled the stream with (`"720p"` → 720), when it did.
+    pub height: Option<u32>,
 }
 
 /// The audio and subtitle language codes stored on a download row. A sub is Japanese audio
@@ -598,6 +600,7 @@ impl DownloadSource {
             subtitles,
             language: None,
             subtitle_languages: None,
+            height: stream.quality.as_deref().and_then(quality_height),
         }
     }
 }
@@ -1127,6 +1130,8 @@ pub enum DownloadOutcome {
 struct Finished {
     path: PathBuf,
     size: i64,
+    /// The quality the file was saved at, when it differs from the row's.
+    quality: Option<String>,
 }
 
 /// Episode folders that running downloads use, with how many each.
@@ -1588,10 +1593,13 @@ fn hls_variant_pick(text: &str, base: &str, wanted: Option<u32>) -> Option<(Stri
 /// The base name of the finished file: named by the height that was actually downloaded when
 /// that is not the one asked for (720p asked, 480p the closest the stream had).
 pub fn downloaded_base_name(series_title: &str, episode_num: f64, category: &str, asked: &str, got: Option<u32>) -> String {
-    match got.filter(|h| *h > 0 && quality_height(asked) != Some(*h)) {
-        Some(h) => output_base_name(series_title, episode_num, category, &format!("{}p", h)),
-        None => output_base_name(series_title, episode_num, category, asked),
-    }
+    output_base_name(series_title, episode_num, category, &saved_quality(asked, got).unwrap_or_else(|| asked.to_string()))
+}
+
+/// The quality a download was saved at (`"360p"`) when it is not the one asked for; `None` when
+/// it is, or when the height is unknown.
+fn saved_quality(asked: &str, got: Option<u32>) -> Option<String> {
+    got.filter(|h| *h > 0 && quality_height(asked) != Some(*h)).map(|h| format!("{}p", h))
 }
 
 /// Plans the download of a finished (VOD) media playlist. `None` for anything the plan does
@@ -1986,7 +1994,8 @@ async fn finalize(
         }
     }
 
-    Ok(Finished { path: final_path, size })
+    let quality = saved_quality(&job.record.quality, Some(job.got_height.load(std::sync::atomic::Ordering::Relaxed)));
+    Ok(Finished { path: final_path, size, quality })
 }
 
 
@@ -2080,7 +2089,10 @@ async fn download_stream_with_ffmpeg(
             other => (other?, headers.clone()),
         };
         if let Some((plan, height)) = planned {
-            job.got_height.store(height, std::sync::atomic::Ordering::Relaxed);
+            // A media playlist without a master names no height: the stream's label then stands.
+            if height > 0 {
+                job.got_height.store(height, std::sync::atomic::Ordering::Relaxed);
+            }
             return download_hls_files(job, &plan, &headers, hls_options, subtitles).await;
         }
     }
@@ -2271,7 +2283,7 @@ where
         base: output_base_name(&record.series_title, record.episode_num, &record.category, &record.quality),
         tag: work_tag(&record.id),
         work,
-        got_height: std::sync::atomic::AtomicU32::new(0),
+        got_height: std::sync::atomic::AtomicU32::new(source.height.unwrap_or(0)),
         renew,
     };
 
@@ -2356,6 +2368,12 @@ where
         }
         Some(Ok(finished)) => {
             let path = finished.path.to_string_lossy().to_string();
+            // Another stream (a retry, or the closest lower one) may have had another height.
+            if let Some(quality) = &finished.quality {
+                if let Err(e) = db::set_download_quality(pool, id, quality).await {
+                    warn!("Could not save the quality of download {}: {}", id, e);
+                }
+            }
             if let Err(e) = db::update_download_status(
                 pool,
                 id,

@@ -205,6 +205,7 @@ fn source(referer: Option<&str>, origin: Option<&str>, headers: &[(&str, &str)])
         subtitles: Vec::new(),
         language: None,
         subtitle_languages: None,
+        height: None,
     }
 }
 
@@ -776,4 +777,12 @@ fn a_disk_counts_as_full_only_below_the_save_limit() {
     assert_eq!(disk_is_low(&dir), free < LOW_DISK_BYTES);
     // A folder that cannot be read is not reported as full.
     assert!(!disk_is_low(std::path::Path::new("/no/such/anix/folder")));
+}
+
+#[test]
+fn a_source_from_a_stream_keeps_the_height_its_label_names() {
+    let labelled = StreamItem { url: "https://cdn.example/a.mp4".to_string(), quality: Some("1080p".to_string()), ..Default::default() };
+    assert_eq!(DownloadSource::from_stream(&labelled, Vec::new()).height, Some(1080));
+    let unlabelled = StreamItem { url: "https://cdn.example/b.mp4".to_string(), quality: Some("default".to_string()), ..Default::default() };
+    assert_eq!(DownloadSource::from_stream(&unlabelled, Vec::new()).height, None);
 }

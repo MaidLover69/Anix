@@ -166,6 +166,8 @@ pub async fn start_episode_download(
         subtitles,
         language: None,
         subtitle_languages,
+        // The row's quality is the one the player is showing.
+        height: None,
     };
 
     // Queued, so the worker starts it within the "downloads at once" setting and can renew its link.

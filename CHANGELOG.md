@@ -11,6 +11,7 @@ Faster, sturdier downloads, more player and download settings, and more ways to 
 - The download list shows the speed and the time left. New in Settings › Downloads: **Downloads at once** (1 to 3, 1 by default) and a **Speed limit** for all downloads together.
 - A queued download that fails is tried again by itself, up to three times in all (after half a minute, then after two minutes), each time with another stream: first the other servers of the same extension, then the next extension, always in the same sub or dub and your language order. While it waits it shows "Trying another stream (2 of 3)" and frees its place for other episodes. A full disk or a folder that cannot be written is not tried again.
 - The player's Download button now queues the episode like every other download.
+- When a download ends up on a stream of another quality (a retry, or the closest one to your choice), the file name and the download list show the quality that was saved.
 - A host that cannot be reached is looked up through DNS over HTTPS when that is on Automatic.
 
 ### Downloads and playing

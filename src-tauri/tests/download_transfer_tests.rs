@@ -309,6 +309,45 @@ fn stream_kinds(file: &Path) -> String {
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test]
+async fn a_direct_file_from_a_lower_stream_is_named_and_stored_with_the_height_it_has() {
+    // A retry (or the closest-lower rule) may use a 360p stream for a row that asked for 720p.
+    let body: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let served = body.clone();
+    let (base, _seen) = serve(move |_| Response::ok("video/mp4", served.clone())).await;
+
+    let tmp = TempDir::new("direct-lower");
+    let rec = record("direct-lower");
+    let pool = db_with(&rec).await;
+    let mut src = source(format!("{}/video/ep3.mp4", base));
+    src.height = Some(360);
+
+    let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;
+
+    let expected_path = tmp.path().join("Test Show - EP 03 [SUB 360p].mp4");
+    assert_eq!(outcome, DownloadOutcome::Completed { path: expected_path, size: body.len() as i64 });
+    assert_eq!(row(&pool, "direct-lower").await.quality, "360p", "the row says what was saved");
+}
+
+#[tokio::test]
+async fn a_direct_file_at_the_asked_height_keeps_the_asked_quality() {
+    let body: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let served = body.clone();
+    let (base, _seen) = serve(move |_| Response::ok("video/mp4", served.clone())).await;
+
+    let tmp = TempDir::new("direct-same");
+    let rec = record("direct-same");
+    let pool = db_with(&rec).await;
+    let mut src = source(format!("{}/video/ep3.mp4", base));
+    src.height = Some(720);
+
+    let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;
+
+    let expected_path = tmp.path().join("Test Show - EP 03 [SUB 720p].mp4");
+    assert_eq!(outcome, DownloadOutcome::Completed { path: expected_path, size: body.len() as i64 });
+    assert_eq!(row(&pool, "direct-same").await.quality, "720p");
+}
+
+#[tokio::test]
 async fn direct_file_is_saved_completely_and_marked_completed() {
     // Not a real video, so the optional remux cannot succeed and the bytes must be kept
     // exactly as served, whether or not ffmpeg is installed.
@@ -635,6 +674,7 @@ async fn hls_stream_is_muxed_with_headers_and_survives_a_bad_subtitle() {
         ],
         language: None,
         subtitle_languages: None,
+        height: None,
     };
 
     let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;

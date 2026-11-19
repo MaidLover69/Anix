@@ -1240,6 +1240,12 @@ pub async fn create_download(
 
 /// The audio and subtitle language codes of a download, once its source is known. A `None`
 /// keeps what is stored.
+/// Stores the quality a download was saved at, when it is not the one asked for.
+pub async fn set_download_quality(pool: &SqlitePool, id: &str, quality: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE downloads SET quality = ?1 WHERE id = ?2").bind(quality).bind(id).execute(pool).await?;
+    Ok(())
+}
+
 pub async fn set_download_languages(
     pool: &SqlitePool,
     id: &str,

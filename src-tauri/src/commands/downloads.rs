@@ -41,6 +41,12 @@ pub async fn get_all_downloads(
         .map_err(|e| e.to_string())
 }
 
+/// Speed and time left of the running downloads, by download id.
+#[tauri::command]
+pub fn get_download_speeds() -> HashMap<String, downloads::DownloadSpeed> {
+    downloads::download_speeds()
+}
+
 /// Stops the download if it is running (ffmpeg included), removes its partial files and
 /// deletes the row. A finished file is left on disk unless `delete_file` is set; then the
 /// video and its subtitle side files go first, and the row stays if that fails.

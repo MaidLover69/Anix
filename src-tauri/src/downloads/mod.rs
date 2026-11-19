@@ -1,3 +1,5 @@
+pub mod engine;
+
 use crate::commands::player::sanitized_command;
 use crate::db;
 use crate::error::AppError;
@@ -13,13 +15,14 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
+use std::pin::Pin;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::Manager;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{watch, Notify, OwnedSemaphorePermit, Semaphore};
 use tracing::{error, info, warn};
 
@@ -37,8 +40,8 @@ pub const PART_SUFFIX: &str = ".anix-part";
 /// The suffix working files had before the app was renamed; only cleaned up, never written.
 pub const LEGACY_PART_SUFFIX: &str = ".anilili-part";
 
-/// Queued downloads that run at the same time.
-const MAX_QUEUE_DOWNLOADS: usize = 2;
+/// Most queued downloads that can run at the same time; Settings › Downloads picks 1 to 3.
+const MAX_QUEUE_DOWNLOADS: usize = 3;
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const PROGRESS_WRITE_INTERVAL: Duration = Duration::from_secs(1);
 /// A direct download with no data for this long is treated as dead.
@@ -1198,6 +1201,81 @@ impl WorkFiles {
     }
 }
 
+/// Looks the stream up again, the way the queue found it the first time.
+pub type SourceFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<DownloadSource, String>> + Send>> + Send + Sync>;
+
+/// Speed and time left of a running download, shown on Downloads.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DownloadSpeed {
+    pub speed_bps: f64,
+    pub eta_s: Option<u64>,
+}
+
+static SPEEDS: Lazy<Mutex<HashMap<String, DownloadSpeed>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// The speed of every running download, by download id.
+pub fn download_speeds() -> HashMap<String, DownloadSpeed> {
+    lock(&SPEEDS).clone()
+}
+
+struct SpeedEntry(String);
+
+impl Drop for SpeedEntry {
+    fn drop(&mut self) {
+        lock(&SPEEDS).remove(&self.0);
+    }
+}
+
+/// Runs `work` while saving its progress and speed about twice a second. `fraction` turns the
+/// meter into progress; `remaining` is the bytes still to come, when it can tell.
+async fn with_progress<T>(
+    job: &Job<'_>,
+    meter: &engine::SpeedMeter,
+    fraction: impl Fn(&engine::SpeedMeter) -> Option<f64>,
+    remaining: impl Fn(&engine::SpeedMeter) -> Option<u64>,
+    work: impl Future<Output = T>,
+) -> T {
+    tokio::pin!(work);
+    let _entry = SpeedEntry(job.record.id.clone());
+    let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    loop {
+        tokio::select! {
+            result = &mut work => return result,
+            _ = tick.tick() => {
+                let bps = meter.bytes_per_sec(Instant::now());
+                let eta = remaining(meter).and_then(|left| engine::eta_seconds(left, bps));
+                lock(&SPEEDS).insert(job.record.id.clone(), DownloadSpeed { speed_bps: bps, eta_s: eta });
+                reporter.report(fraction(meter), Some(meter.bytes() as i64)).await;
+            }
+        }
+    }
+}
+
+/// Why a fetch failed, in the words the Downloads page shows. `have` is the bytes saved so far
+/// for a direct file; `None` for the files of an HLS stream.
+fn fetch_failure(error: engine::FetchError, have: Option<u64>) -> String {
+    use engine::FetchError::*;
+    match (error, have) {
+        (Status { code, .. }, None) => format!("A segment of the stream could not be fetched: HTTP {}.", code),
+        (Status { code, .. }, Some(_)) => format!("The stream host answered HTTP {}.", code),
+        (Connect(e), None) => format!("Could not reach the stream host: {}", e),
+        (Connect(e), Some(_)) if e.starts_with("The download is incomplete") => e,
+        (Connect(e), Some(n)) => format!("The download was interrupted after {} bytes: {}", n, e),
+        (Timeout, Some(n)) => format!("The download stalled after {} bytes: no data for {} seconds.", n, STALL_TIMEOUT.as_secs()),
+        (Timeout, None) => "The stream host did not answer in time.".to_string(),
+        (Integrity(e) | Io(e), _) => e,
+        (Manifest(kind), _) => format!("The body is a {} playlist.", kind),
+    }
+}
+
+/// The headers of every request the engine makes, as name and value pairs.
+fn header_pairs(headers: &RequestHeaders) -> Vec<(String, String)> {
+    let mut pairs = vec![("User-Agent".to_string(), headers.user_agent.clone())];
+    pairs.extend(headers.headers.iter().cloned());
+    pairs
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -1211,6 +1289,8 @@ struct Job<'a> {
     work: &'a WorkFiles,
     /// The height of the HLS variant that is downloaded; 0 when unknown.
     got_height: std::sync::atomic::AtomicU32,
+    /// Asks the extension for the stream again, when a link expires mid-download.
+    renew: Option<SourceFn>,
 }
 
 impl Job<'_> {
@@ -1615,43 +1695,19 @@ fn redirect_refusal(e: &reqwest::Error) -> String {
     }
 }
 
-/// Fetches one file of an HLS stream to `path`. Returns its size.
-async fn fetch_hls_file(client: &reqwest::Client, url: &str, headers: &RequestHeaders, path: &Path) -> Result<i64, String> {
-    let url = guarded_stream_url(url)?;
-    let mut res = match tokio::time::timeout(STALL_TIMEOUT, apply_headers(client.get(&url), headers).send()).await {
-        Ok(Ok(res)) => res,
-        Ok(Err(e)) if e.is_redirect() => return Err(redirect_refusal(&e)),
-        Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
-        Err(_) => return Err("The stream host did not answer in time.".to_string()),
-    };
-    if !res.status().is_success() {
-        return Err(format!("A segment of the stream could not be fetched: HTTP {}.", res.status()));
-    }
-    let expected = res.content_length();
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .map_err(|e| format!("Could not create {}: {}", path.display(), e))?;
-    let mut written: u64 = 0;
-    loop {
-        let chunk = match tokio::time::timeout(STALL_TIMEOUT, res.chunk()).await {
-            Ok(Ok(Some(chunk))) => chunk,
-            Ok(Ok(None)) => break,
-            Ok(Err(e)) => return Err(format!("A segment of the stream was interrupted: {}", e)),
-            Err(_) => return Err(format!("The stream stalled: no data for {} seconds.", STALL_TIMEOUT.as_secs())),
-        };
-        if written == 0 && sniff_text_body(&chunk) == Some("html") {
-            return Err("The stream host returned a web page instead of a video.".to_string());
-        }
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("Could not write to {}: {}", path.display(), e))?;
-        written += chunk.len() as u64;
-    }
-    file.flush().await.map_err(|e| format!("Could not write to {}: {}", path.display(), e))?;
-    if expected.is_some_and(|total| total != written) {
-        return Err(format!("A segment of the stream is incomplete: received {} bytes.", written));
-    }
-    Ok(written as i64)
+/// Asks the extension for the stream again and returns the new URL of every file of the plan.
+fn renewal(source: SourceFn, quality: String) -> engine::RenewFn {
+    Arc::new(move || {
+        let (source, quality) = (source.clone(), quality.clone());
+        Box::pin(async move {
+            let fresh = source().await?;
+            let url = guarded_stream_url(&fresh.url)?;
+            let (plan, _) = fetch_hls_plan(&url, &request_headers(&fresh), &quality)
+                .await?
+                .ok_or_else(|| "the new stream could not be read".to_string())?;
+            plan.files.iter().map(|(url, _)| guarded_stream_url(url)).collect()
+        })
+    })
 }
 
 /// Downloads a planned HLS stream: every file into the download's segment folder, skipping
@@ -1688,23 +1744,42 @@ async fn download_hls_files(
     }
 
     let client = stream_client()?;
-    let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let mut bytes: i64 = 0;
-    let total = plan.files.len() as f64;
-    for (done, (url, name)) in plan.files.iter().enumerate() {
-        let path = folder.join(name);
-        if let Ok(meta) = tokio::fs::metadata(&path).await {
-            bytes += meta.len() as i64;
-            continue;
-        }
-        // Written under a temporary name, so a file that exists is always complete.
-        let partial = folder.join(format!("{}.tmp", name));
-        bytes += fetch_hls_file(&client, url, headers, &partial).await?;
-        tokio::fs::rename(&partial, &path)
-            .await
-            .map_err(|e| format!("Could not save {}: {}", path.display(), e))?;
-        reporter.report(Some(0.05 + 0.85 * (done + 1) as f64 / total), Some(bytes)).await;
+    let mut urls = Vec::with_capacity(plan.files.len());
+    for (url, _) in &plan.files {
+        urls.push(guarded_stream_url(url)?);
     }
+    let paths: Vec<PathBuf> = plan.files.iter().map(|(_, name)| folder.join(name)).collect();
+    let renew = job.renew.clone().map(|source| renewal(source, job.record.quality.clone()));
+    let options = engine::SegmentOptions {
+        headers: header_pairs(headers),
+        retry: engine::RetryPolicy::APP,
+        limits: engine::HOST_LIMITS.clone(),
+        renew,
+    };
+    let meter = engine::SpeedMeter::new(engine::SPEED_WINDOW);
+    let fetched = with_progress(
+        job,
+        &meter,
+        |m| {
+            let (done, all) = m.items();
+            (all > 0).then(|| 0.05 + 0.85 * done as f64 / all as f64)
+        },
+        |m| {
+            let (done, all) = m.items();
+            // The size is not known up front, so it is estimated from the segments so far.
+            (done > 0).then(|| (m.bytes() as f64 * (all - done) as f64 / done as f64) as u64)
+        },
+        engine::fetch_files(&client, &urls, &paths, &options, Some(&meter)),
+    )
+    .await;
+    if let Err(e) = fetched {
+        return Err(fetch_failure(e, None));
+    }
+    let media: Vec<PathBuf> =
+        plan.files.iter().zip(&paths).filter(|((_, name), _)| name.starts_with("seg")).map(|(_, p)| p.clone()).collect();
+    engine::verify_segments_before_mux(&media)?;
+    let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
+    reporter.report(Some(0.90), Some(meter.bytes() as i64)).await;
 
     let input = FfmpegInput::LocalHls { playlist: index, hls };
     let (video, _) =
@@ -1950,126 +2025,40 @@ async fn download_file(
     headers: &RequestHeaders,
     subtitles: &[SubtitleInput],
 ) -> Result<Finished, String> {
-    // A run of the app that was stopped leaves the bytes so far and the total they belong to.
+    // A run of the app that was stopped leaves the bytes so far and a note of the total and
+    // validator they belong to.
     let temp = job.work_path("download");
-    let total_note = job.work_path("resume");
-    let have = tokio::fs::metadata(&temp).await.map(|m| m.len()).unwrap_or(0);
-    let promised = tokio::fs::read_to_string(&total_note).await.ok().and_then(|t| t.trim().parse::<u64>().ok());
-    let mut offset = promised.filter(|total| have > 0 && have < *total).map(|_| have);
-
-    let mut res = loop {
-        let mut request = apply_headers(client.get(url), headers);
-        if let Some(from) = offset {
-            request = request.header("Range", format!("bytes={}-", from));
-        }
-        let res = match tokio::time::timeout(STALL_TIMEOUT, request.send()).await {
-            Ok(Ok(res)) => res,
-            Ok(Err(e)) if e.is_redirect() => return Err(redirect_refusal(&e)),
-            Ok(Err(e)) => return Err(format!("Could not reach the stream host: {}", e)),
-            Err(_) => return Err("The stream host did not answer in time.".to_string()),
-        };
-        let Some(from) = offset else { break res };
-        let range = res
-            .headers()
-            .get(reqwest::header::CONTENT_RANGE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_content_range);
-        if res.status() == reqwest::StatusCode::PARTIAL_CONTENT && range == Some((from, promised.unwrap_or(0))) {
-            info!("Resuming download {} at byte {}", job.record.id, from);
-            break res;
-        }
-        offset = None;
-        // A full body means the host ignored the range; anything else is asked for again whole.
-        if res.status() == reqwest::StatusCode::OK {
-            break res;
-        }
-    };
-
-    if !res.status().is_success() {
-        return Err(format!("The stream host answered HTTP {}.", res.status()));
+    let note = job.work_path("resume");
+    let options = engine::DirectOptions { headers: header_pairs(headers), ..Default::default() };
+    for part in 0..options.max_connections {
+        job.work.track(&engine::part_path(&temp, part));
     }
-
-    let expected = match offset {
-        Some(_) => promised,
-        None => res.content_length().filter(|len| *len > 0),
-    };
-    let file = match offset {
-        Some(_) => tokio::fs::OpenOptions::new().append(true).open(&temp).await,
-        None => {
-            // The total is noted so a later run can tell the partial file belongs to this body.
-            match expected {
-                Some(total) => tokio::fs::write(&total_note, total.to_string()).await,
-                None => tokio::fs::remove_file(&total_note).await.or(Ok(())),
-            }
-            .map_err(|e| format!("Could not write {}: {}", total_note.display(), e))?;
-            tokio::fs::File::create(&temp).await
-        }
-    }
-    .map_err(|e| format!("Could not create {}: {}", temp.display(), e))?;
-    let mut file = BufWriter::with_capacity(1 << 20, file);
-    let write_error = |e: std::io::Error| format!("Could not write to {}: {}", temp.display(), e);
-
-    let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let mut downloaded: u64 = offset.unwrap_or(0);
-    loop {
-        let chunk = match tokio::time::timeout(STALL_TIMEOUT, res.chunk()).await {
-            Ok(Ok(Some(chunk))) => chunk,
-            Ok(Ok(None)) => break,
-            Ok(Err(e)) => {
-                // The bytes still buffered are written out, so a retry resumes after them.
-                let _ = file.flush().await;
-                return Err(format!(
-                    "The download was interrupted after {} bytes: {}",
-                    downloaded, e
-                ))
-            }
-            Err(_) => {
-                let _ = file.flush().await;
-                return Err(format!(
-                    "The download stalled after {} bytes: no data for {} seconds.",
-                    downloaded,
-                    STALL_TIMEOUT.as_secs()
-                ))
-            }
-        };
-
-        if downloaded == 0 {
-            match sniff_text_body(&chunk) {
-                Some(manifest @ ("hls" | "dash")) => {
-                    // A playlist, not a media file: hand the URL to ffmpeg instead of
-                    // saving the playlist text.
-                    drop(file);
-                    let _ = tokio::fs::remove_file(&temp).await;
-                    job.work.release(&temp);
-                    let kind = if manifest == "hls" { StreamKind::Hls } else { StreamKind::Dash };
-                    return download_stream_with_ffmpeg(job, url, headers, kind, subtitles).await;
-                }
-                Some(_) => {
-                    return Err("The stream host returned a web page instead of a video.".to_string())
-                }
-                None => {}
+    let meter = engine::SpeedMeter::new(engine::SPEED_WINDOW);
+    let result = with_progress(
+        job,
+        &meter,
+        |m| m.expected().map(|total| 0.05 + 0.90 * (m.bytes() as f64 / total as f64).min(1.0)),
+        |m| m.expected().map(|total| total.saturating_sub(m.bytes())),
+        engine::download_partial(client, url, &temp, &note, &options, Some(&meter)),
+    )
+    .await;
+    match result {
+        Ok(report) => {
+            if report.resumed_from > 0 {
+                info!("Resumed download {} at byte {}", job.record.id, report.resumed_from);
             }
         }
-
-        file.write_all(&chunk).await.map_err(write_error)?;
-        downloaded += chunk.len() as u64;
-
-        let fraction = expected.map(|total| 0.05 + 0.90 * (downloaded as f64 / total as f64).min(1.0));
-        reporter.report(fraction, Some(downloaded as i64)).await;
-    }
-
-    file.flush().await.map_err(write_error)?;
-    drop(file);
-
-    if downloaded == 0 {
-        return Err("The stream host sent an empty response.".to_string());
-    }
-    if let Some(total) = expected {
-        if downloaded != total {
-            return Err(format!(
-                "The download is incomplete: received {} of {} bytes.",
-                downloaded, total
-            ));
+        Err(engine::FetchError::Manifest(manifest)) => {
+            // A playlist, not a media file: hand the URL to ffmpeg instead of saving the text.
+            let _ = tokio::fs::remove_file(&temp).await;
+            let _ = tokio::fs::remove_file(&note).await;
+            job.work.release(&temp);
+            let kind = if manifest == "hls" { StreamKind::Hls } else { StreamKind::Dash };
+            return download_stream_with_ffmpeg(job, url, headers, kind, subtitles).await;
+        }
+        Err(e) => {
+            let have = tokio::fs::metadata(&temp).await.map(|m| m.len()).unwrap_or(0);
+            return Err(fetch_failure(e, Some(have)));
         }
     }
 
@@ -2102,6 +2091,7 @@ async fn transfer<S>(
     source: S,
     place: Place,
     work: &WorkFiles,
+    renew: Option<SourceFn>,
 ) -> Result<Finished, String>
 where
     S: Future<Output = Result<DownloadSource, String>>,
@@ -2125,6 +2115,7 @@ where
         Place::Under(root) => (root, true),
         Place::Default => (tokio::task::spawn_blocking(|| {
             let dir = get_download_dir()?;
+            engine::LIMITER.set_limit(read_settings().as_ref().and_then(engine::speed_limit_bps));
             // So startup can clean this folder up after the user has chosen another one.
             if let Ok(app) = db::get_app_dir() {
                 remember_work_dir(&app.join(WORK_DIRS_FILE), &dir);
@@ -2151,6 +2142,7 @@ where
         tag: work_tag(&record.id),
         work,
         got_height: std::sync::atomic::AtomicU32::new(0),
+        renew,
     };
 
     if let Err(e) = db::update_download_progress(pool, &record.id, Some(0.05), None).await {
@@ -2195,6 +2187,7 @@ async fn run_job<S>(
     source: S,
     place: Place,
     cancel: watch::Receiver<bool>,
+    renew: Option<SourceFn>,
 ) -> DownloadOutcome
 where
     S: Future<Output = Result<DownloadSource, String>>,
@@ -2211,7 +2204,7 @@ where
 
     let work = WorkFiles::default();
     let result = tokio::select! {
-        result = transfer(pool, record, source, place, &work) => Some(result),
+        result = transfer(pool, record, source, place, &work, renew) => Some(result),
         _ = cancelled(cancel) => None,
     };
     // Nothing of the transfer is running any more, so its leftovers can go. A network failure
@@ -2286,7 +2279,7 @@ pub async fn download_into(
     dir: &Path,
 ) -> DownloadOutcome {
     let (_keep_open, cancel) = watch::channel(false);
-    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None).await
 }
 
 /// Like [`download_into`], saving in `<root>/<title>/Episode NN` as new downloads do.
@@ -2297,7 +2290,7 @@ pub async fn download_under(
     root: &Path,
 ) -> DownloadOutcome {
     let (_keep_open, cancel) = watch::channel(false);
-    run_job(pool, record, async move { Ok(source) }, Place::Under(root.to_path_buf()), cancel).await
+    run_job(pool, record, async move { Ok(source) }, Place::Under(root.to_path_buf()), cancel, None).await
 }
 
 /// Like [`download_into`], stopping as soon as `cancel` holds `true`.
@@ -2308,7 +2301,7 @@ pub async fn download_into_cancellable(
     dir: &Path,
     cancel: watch::Receiver<bool>,
 ) -> DownloadOutcome {
-    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2331,6 +2324,7 @@ fn spawn_job<S>(
     source: S,
     place: Place,
     permit: Option<OwnedSemaphorePermit>,
+    renew: Option<SourceFn>,
 ) where
     S: Future<Output = Result<DownloadSource, String>> + Send + 'static,
 {
@@ -2346,9 +2340,12 @@ fn spawn_job<S>(
     }
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let handle = tokio::spawn(async move {
-        let _permit = permit;
-        run_job(&pool, &record, source, place, cancel_rx).await;
+        let permit = permit;
+        run_job(&pool, &record, source, place, cancel_rx, renew).await;
         lock(&ACTIVE).remove(&record.id);
+        drop(permit);
+        // A free slot may let the next queued download start.
+        QUEUE_WAKE.notify_one();
     });
     active.insert(id, ActiveDownload { cancel: cancel_tx, handle });
 }
@@ -2356,13 +2353,13 @@ fn spawn_job<S>(
 /// Starts downloading `source` for `record` in the background. The row of `record` must
 /// already exist with status `DOWNLOADING`.
 pub fn start_download(pool: SqlitePool, record: DownloadRecord, source: DownloadSource) {
-    spawn_job(pool, record, async move { Ok(source) }, Place::Default, None);
+    spawn_job(pool, record, async move { Ok(source) }, Place::Default, None, None);
 }
 
 /// [`start_download`] into `dir` instead of the download folder, for tests.
 #[doc(hidden)]
 pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
-    spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None);
+    spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None, None);
 }
 
 /// Puts a `FAILED` download back in the queue (Downloads › Try again). Any other row, or one
@@ -2434,7 +2431,7 @@ pub async fn reconcile_on_startup(pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Starts the background worker that downloads `QUEUED` rows, at most two at a time, after
+/// Starts the background worker that downloads `QUEUED` rows, as many at a time as Settings › Downloads allows, after
 /// reconciling what a previous run left behind. Call it once, after `AppState` is managed.
 pub fn spawn_queue_worker(app: tauri::AppHandle) {
     if QUEUE_STARTED.swap(true, Ordering::SeqCst) {
@@ -2459,21 +2456,26 @@ async fn queue_loop(app: tauri::AppHandle) {
 
     let slots = Arc::new(Semaphore::new(MAX_QUEUE_DOWNLOADS));
     loop {
+        // Settings › Downloads: how many may run at once (the semaphore only holds the most).
+        let allowed = tokio::task::spawn_blocking(|| engine::parallel_downloads(&read_settings().unwrap_or_default()))
+            .await
+            .unwrap_or(1);
+        if MAX_QUEUE_DOWNLOADS - slots.available_permits() >= allowed {
+            let _ = tokio::time::timeout(QUEUE_POLL_INTERVAL, QUEUE_WAKE.notified()).await;
+            continue;
+        }
         let Ok(permit) = slots.clone().acquire_owned().await else {
             return;
         };
 
         match db::claim_next_queued_download(&pool).await {
             Ok(Some(record)) => {
-                let resolver_app = app.clone();
-                let resolver_record = record.clone();
-                spawn_job(
-                    pool.clone(),
-                    record,
-                    async move { resolve_queued_source(&resolver_app, &resolver_record).await },
-                    Place::Default,
-                    Some(permit),
-                );
+                let (resolver_app, resolver_record) = (app.clone(), record.clone());
+                let resolve: SourceFn = Arc::new(move || {
+                    let (app, record) = (resolver_app.clone(), resolver_record.clone());
+                    Box::pin(async move { resolve_queued_source(&app, &record).await })
+                });
+                spawn_job(pool.clone(), record, resolve(), Place::Default, Some(permit), Some(resolve));
             }
             Ok(None) => {
                 drop(permit);

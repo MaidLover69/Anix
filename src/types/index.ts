@@ -360,6 +360,13 @@ export interface NotificationPreference {
 
 export type DownloadStatus = 'QUEUED' | 'DOWNLOADING' | 'COMPLETED' | 'FAILED';
 
+/** Live speed of a running download; not stored. */
+export interface DownloadSpeed {
+  speed_bps: number;
+  /** Seconds left, when known. */
+  eta_s: number | null;
+}
+
 export interface DownloadRecord {
   id: string;
   anilist_id: number;
@@ -473,6 +480,10 @@ export interface AppSettings {
   download_dir: string;
   /** Downloads save every subtitle language the source offers, not only the preferred ones. */
   download_all_subtitles: boolean;
+  /** Episodes that download at once (1 to 3). */
+  max_parallel_downloads: number;
+  /** Combined speed limit of all downloads in KB/s; 0 is off. */
+  download_speed_limit_kbps: number;
   /** A built-in theme id (see `theme/themes.ts`). */
   theme: ThemeId;
   /** Closing the window hides it in the tray instead of quitting. */

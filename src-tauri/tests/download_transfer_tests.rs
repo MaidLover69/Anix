@@ -1016,8 +1016,9 @@ async fn try_again_after_a_network_failure_resumes_where_it_stopped() {
     let served = body.clone();
     let first = Arc::new(AtomicU32::new(0));
     let (base, seen) = serve(move |req| {
-        if first.fetch_add(1, Ordering::SeqCst) == 0 {
-            // The first try gets 120 kB, then the connection closes early.
+        if first.fetch_add(1, Ordering::SeqCst) < 4 {
+            // Every try of the first run (the engine tries four times) gets 120 kB, then the
+            // connection closes early.
             return Response { announced_len: Some(served.len()), ..Response::ok("video/mp4", served[..120_000].to_vec()) };
         }
         ranged(req, &served)
@@ -1039,8 +1040,8 @@ async fn try_again_after_a_network_failure_resumes_where_it_stopped() {
     assert_eq!(std::fs::read(tmp.path().join("Test Show - EP 03 [SUB 720p].mp4")).unwrap(), body);
     assert_eq!(tmp.file_names(), vec!["Test Show - EP 03 [SUB 720p].mp4"], "the kept files are gone after success");
     let seen = seen.lock().unwrap();
-    assert_eq!(seen.len(), 2);
-    assert_eq!(seen[1].header("range"), Some("bytes=120000-"), "only the missing part is fetched again");
+    assert_eq!(seen.len(), 5);
+    assert_eq!(seen[4].header("range"), Some("bytes=120000-"), "only the missing part is fetched again");
 }
 
 #[tokio::test]
@@ -1058,7 +1059,8 @@ async fn an_hls_download_that_failed_on_a_segment_keeps_the_others_for_try_again
     let refused_once = Arc::new(AtomicU32::new(0));
     let (base, seen) = serve(move |req| {
         let name = req.path.trim_start_matches("/hls/");
-        if name == "seg1.jpg" && refused_once.fetch_add(1, Ordering::SeqCst) == 0 {
+        // Refused on every try of the first run (the engine tries four times).
+        if name == "seg1.jpg" && refused_once.fetch_add(1, Ordering::SeqCst) < 4 {
             return Response::status(503);
         }
         match files.get(name) {

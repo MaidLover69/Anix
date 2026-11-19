@@ -260,6 +260,7 @@ pub fn run() {
             commands::start_episode_download,
             commands::retry_download,
             commands::get_all_downloads,
+            commands::get_download_speeds,
             commands::delete_download,
             commands::check_storage_for_download,
             commands::get_download_directory,

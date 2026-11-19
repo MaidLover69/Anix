@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Button, EmptyState, ErrorState, Modal, Spinner, Switch, errorMessage } from '../components/ui';
 import {
   useAllDownloads,
+  useDownloadSpeeds,
   useCheckStorage,
   useDeleteDownload,
   useDownloadFolder,
@@ -16,7 +17,7 @@ import { Meme, MemeFrame, MemeImage, useHighModule, useMemeText } from '../compo
 import { useDesktopStatus } from '../hooks/useSystem';
 import { useUIStore } from '../stores/uiStore';
 import { downloadLanguageLabel } from '../lib/downloadPicks';
-import type { DownloadRecord } from '../types';
+import type { DownloadRecord, DownloadSpeed } from '../types';
 import { CoverThumb } from '../components/library/CoverThumb';
 import { episodeLabel, externalPlayerFor, formatBytes, playerLabel } from '../components/library/format';
 import { t, tn } from '../i18n';
@@ -26,6 +27,22 @@ const fractionOf = (record: DownloadRecord) =>
 
 const rowName = (record: DownloadRecord) =>
   t('downloads.rowName', { title: record.series_title, episode: episodeLabel(record.episode_num) });
+
+/** `3:05` or `1:02:03`. */
+const clock = (seconds: number) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+};
+
+const speedText = (speed?: DownloadSpeed) => {
+  if (!speed || speed.speed_bps <= 0) return '';
+  const size = formatBytes(speed.speed_bps);
+  return speed.eta_s == null
+    ? t('downloads.speed', { speed: size })
+    : t('downloads.speedLeft', { speed: size, time: clock(speed.eta_s) });
+};
 
 const sizeOrZero = (bytes: number) => formatBytes(bytes) || t('downloads.zeroSize');
 
@@ -146,7 +163,7 @@ const DiskUsage: React.FC<{ savedBytes: number }> = ({ savedBytes }) => {
 };
 
 /** The download running now, larger, at the top; `children` are its buttons. */
-const CurrentBanner: React.FC<{ record: DownloadRecord; children?: React.ReactNode }> = ({ record, children }) => {
+const CurrentBanner: React.FC<{ record: DownloadRecord; speed?: DownloadSpeed; children?: React.ReactNode }> = ({ record, speed, children }) => {
   const percent = Math.round(fractionOf(record) * 100);
   const high = useHighModule();
   const memeText = useMemeText();
@@ -178,6 +195,7 @@ const CurrentBanner: React.FC<{ record: DownloadRecord; children?: React.ReactNo
             t('downloads.starting')
           )}
           {record.file_size ? ` · ${formatBytes(record.file_size)}` : ''}
+          {speedText(speed) ? ` · ${speedText(speed)}` : ''}
         </p>
       </div>
       <div className="flex flex-shrink-0 items-center gap-1">{children}</div>
@@ -216,8 +234,9 @@ const Group: React.FC<{
   );
 };
 
-const Row: React.FC<{ record: DownloadRecord; children?: React.ReactNode; tone?: 'error' }> = ({
+const Row: React.FC<{ record: DownloadRecord; speed?: DownloadSpeed; children?: React.ReactNode; tone?: 'error' }> = ({
   record,
+  speed,
   children,
   tone,
 }) => {
@@ -249,6 +268,7 @@ const Row: React.FC<{ record: DownloadRecord; children?: React.ReactNode; tone?:
             </span>
             <span className="text-xs tabular-nums text-text-secondary">
               {t('downloads.downloadingPercent', { percent: Math.round(fractionOf(record) * 100) })}
+              {speedText(speed) ? ` · ${speedText(speed)}` : ''}
             </span>
           </>
         )}
@@ -267,6 +287,7 @@ export const Downloads: React.FC = () => {
   const { data: settings } = useSettings();
   const showToast = useUIStore((s) => s.showToast);
   const query = useAllDownloads({ watch: true });
+  const speeds = useDownloadSpeeds((query.data ?? []).some((d) => d.status.toUpperCase() === 'DOWNLOADING')).data ?? {};
   const deleteDownload = useDeleteDownload();
   const retryDownload = useRetryDownload();
   const [pendingDelete, setPendingDelete] = useState<DownloadRecord | null>(null);
@@ -394,12 +415,12 @@ export const Downloads: React.FC = () => {
         />
       ) : (
         <>
-          {running[0] && <CurrentBanner record={running[0]}>{removeButton(running[0])}</CurrentBanner>}
+          {running[0] && <CurrentBanner record={running[0]} speed={speeds[running[0].id]}>{removeButton(running[0])}</CurrentBanner>}
 
           {running.length > 1 && (
             <Group title={t('downloads.alsoDownloading')} count={running.length - 1} icon={<Download aria-hidden="true" />}>
               {running.slice(1).map((record) => (
-                <Row key={record.id} record={record}>
+                <Row key={record.id} record={record} speed={speeds[record.id]}>
                   {removeButton(record)}
                 </Row>
               ))}

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { DownloadRecord, StorageCheck } from '../types';
+import type { DownloadRecord, DownloadSpeed, StorageCheck } from '../types';
 import { errorMessage } from '../components/ui/ErrorState';
 import { useSaveSettings } from './useSettings';
 
@@ -31,6 +31,16 @@ export function useAllDownloads({ watch = false }: { watch?: boolean } = {}) {
   }, [watch, refetch]);
 
   return query;
+}
+
+/** Speed and time left of the running downloads, by download id. */
+export function useDownloadSpeeds(active: boolean) {
+  return useQuery<Record<string, DownloadSpeed>>({
+    queryKey: ['downloadSpeeds'],
+    queryFn: async () => await invoke<Record<string, DownloadSpeed>>('get_download_speeds'),
+    enabled: active,
+    refetchInterval: active ? POLL_INTERVAL_MS : false,
+  });
 }
 
 export function useCheckStorage(quality: string = '720p') {

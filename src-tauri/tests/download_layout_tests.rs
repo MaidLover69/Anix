@@ -275,6 +275,24 @@ fn resumable_files_of_queued_downloads_are_kept_in_the_episode_folder() {
 }
 
 #[test]
+fn the_part_files_of_a_queued_big_download_survive_the_startup_clean_up() {
+    let root = TempDir::new("keep-parts");
+    let rec = record("queued-big", "Show", 3.0);
+    let other = record("gone-big", "Show", 3.0);
+    let ep = output_dir(root.path(), &rec.series_title, rec.episode_num);
+    let part = |r: &DownloadRecord, i| downloads::engine::part_path(&work_file_path(&ep, r, "download"), i);
+    let (kept, dropped) = ([part(&rec, 0), part(&rec, 3)], part(&other, 0));
+    for f in kept.iter().chain([&dropped]) {
+        touch(f);
+    }
+
+    remove_stale_part_files(root.path(), &[work_tag(&rec.id)]);
+
+    assert!(kept.iter().all(|f| f.exists()), "a big download killed mid-way resumes its parts");
+    assert!(!dropped.exists());
+}
+
+#[test]
 fn try_again_clears_the_resume_files_of_the_episode_folder() {
     let root = TempDir::new("retry");
     let rec = record("retry", "Show", 12.0);

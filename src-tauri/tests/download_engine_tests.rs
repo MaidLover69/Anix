@@ -696,6 +696,96 @@ async fn the_validator_is_stored_beside_the_partial_file_when_a_download_starts(
     assert!(!partial_path(&target).exists());
 }
 
+// ---- 8b. Resume after the app was killed while the parts downloaded -----------------------
+
+/// The size of each of the four parts `small_parts()` splits a 1 MiB file into.
+const PART: usize = 256 * 1024;
+
+/// What a run killed mid-way leaves beside `target`: no partial file yet (parts are joined at
+/// the end), the note with the total and validator, and part `i` holding `parts[i]`.
+fn leave_killed_run(target: &std::path::Path, total: usize, etag: &str, parts: &[Vec<u8>]) {
+    let note = PathBuf::from(format!("{}.validator", target.display()));
+    std::fs::write(note, format!("{}\netag: {}\n", total, etag)).unwrap();
+    for (i, bytes) in parts.iter().enumerate() {
+        if !bytes.is_empty() {
+            std::fs::write(engine::part_path(&partial_path(target), i), bytes).unwrap();
+        }
+    }
+}
+
+fn ranges_asked(server: &TestServer) -> Vec<String> {
+    let mut ranges: Vec<String> = server.requests().into_iter().filter_map(|r| r.range).filter(|r| r != "bytes=0-0").collect();
+    ranges.sort();
+    ranges
+}
+
+#[tokio::test]
+async fn parts_left_by_a_killed_run_are_continued_from_their_saved_bytes_not_from_zero() {
+    let data = big_file(4 * PART);
+    let server = range_server(data.clone(), "\"v1\"");
+    let dir = TempDir::new("killed");
+    let target = dir.0.join("movie.mp4");
+    let kept = [PART, 100_000, 0, 5_000];
+    let parts: Vec<Vec<u8>> = kept.iter().enumerate().map(|(i, n)| data[i * PART..i * PART + n].to_vec()).collect();
+    leave_killed_run(&target, data.len(), "\"v1\"", &parts);
+
+    let report = download_direct(&client(), &server.url("/f.mp4"), &target, &small_parts()).await.expect("resume");
+
+    assert_eq!(std::fs::read(&target).unwrap(), data, "byte for byte the served file");
+    assert_eq!(report.resumed_from, kept.iter().sum::<usize>() as u64, "the bytes kept from the killed run");
+    let expected = [
+        format!("bytes={}-{}", PART + 100_000, 2 * PART - 1),
+        format!("bytes={}-{}", 2 * PART, 3 * PART - 1),
+        format!("bytes={}-{}", 3 * PART + 5_000, 4 * PART - 1),
+    ];
+    assert_eq!(ranges_asked(&server), expected.to_vec(), "only what is missing is asked for; the full part 0 not at all");
+    for r in server.requests().into_iter().filter(|r| r.range.as_deref() != Some("bytes=0-0")) {
+        assert_eq!(r.if_range.as_deref(), Some("\"v1\""), "every continued part checks the file is the same");
+    }
+    assert!((0..4).all(|i| !engine::part_path(&partial_path(&target), i).exists()), "the parts are gone after the join");
+}
+
+#[tokio::test]
+async fn parts_left_by_a_killed_run_are_dropped_when_the_server_names_the_file_differently() {
+    let data = big_file(4 * PART);
+    let server = range_server(data.clone(), "\"v2\"");
+    let dir = TempDir::new("killed-changed");
+    let target = dir.0.join("movie.mp4");
+    // Bytes of the old version: kept, they would end up in the new file.
+    let parts: Vec<Vec<u8>> = (0..4).map(|_| vec![7u8; 50_000]).collect();
+    leave_killed_run(&target, data.len(), "\"v1\"", &parts);
+
+    let report = download_direct(&client(), &server.url("/f.mp4"), &target, &small_parts()).await.expect("download");
+
+    assert_eq!(std::fs::read(&target).unwrap(), data);
+    assert_eq!(report.resumed_from, 0);
+    let from_zero: Vec<String> = (0..4).map(|i| format!("bytes={}-{}", i * PART, (i + 1) * PART - 1)).collect();
+    assert_eq!(ranges_asked(&server), from_zero, "every part starts over");
+}
+
+#[tokio::test]
+async fn a_left_part_longer_than_its_range_is_dropped_and_the_file_is_still_right() {
+    let data = big_file(4 * PART);
+    let server = range_server(data.clone(), "\"v1\"");
+    let dir = TempDir::new("killed-long");
+    let target = dir.0.join("movie.mp4");
+    let mut too_long = data[PART..2 * PART].to_vec();
+    too_long.extend_from_slice(&[1u8; 10]);
+    let parts = vec![data[..PART].to_vec(), too_long, data[2 * PART..2 * PART + 1_000].to_vec(), vec![]];
+    leave_killed_run(&target, data.len(), "\"v1\"", &parts);
+
+    let report = download_direct(&client(), &server.url("/f.mp4"), &target, &small_parts()).await.expect("resume");
+
+    assert_eq!(std::fs::read(&target).unwrap(), data, "no extra bytes glued in");
+    assert_eq!(report.resumed_from, (PART + 1_000) as u64, "the long part does not count as kept");
+    let expected = [
+        format!("bytes={}-{}", PART, 2 * PART - 1),
+        format!("bytes={}-{}", 2 * PART + 1_000, 3 * PART - 1),
+        format!("bytes={}-{}", 3 * PART, 4 * PART - 1),
+    ];
+    assert_eq!(ranges_asked(&server), expected.to_vec());
+}
+
 // ---- 9. Speed, time left, speed limit ------------------------------------------------------
 
 #[test]

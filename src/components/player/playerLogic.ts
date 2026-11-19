@@ -16,7 +16,7 @@ export function preferredAudioTrack(tracks: { lang?: string | null; name?: strin
   return -1;
 }
 
-export { SPEED_STEP, MIN_SPEED, MAX_SPEED, stepSpeed } from '../../lib/speed';
+export { stepSpeed } from '../../lib/speed';
 
 /** Holding Space longer than this plays at `HOLD_RATE` until it is let go; a tap toggles play. */
 export const HOLD_MS = 300;

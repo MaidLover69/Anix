@@ -7,7 +7,7 @@ import type { Anime4kPreset } from '../lib/anime4k';
 import { buildProxyUrl } from '../lib/streamProxy';
 import type { StreamItem, SubtitleItem } from '../types';
 import { preferredAudioTrack } from '../components/player/playerLogic';
-import type { MediaTrackOption, PlayerEngine } from './usePlayerEngine';
+import type { MediaTrackOption, PlayerEngine, QualityLevel } from './usePlayerEngine';
 import { defaultSubtitleIndex, SUBTITLES_OFF } from './useSubtitleTracks';
 import type { SubtitleOption } from './useSubtitleTracks';
 import { t } from '../i18n';
@@ -191,6 +191,8 @@ export function useMpvEngine({
   const [streamIndex, setStreamIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [tracks, setTracks] = useState<MpvTrack[]>([]);
+  /** The user's resolution choice (an mpv video track id); -1 is mpv's own pick. */
+  const [videoChoice, setVideoChoice] = useState(-1);
   const [selectedSubtitle, setSelectedSubtitle] = useState(SUBTITLES_OFF);
   const [selectedSecondary, setSelectedSecondary] = useState(SUBTITLES_OFF);
   const onFailRef = useRef(onFail);
@@ -353,6 +355,7 @@ export function useMpvEngine({
       const height = video.length > 1 ? pickHeight(video.map((t) => t.demux_h ?? 0), start.wantedHeight) : null;
       const chosen = video.find((t) => t.demux_h === height);
       if (chosen && !chosen.selected) sendMpv({ action: 'set_video_track', id: chosen.id });
+      setVideoChoice(chosen?.id ?? -1);
       // A replay after the end starts where the user asked, not at the saved position.
       resumeCheck.current = !start.startVerified && !media.replaying;
       onDuration();
@@ -418,6 +421,17 @@ export function useMpvEngine({
   );
   const audioTrack = tracks.find((t) => t.type === 'audio' && t.selected)?.id ?? -1;
 
+  // The resolutions of an HLS stream; a track without a height stays out.
+  const levels = useMemo<QualityLevel[]>(
+    () => tracks.filter((t) => t.type === 'video' && t.id !== null && (t.demux_h ?? 0) > 0).map((t) => ({ id: t.id as number, height: t.demux_h as number, bitrate: 0 })),
+    [tracks]
+  );
+  const activeLevel = tracks.find((t) => t.type === 'video' && t.selected)?.id ?? -1;
+  const selectLevel = useCallback((id: number) => {
+    setVideoChoice(id);
+    sendMpv({ action: 'set_video_track', id: id < 0 ? null : id });
+  }, []);
+
   const selectAudioTrack = useCallback((id: number) => sendMpv({ action: 'set_audio_track', id }), []);
 
   const play = useCallback(() => void media?.play(), [media]);
@@ -437,10 +451,10 @@ export function useMpvEngine({
     error: null,
     stream: streams[streamIndex] ?? null,
     usesHls: false,
-    levels: [],
-    selectedLevel: -1,
-    activeLevel: -1,
-    selectLevel: noop,
+    levels,
+    selectedLevel: videoChoice,
+    activeLevel,
+    selectLevel,
     audioTracks,
     audioTrack,
     selectAudioTrack,

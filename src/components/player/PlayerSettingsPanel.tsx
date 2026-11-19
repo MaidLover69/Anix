@@ -140,12 +140,14 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
               aria-label={t('playerSettingsPanel.customSpeed')}
               aria-invalid={typed !== null && typedSpeed === null}
               value={typed ?? Number(rate.toFixed(2))}
-              onChange={(e) => {
-                setTyped(e.target.value);
-                const next = parseCustomSpeed(e.target.value);
+              onChange={(e) => setTyped(e.target.value)}
+              // Applied on Enter or leaving the field, so typing 2.35 never plays 2× on the way.
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={() => {
+                const next = typed === null ? null : parseCustomSpeed(typed);
                 if (next !== null) onRateChange(next);
+                setTyped(null);
               }}
-              onBlur={() => setTyped(null)}
               className="ui-select h-9 w-28 rounded-md bg-bg-input px-3 text-[13px] tabular-nums text-text-primary aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-red-400"
             />
           )}

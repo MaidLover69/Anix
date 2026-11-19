@@ -93,6 +93,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
         preferred: placement,
+        // The menu's end edge meets the trigger's: right in left-to-right text, left in right-to-left.
+        align: getComputedStyle(trigger).direction === 'rtl' ? 'left' : 'right',
       })
     );
   }, [isOpen, placement, normalizedOptions.length]);

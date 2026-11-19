@@ -327,3 +327,10 @@ fn only_a_user_value_that_turns_the_dmabuf_renderer_off_blocks_mpv() {
     assert!(!off(None, None));
     assert!(!off(Some("1"), Some("1")));
 }
+
+#[test]
+fn the_video_track_is_a_resolution_and_none_means_auto() {
+    assert_eq!(plan(&Action::SetVideoTrack { id: Some(2) }, BASE).unwrap(), vec![Op::Set("vid", "2".into())]);
+    assert!(plan(&Action::SetVideoTrack { id: Some(0) }, BASE).is_err());
+    assert_eq!(plan(&Action::SetVideoTrack { id: None }, BASE).unwrap(), vec![Op::Set("vid", "auto".into())], "never 'no'");
+}

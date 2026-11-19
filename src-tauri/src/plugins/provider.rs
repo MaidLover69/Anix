@@ -22,6 +22,7 @@ use crate::plugins::engine::{PluginError, PluginRuntime};
 use crate::plugins::intern;
 use crate::providers::languages::Languages;
 use crate::providers::common::{fix_url, fmt_ep, is_hls_url, json_id, json_number, subtitle_format};
+use crate::providers::resolution::{current_wanted, order_streams};
 use crate::providers::manager::{summarize_failures, verify_streams_in_order};
 use crate::providers::matching::{pick_best, Candidate};
 use crate::providers::AnimeProvider;
@@ -594,6 +595,10 @@ impl AnimeProvider for PluginProvider {
         true
     }
 
+    fn orders_by_resolution(&self) -> bool {
+        true
+    }
+
     fn session_time_since(&self, since: Instant) -> Duration {
         self.runtime
             .running()
@@ -689,7 +694,11 @@ impl AnimeProvider for PluginProvider {
                     let _permit = permits.acquire().await;
                     resolve_server(id, runtime, details, server, category, access).await
                 };
-                let streams = resolved.as_ref().ok().map(|sources| sources.streams.clone());
+                let streams = resolved.as_ref().ok().map(|sources| {
+                    let mut streams = sources.streams.clone();
+                    order_streams(&mut streams, current_wanted());
+                    streams
+                });
                 let _ = events_tx.send(ServerEvent::Resolved(index, resolved));
                 if let Some(streams) = streams {
                     let _ = events_tx.send(ServerEvent::Verified(index, verify_streams_in_order(streams, allow_private).await));

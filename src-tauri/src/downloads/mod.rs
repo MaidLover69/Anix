@@ -1285,9 +1285,17 @@ pub fn hls_attribute<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
 /// highest bandwidth. `None` when it has none, or when audio comes as a separate rendition,
 /// which only ffmpeg's own HLS reader combines.
 pub fn best_hls_variant(text: &str, base: &str) -> Option<String> {
+    hls_variant_for(text, base, None)
+}
+
+/// Like `best_hls_variant`, but with a wanted picture height (a `RESOLUTION` height): the
+/// exact one, else the closest lower, else the closest higher. Variants without a
+/// `RESOLUTION` are only used when none has one, or when no height is wanted.
+pub fn hls_variant_for(text: &str, base: &str, wanted: Option<u32>) -> Option<String> {
     let base = reqwest::Url::parse(base).ok()?;
     let mut lines = text.lines().map(str::trim);
-    let mut best: Option<((u64, u64), String)> = None;
+    // (height, pixels, bandwidth, url)
+    let mut variants: Vec<(u64, u64, u64, String)> = Vec::new();
     while let Some(line) = lines.next() {
         if let Some(attrs) = line.strip_prefix("#EXT-X-MEDIA:") {
             if hls_attribute(attrs, "TYPE") == Some("AUDIO") && hls_attribute(attrs, "URI").is_some() {
@@ -1296,17 +1304,28 @@ pub fn best_hls_variant(text: &str, base: &str) -> Option<String> {
         }
         let Some(attrs) = line.strip_prefix("#EXT-X-STREAM-INF:") else { continue };
         let uri = lines.by_ref().find(|l| !l.is_empty() && !l.starts_with('#'))?;
-        let pixels = hls_attribute(attrs, "RESOLUTION")
+        let (width, height) = hls_attribute(attrs, "RESOLUTION")
             .and_then(|r| r.split_once('x'))
-            .and_then(|(w, h)| Some(w.parse::<u64>().ok()? * h.parse::<u64>().ok()?))
-            .unwrap_or(0);
+            .and_then(|(w, h)| Some((w.parse::<u64>().ok()?, h.parse::<u64>().ok()?)))
+            .unwrap_or((0, 0));
         let bandwidth = hls_attribute(attrs, "BANDWIDTH").and_then(|b| b.parse::<u64>().ok()).unwrap_or(0);
-        let url = base.join(uri).ok()?.to_string();
-        if best.as_ref().is_none_or(|(rank, _)| (pixels, bandwidth) > *rank) {
-            best = Some(((pixels, bandwidth), url));
-        }
+        variants.push((height, width * height, bandwidth, base.join(uri).ok()?.to_string()));
     }
-    best.map(|(_, url)| url)
+    let best = |candidates: Vec<&(u64, u64, u64, String)>| {
+        candidates.into_iter().max_by_key(|v| (v.1, v.2)).map(|v| v.3.clone())
+    };
+    let rated: Vec<&(u64, u64, u64, String)> = variants.iter().filter(|v| v.0 > 0).collect();
+    let Some(wanted) = wanted.filter(|_| !rated.is_empty()).map(u64::from) else {
+        return best(variants.iter().collect());
+    };
+    // Heights in the order exact, closest lower, closest higher; the best of the first group present.
+    let pick_height = rated
+        .iter()
+        .map(|v| v.0)
+        .filter(|h| *h <= wanted)
+        .max()
+        .or_else(|| rated.iter().map(|v| v.0).min())?;
+    best(rated.into_iter().filter(|v| v.0 == pick_height).collect())
 }
 
 /// Plans the download of a finished (VOD) media playlist. `None` for anything the plan does
@@ -1388,7 +1407,7 @@ pub fn hls_source_stamp(plan: &HlsPlan) -> String {
 /// the download. `None` when it cannot be read or planned; ffmpeg then reads it itself. A
 /// private address (the variant, or a redirect hop) is an error instead, because handing the
 /// playlist to ffmpeg would reach that address anyway.
-async fn fetch_hls_plan(url: &str, headers: &RequestHeaders) -> Result<Option<HlsPlan>, String> {
+async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> Result<Option<HlsPlan>, String> {
     let client = stream_client()?;
     let mut current = url.to_string();
     for _ in 0..3 {
@@ -1402,7 +1421,7 @@ async fn fetch_hls_plan(url: &str, headers: &RequestHeaders) -> Result<Option<Hl
         let final_url = response.url().to_string();
         let Ok(text) = response.text().await else { return Ok(None) };
         if text.contains("#EXT-X-STREAM-INF") {
-            let Some(variant) = best_hls_variant(&text, &final_url) else { return Ok(None) };
+            let Some(variant) = hls_variant_for(&text, &final_url, quality_height(quality)) else { return Ok(None) };
             current = variant;
             continue;
         }
@@ -1698,7 +1717,7 @@ async fn download_stream_with_ffmpeg(
 ) -> Result<Finished, String> {
     let hls_options = probe_ffmpeg().await.map_err(|e| e.to_string())?;
     if kind == StreamKind::Hls {
-        if let Some(plan) = fetch_hls_plan(url, headers).await? {
+        if let Some(plan) = fetch_hls_plan(url, headers, &job.record.quality).await? {
             return download_hls_files(job, &plan, headers, hls_options, subtitles).await;
         }
     }

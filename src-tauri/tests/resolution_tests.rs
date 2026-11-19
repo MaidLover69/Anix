@@ -4,7 +4,7 @@
 
 mod english_ui;
 
-use anix_lib::downloads::pick_stream;
+use anix_lib::downloads::{hls_variant_for, pick_stream};
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use anix_lib::providers::languages::{LanguagePrefs, Languages};
@@ -150,4 +150,19 @@ async fn language_still_comes_before_resolution() {
     let (provider, url) = first_stream(&manager).await;
     assert_eq!(provider, "latanime");
     assert_eq!(url, "https://latanime.example/1080p.m3u8");
+}
+
+#[test]
+fn a_master_playlist_download_takes_the_wanted_variant() {
+    let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nv1080.m3u8\n\
+                  #EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720\nv720.m3u8\n\
+                  #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\nv480.m3u8\n";
+    let pick = |text: &str, wanted: Option<u32>| hls_variant_for(text, "https://cdn.example/m.m3u8", wanted).map(|u| u.rsplit('/').next().unwrap().to_string());
+    assert_eq!(pick(master, Some(720)).as_deref(), Some("v720.m3u8"));
+    assert_eq!(pick(master, Some(600)).as_deref(), Some("v480.m3u8"), "closest lower");
+    assert_eq!(pick(master, None).as_deref(), Some("v1080.m3u8"), "best: no wish");
+    let only_high = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\nv720.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=854x480\nv480.m3u8\n";
+    assert_eq!(pick(only_high, Some(360)).as_deref(), Some("v480.m3u8"), "nothing lower: closest higher");
+    let no_resolution = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nb.m3u8\n";
+    assert_eq!(pick(no_resolution, Some(720)).as_deref(), Some("b.m3u8"), "no RESOLUTION: best");
 }

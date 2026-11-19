@@ -4,7 +4,7 @@
 
 mod english_ui;
 
-use anix_lib::downloads::{hls_variant_for, pick_stream};
+use anix_lib::downloads::{downloaded_base_name, hls_variant_for, output_base_name, pick_stream};
 use anix_lib::error::AppError;
 use anix_lib::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use anix_lib::providers::languages::{LanguagePrefs, Languages};
@@ -165,4 +165,18 @@ fn a_master_playlist_download_takes_the_wanted_variant() {
     assert_eq!(pick(only_high, Some(360)).as_deref(), Some("v480.m3u8"), "nothing lower: closest higher");
     let no_resolution = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nb.m3u8\n";
     assert_eq!(pick(no_resolution, Some(720)).as_deref(), Some("b.m3u8"), "no RESOLUTION: best");
+}
+
+#[test]
+fn equal_variants_keep_the_first_and_the_file_is_named_by_the_height_got() {
+    let tie = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5,RESOLUTION=1280x720\nfirst.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5,RESOLUTION=1280x720\nsecond.m3u8\n";
+    for wanted in [Some(720), None] {
+        assert_eq!(hls_variant_for(tie, "https://cdn.example/m.m3u8", wanted).as_deref(), Some("https://cdn.example/first.m3u8"), "{wanted:?}");
+    }
+    // 720p asked, 480p downloaded: named 480p; an exact match or an unknown height keeps the asked name.
+    let name = |asked: &str, got: Option<u32>| downloaded_base_name("Show", 1.0, "sub", asked, got);
+    assert_eq!(name("720p", Some(480)), output_base_name("Show", 1.0, "sub", "480p"));
+    assert_eq!(name("720p", Some(720)), output_base_name("Show", 1.0, "sub", "720p"));
+    assert_eq!(name("720p", None), output_base_name("Show", 1.0, "sub", "720p"));
+    assert_eq!(name("best", Some(1080)), output_base_name("Show", 1.0, "sub", "1080p"));
 }

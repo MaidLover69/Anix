@@ -3,7 +3,7 @@ use crate::clients::anilist::MediaHint;
 use crate::clients::http::{http_client, no_redirect_client};
 use crate::clients::net_guard::{check_public_url, public_http_client, public_no_redirect_client};
 use crate::error::AppError;
-use crate::providers::resolution::{order_streams, set_current_wanted, wanted_height};
+use crate::providers::resolution::{order_streams, wanted_height, WANTED};
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
 use crate::providers::languages::{plan_tiers, prefer_subtitles, served_language, LanguagePrefs, Languages, Tier};
@@ -908,8 +908,7 @@ impl Inner {
         };
 
         let wanted = self.resolution.as_ref().and_then(|source| wanted_height(&source()));
-        set_current_wanted(wanted);
-        let sources = provider.get_sources_with(&episode, asked.clone(), access).await;
+        let sources = WANTED.scope(wanted, provider.get_sources_with(&episode, asked.clone(), access)).await;
         self.note_outcome(provider.site(), &sources);
         let mut sources = sources?;
         if sources.streams.is_empty() {

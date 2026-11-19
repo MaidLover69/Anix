@@ -324,6 +324,8 @@ impl Player {
                     "title": field("title"),
                     "codec": field("codec"),
                     "demux_h": field("demux-h").and_then(|v| v.parse::<i64>().ok()),
+                    // An HLS variant's declared bits per second; tells equal heights apart.
+                    "hls_bitrate": field("hls-bitrate").and_then(|v| v.parse::<i64>().ok()),
                     // The file or URL of a track added with sub-add; none for the file's own tracks.
                     "external_filename": field("external-filename"),
                     "selected": field("selected").as_deref() == Some("yes"),

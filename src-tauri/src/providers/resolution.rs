@@ -23,14 +23,12 @@ pub fn order_streams(streams: &mut [StreamItem], wanted: Option<u32>) {
     });
 }
 
-static WANTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-/// The height the current lookup wants, for a source that verifies its own streams and must
-/// order them before it does (0 = no wish).
-pub fn set_current_wanted(height: Option<u32>) {
-    WANTED.store(height.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+tokio::task_local! {
+    /// The height the current lookup wants, for a source that verifies its own streams and must
+    /// order them before it does. Set around `get_sources_with`; read once before spawning.
+    pub static WANTED: Option<u32>;
 }
 
 pub fn current_wanted() -> Option<u32> {
-    Some(WANTED.load(std::sync::atomic::Ordering::Relaxed)).filter(|h| *h > 0)
+    WANTED.try_with(|h| *h).ok().flatten()
 }

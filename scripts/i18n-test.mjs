@@ -148,4 +148,22 @@ assert.deepEqual(markParts('Buffer (MB)', '(mb'), [{ text: 'Buffer ', hit: false
 assert.equal(markParts('Hide adult content', 'con adu').filter((p) => p.hit).length, 2);
 assert.equal(markParts('Hide adult content', 'con adu').map((p) => p.text).join(''), 'Hide adult content');
 
+// #10: the new Settings rows and the custom speed field have text in every language, and the
+// English labels are what settings search finds ("resolution", "speed").
+const issue10Keys = [
+  'settings.streamingResolution', 'settings.streamingResolutionHint', 'settings.resolutionAuto',
+  'downloadSettings.downloadResolution', 'downloadSettings.downloadResolutionHint',
+  'settings.defaultPlaybackSpeed', 'settings.defaultPlaybackSpeedHint', 'playerSettingsPanel.customSpeed',
+];
+for (const key of issue10Keys) {
+  for (const [language, catalog] of Object.entries(catalogs)) {
+    assert.equal(typeof catalog[key], 'string', `${language} lacks ${key}`);
+    assert.ok(catalog[key].trim().length > 0, `${language} has an empty ${key}`);
+  }
+}
+assert.match(catalogs.en['settings.streamingResolution'], /resolution/i);
+assert.match(catalogs.en['downloadSettings.downloadResolution'], /resolution/i);
+assert.match(catalogs.en['settings.defaultPlaybackSpeed'], /speed/i);
+assert.match(catalogs.en['playerSettingsPanel.customSpeed'], /custom/i);
+
 console.log('i18n tests passed');

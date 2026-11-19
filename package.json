@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "i18n:check": "node --experimental-strip-types scripts/i18n-check.mjs --raw",
-    "i18n:test": "node --experimental-strip-types scripts/i18n-test.mjs && node --experimental-strip-types scripts/player-test.mjs && node --experimental-strip-types scripts/history-test.mjs && node --experimental-strip-types scripts/routes-test.mjs && node --experimental-strip-types scripts/party-test.mjs && node --experimental-strip-types scripts/home-test.mjs && node --test scripts/memes-unpack-test.mjs",
+    "i18n:test": "node --experimental-strip-types scripts/i18n-test.mjs && node --experimental-strip-types scripts/player-test.mjs && node --experimental-strip-types scripts/speed-test.mjs && node --experimental-strip-types scripts/resolution-test.mjs && node --experimental-strip-types scripts/select-placement-test.mjs && node --experimental-strip-types scripts/history-test.mjs && node --experimental-strip-types scripts/routes-test.mjs && node --experimental-strip-types scripts/party-test.mjs && node --experimental-strip-types scripts/home-test.mjs && node --test scripts/memes-unpack-test.mjs",
     "floor": "node --test scripts/floor-guard-test.mjs && node scripts/floor-guard.mjs"
   },
   "dependencies": {

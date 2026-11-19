@@ -1845,17 +1845,39 @@ pub async fn import_custom_playlist(
 }
 
 /// The covers of a smart collection's last saved result (up to four), for its collage; none
-/// while it has no saved result. A hand-made playlist has no saved result either.
-async fn smart_collection_covers(pool: &SqlitePool, playlist_id: &str) -> Vec<String> {
-    let saved = crate::offline::load(pool, crate::offline::Kind::Collection, playlist_id).await.ok().flatten();
-    let Some((serde_json::Value::Array(list), _)) = saved else {
-        return Vec::new();
+/// while it has no saved result. A hand-made playlist has no saved result either. A franchise
+/// collection (`franchise=<id>`) has no result of its own: its page is built from the details
+/// of the anime it names, saved when they were fetched, so its collage uses those.
+async fn smart_collection_covers(pool: &SqlitePool, playlist_id: &str, rule: Option<&str>) -> Vec<String> {
+    let franchise = rule.and_then(|r| r.split('&').find_map(|kv| kv.strip_prefix("franchise="))).and_then(|id| id.parse::<i64>().ok());
+    let (kind, key) = match franchise {
+        Some(id) => (crate::offline::Kind::Details, id.to_string()),
+        None => (crate::offline::Kind::Collection, playlist_id.to_string()),
+    };
+    let list = match crate::offline::load(pool, kind, &key).await.ok().flatten() {
+        Some((serde_json::Value::Array(list), _)) => list,
+        Some((details @ serde_json::Value::Object(_), _)) => franchise_entries(&details),
+        _ => return Vec::new(),
     };
     list.iter()
         .filter_map(|m| m["cover_image"]["large"].as_str().or_else(|| m["coverImage"]["large"].as_str()))
         .take(4)
         .map(String::from)
         .collect()
+}
+
+/// The anime of saved details and the entries of its watch order they name (prequels, sequels,
+/// side stories; not manga or novels), as in `src/lib/watchOrder.ts`.
+fn franchise_entries(details: &serde_json::Value) -> Vec<serde_json::Value> {
+    const ORDER: [&str; 3] = ["PREQUEL", "SEQUEL", "SIDE_STORY"];
+    const PRINT: [&str; 3] = ["MANGA", "NOVEL", "ONE_SHOT"];
+    let edges = details["relations"]["edges"].as_array().cloned().unwrap_or_default();
+    let related = edges
+        .into_iter()
+        .filter(|e| e["relationType"].as_str().is_some_and(|t| ORDER.contains(&t)))
+        .map(|e| e["node"].clone())
+        .filter(|n| !PRINT.contains(&n["format"].as_str().unwrap_or_default()));
+    std::iter::once(details.clone()).chain(related).collect()
 }
 
 pub async fn list_custom_playlists(
@@ -1889,8 +1911,12 @@ pub async fn list_custom_playlists(
             })
             .unwrap_or_default();
         let id: String = r.get("id");
+        // A rule restored from a crafted backup is dropped rather than handed to the page.
+        let rule = crate::collection_file::validate_rule(r.get::<Option<String>, _>("rule").as_deref())
+            .ok()
+            .flatten();
         if covers.is_empty() {
-            covers = smart_collection_covers(pool, &id).await;
+            covers = smart_collection_covers(pool, &id, rule.as_deref()).await;
         }
 
         playlists.push(CustomPlaylist {
@@ -1901,10 +1927,7 @@ pub async fn list_custom_playlists(
             updated_at: r.get("updated_at"),
             item_count: r.get("item_count"),
             covers,
-            // A rule restored from a crafted backup is dropped rather than handed to the page.
-            rule: crate::collection_file::validate_rule(r.get::<Option<String>, _>("rule").as_deref())
-                .ok()
-                .flatten(),
+            rule,
         });
     }
 

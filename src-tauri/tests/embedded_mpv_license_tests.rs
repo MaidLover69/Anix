@@ -8,7 +8,7 @@
 //!   (the AppImage layout), false for a system library. `load_lib` calls it in release builds.
 //! - `no_libmpv_message() -> String`: shown (as the web-player reason) when no libmpv loads.
 
-use anix_lib::embedded_mpv::{default_engine, libmpv_is_bundled, license_refusal, no_libmpv_message, no_libmpv_message_for};
+use anix_lib::embedded_mpv::{default_engine, quiet_no_libmpv, libmpv_is_bundled, license_refusal, no_libmpv_message, no_libmpv_message_for};
 
 const GPL: &str = "GPL version 3 or later";
 const LGPL: &str = "LGPL version 2.1 or later";
@@ -58,13 +58,28 @@ fn the_flatpak_message_suggests_neither_a_system_libmpv_nor_open_in_mpv() {
 #[test]
 fn an_install_that_never_chose_uses_mpv_only_where_it_can() {
     // debug builds and the AppImage: mpv without asking whether a libmpv loads
-    assert_eq!(default_engine(true, false, false, || false), "mpv");
-    assert_eq!(default_engine(false, true, false, || false), "mpv");
+    assert_eq!(default_engine(false, true, false, false, || false), "mpv");
+    assert_eq!(default_engine(false, false, true, false, || false), "mpv");
     // RPM/DEB/AUR: mpv when the system's libmpv loads, else quietly the web player
-    assert_eq!(default_engine(false, false, false, || true), "mpv");
-    assert_eq!(default_engine(false, false, false, || false), "web");
+    assert_eq!(default_engine(false, false, false, false, || true), "mpv");
+    assert_eq!(default_engine(false, false, false, false, || false), "web");
     // the Flatpak never loads a system libmpv
-    assert_eq!(default_engine(false, false, true, || true), "web");
+    assert_eq!(default_engine(false, false, false, true, || true), "web");
+}
+
+#[test]
+fn a_forced_web_run_never_probes_libmpv() {
+    for (debug, appimage) in [(false, false), (true, false), (false, true)] {
+        let engine = default_engine(true, debug, appimage, false, || panic!("libmpv was probed"));
+        assert_eq!(engine, "web");
+    }
+}
+
+#[test]
+fn a_missing_system_libmpv_is_quiet_but_a_failing_bundled_one_is_not() {
+    assert!(quiet_no_libmpv(false, false));
+    assert!(!quiet_no_libmpv(true, false));
+    assert!(!quiet_no_libmpv(false, true));
 }
 
 #[test]

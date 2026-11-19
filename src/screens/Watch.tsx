@@ -160,7 +160,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     [notify, high]
   );
   // Embedded mpv was wanted but did not start (libmpv missing, GL failed): say why, once a run.
-  const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available ? mpvStatus.data.error : null;
+  const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available && !mpvStatus.data.quiet ? mpvStatus.data.error : null;
   useEffect(() => {
     if (!mpvStartError || mpvStartNoticeShown) return;
     mpvStartNoticeShown = true;
@@ -459,11 +459,13 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         }));
       }
       const provider = target.anilistId === anilistId ? routeProvider : null;
-      navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider), {
+      // Within the same title the server serving now is the next episode's default (a hint, not a pick).
+      const hint = target.anilistId === anilistId && !localRequested ? servingProvider : null;
+      navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider, hint ?? 'auto'), {
         replace: true,
       });
     },
-    [anilistId, category, routeProvider, navigate]
+    [anilistId, category, routeProvider, servingProvider, localRequested, navigate]
   );
 
   const handleBack = useCallback(() => {

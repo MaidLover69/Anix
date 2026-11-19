@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { MpvMedia } from '../src/components/player/mpvMedia.ts';
 import { LOAD_STALL_MS, STALL_MS, watchStall } from '../src/lib/stall.ts';
-import { addedTrackId, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../src/lib/mpvSubtitles.ts';
+import { addedTrackId, duplicatesFileTrack, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../src/lib/mpvSubtitles.ts';
 
 /** A stand-in with a record of what it sent to mpv and which events it fired. */
 function player() {
@@ -145,6 +145,13 @@ const loaded = (paused) => ({ kind: 'loaded', tracks: [], paused });
   assert.equal(addedTrackId(tracks, 'http://p/s1'), 2);
   assert.equal(addedTrackId(tracks, 'http://p/s2'), null, 'not added yet');
   assert.deepEqual(fileSubtitleTracks(tracks).map((t) => t.id), [1], "added files are listed from the extension's list");
+{
+  const own = [{ id: 1, type: 'sub', lang: 'eng', title: null, codec: 'subrip', selected: true }];
+  assert.equal(duplicatesFileTrack('english', own), true, 'the first language is in the file already');
+  assert.equal(duplicatesFileTrack('spanish', own), false);
+  assert.equal(duplicatesFileTrack('Subtitles (SRT)', own), false);
+  assert.equal(duplicatesFileTrack('english', []), false);
+}
 }
 
 // Review follow-ups: a seek that ends during a stall keeps the spinner; a load or an end clears the stall.

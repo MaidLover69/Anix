@@ -365,6 +365,15 @@ static WEB_PLAYBACK: Mutex<bool> = Mutex::new(false);
 /// This start moved to embedded mpv after a crash during web playback; told once setup runs.
 static CRASH_SWITCH_NOTICE: AtomicBool = AtomicBool::new(false);
 
+/// The web player is used only because a system package has no libmpv: the page shows no notice
+/// (Settings still says why); the AppImage, whose own libmpv failed, stays loud.
+static QUIET_FALLBACK: AtomicBool = AtomicBool::new(false);
+
+/// Whether a libmpv load failure is quiet: the system's library is just not installed.
+pub fn quiet_no_libmpv(bundled: bool, flatpak: bool) -> bool {
+    !bundled && !flatpak
+}
+
 fn set_status(status: Result<(), String>) {
     if let Err(ref e) = status {
         tracing::warn!("Embedded mpv is not available, the web player is used: {}", e);
@@ -441,10 +450,11 @@ fn read_settings() -> Value {
 }
 
 /// The "Player engine" setting; with none saved, `default_engine`.
-fn engine_setting(settings: &Value) -> String {
+fn engine_setting(settings: &Value, forced_web: bool) -> String {
     match settings.get(SETTING_KEY).and_then(Value::as_str) {
         Some(engine) => engine.to_string(),
         None => default_engine(
+            forced_web,
             cfg!(debug_assertions),
             std::env::var_os("APPIMAGE").is_some(),
             crate::system::is_flatpak(),
@@ -457,14 +467,18 @@ fn engine_setting(settings: &Value) -> String {
 /// The engine of an install that never chose one. Debug builds and the AppImage use embedded
 /// mpv; the Flatpak has no libmpv, so the web player. Other release builds (RPM/DEB/AUR) use
 /// mpv only when the system's libmpv loads, else quietly the web player (no notice: nobody
-/// asked for mpv).
+/// asked for mpv). Forced web (`--web-player`, env, safe mode) is web before anything is probed.
 pub fn default_engine(
+    forced_web: bool,
     debug: bool,
     appimage: bool,
     flatpak: bool,
     libmpv_loads: impl FnOnce() -> bool,
 ) -> &'static str {
-    if debug || appimage {
+    // A forced web run never probes libmpv: one that crashes on load must be avoidable.
+    if forced_web {
+        "web"
+    } else if debug || appimage {
         "mpv"
     } else if flatpak || !libmpv_loads() {
         "web"
@@ -553,11 +567,13 @@ fn decision() -> &'static Start {
             CRASH_SWITCH_NOTICE.store(true, Ordering::SeqCst);
         }
         let state = load_state();
-        let mut decision = policy::decide(&engine_setting(&read_settings()), forced, &state);
+        let mut decision = policy::decide(&engine_setting(&read_settings(), forced.is_some()), forced, &state);
         // Checked before WebKit's DMA-BUF renderer is kept on for mpv: a missing or refused
         // libmpv must not cost the blank-window workaround.
         if decision == Start::Mpv {
             if let Err(e) = load_lib() {
+                let bundled = library_path().is_ok_and(|(_, bundled)| bundled);
+                QUIET_FALLBACK.store(quiet_no_libmpv(bundled, crate::system::is_flatpak()), Ordering::SeqCst);
                 decision = Start::Web { reason: Some(e) };
             }
         }
@@ -636,7 +652,7 @@ fn pid_is_anix(pid: u32) -> bool {
 /// Moves the setting to embedded mpv after a crash during web playback, when this build can
 /// run it and that was not done before. Returns whether it switched.
 fn switch_to_mpv_after_crash(forced_web: bool) -> bool {
-    let engine = engine_setting(&read_settings());
+    let engine = engine_setting(&read_settings(), forced_web);
     let state = load_state();
     // libmpv is only loaded when the rest already says yes.
     let candidate = policy::switch_to_mpv_after_crash(&engine, true, forced_web, true, &state);
@@ -1085,6 +1101,8 @@ pub struct EngineStatus {
     pub requested: bool,
     pub available: bool,
     pub error: Option<String>,
+    /// `error` is only the system having no libmpv: not worth a notice.
+    pub quiet: bool,
     /// The page asks "Is the video player showing correctly?" now.
     pub ask_confirm: bool,
     /// Why the web player is used although embedded mpv was chosen before.
@@ -1109,6 +1127,7 @@ pub async fn embedded_mpv_status() -> EngineStatus {
         requested,
         available,
         error,
+        quiet: QUIET_FALLBACK.load(Ordering::SeqCst),
         ask_confirm: available && ASK.load(Ordering::SeqCst),
         reason: state.reason,
         hwdec: HWDEC.lock().unwrap_or_else(|p| p.into_inner()).clone(),

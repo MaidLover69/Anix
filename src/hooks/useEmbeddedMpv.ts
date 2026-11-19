@@ -12,7 +12,7 @@ import { defaultSubtitleIndex, SUBTITLES_OFF } from './useSubtitleTracks';
 import type { SubtitleOption } from './useSubtitleTracks';
 import { t } from '../i18n';
 import { pickHeight } from '../lib/resolution';
-import { addedTrackId, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../lib/mpvSubtitles';
+import { addedTrackId, duplicatesFileTrack, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../lib/mpvSubtitles';
 
 /** The hidden hardware decoding self-test's stored result. */
 export interface HwdecSelfTest {
@@ -29,6 +29,8 @@ export interface EmbeddedMpvStatus {
   requested: boolean;
   available: boolean;
   error: string | null;
+  /** `error` is only a system package without libmpv: no notice, Settings still shows it. */
+  quiet: boolean;
   /** "Is the video player showing correctly?" must be asked now. */
   ask_confirm: boolean;
   /** Why the web player is used although embedded mpv was chosen before. */
@@ -400,14 +402,18 @@ export function useMpvEngine({
   }, [tracks]);
 
   // The extension's files (added when picked), then the video file's own tracks.
+  const playsFile = !!streams[streamIndex]?.url.includes('/local/');
   const subtitleOptions = useMemo<SubtitleOption[]>(
     () => [
-      ...subtitles.map((sub, index) => ({
-        id: `ext:${index}`,
-        label: sub.language || t('useEmbeddedMpv.trackNumber', { number: index + 1 }),
-        format: sub.format || 'sub',
-        isDefault: !!sub.is_default,
-      })),
+      ...subtitles
+        .map((sub, index) => ({
+          id: `ext:${index}`,
+          label: sub.language || t('useEmbeddedMpv.trackNumber', { number: index + 1 }),
+          format: sub.format || 'sub',
+          isDefault: !!sub.is_default,
+        }))
+        // A downloaded file's own track already is this language (the side file would repeat it).
+        .filter((option) => !(playsFile && duplicatesFileTrack(option.label, tracks))),
       ...fileSubtitleTracks(tracks).map((t, index) => ({
         id: `${SUB_ID}${t.id}`,
         label: trackLabel(t, index),
@@ -415,7 +421,7 @@ export function useMpvEngine({
         isDefault: !!t.default,
       })),
     ],
-    [subtitles, tracks]
+    [subtitles, tracks, playsFile]
   );
   const audioTracks = useMemo<MediaTrackOption[]>(
     () => tracks.filter((t) => t.type === 'audio' && t.id !== null).map((t, index) => ({ id: t.id as number, label: trackLabel(t, index) })),

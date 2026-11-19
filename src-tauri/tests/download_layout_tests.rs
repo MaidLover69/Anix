@@ -637,3 +637,33 @@ fn a_download_queued_under_1_4_1_resumes_in_its_flat_folder() {
 fn part_suffix_constant_is_unchanged() {
     assert_eq!(PART_SUFFIX, ".anix-part");
 }
+
+#[test]
+fn an_episode_folder_a_second_job_still_uses_is_not_pruned() {
+    let root = TempDir::new("busy");
+    let ep = root.path().join("Show").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    // a sub and a dub of one episode run at once
+    downloads::claim_episode_folder(&ep);
+    downloads::claim_episode_folder(&ep);
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(ep.exists(), "the other job still uses the folder");
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(!root.path().join("Show").exists(), "the last one out removes the empty folders");
+}
+
+#[test]
+fn the_old_folder_pass_leaves_a_current_folder_inside_an_old_one_alone() {
+    let root = TempDir::new("old-around-current");
+    let current = root.path().join("Anix");
+    let ep = current.join("Show").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    let part = |dir: &Path, name: &str| dir.join(format!("{}.{}.download{}", name, work_tag("q"), PART_SUFFIX));
+    touch(&part(&ep, "queued"));
+    touch(&part(root.path(), "old"));
+    let list = root.path().join("dirs.txt");
+    downloads::remember_work_dir(&list, root.path());
+    assert_eq!(downloads::remove_part_files_in_old_dirs(&list, &current), 1);
+    assert!(!part(root.path(), "old").exists());
+    assert!(part(&ep, "queued").exists(), "the current folder keeps its partials");
+}

@@ -438,13 +438,14 @@ pub fn work_file_path(dir: &Path, record: &DownloadRecord, role: &str) -> PathBu
 /// downloads tagged `keep` (see [`work_tag`]). The HLS segment folder is the only directory
 /// removed. Returns how many entries were removed. Only call it while no download is running.
 pub fn remove_stale_part_files(dir: &Path, keep: &[String]) -> usize {
-    stale_part_files(dir, keep, 0)
+    stale_part_files(dir, keep, 0, None)
 }
 
 /// How many folders below the download folder hold working files: `<title>/Episode NN`.
 const WORK_DEPTH: u32 = 2;
 
-fn stale_part_files(dir: &Path, keep: &[String], depth: u32) -> usize {
+/// `skip` is a folder left alone with everything in it (the current download folder).
+fn stale_part_files(dir: &Path, keep: &[String], depth: u32, skip: Option<&Path>) -> usize {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return 0,
@@ -463,8 +464,11 @@ fn stale_part_files(dir: &Path, keep: &[String], depth: u32) -> usize {
         let name = name.to_string_lossy();
         let is_part = name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX);
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if skip.is_some_and(|skip| entry.path().starts_with(skip)) {
+            continue;
+        }
         if !is_part && is_dir && depth < WORK_DEPTH {
-            let inner = stale_part_files(&entry.path(), keep, depth + 1);
+            let inner = stale_part_files(&entry.path(), keep, depth + 1, skip);
             if inner > 0 {
                 // A folder the clean-up emptied (a cancelled new download) goes too.
                 let _ = std::fs::remove_dir(entry.path());
@@ -523,13 +527,13 @@ pub fn remove_part_files_in_old_dirs(list: &Path, current: &Path) -> usize {
             continue;
         }
         if dir.is_dir() {
-            removed += remove_stale_part_files(dir, &[]);
+            removed += stale_part_files(dir, &[], 0, Some(current));
         } else {
             still.push(line);
         }
     }
-    let current = current.to_string_lossy();
-    still.push(&current);
+    let current_line = current.to_string_lossy();
+    still.push(&current_line);
     let _ = std::fs::write(list, still.join("\n") + "\n");
     removed
 }
@@ -1113,6 +1117,26 @@ struct Finished {
     size: i64,
 }
 
+/// Episode folders that running downloads use, with how many each.
+static BUSY_FOLDERS: Lazy<Mutex<HashMap<PathBuf, usize>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// A running download uses `episode` (a `<title>/Episode NN` folder): until it releases it, the
+/// folder is not pruned, so a sub and a dub of one episode do not remove each other's folder.
+pub fn claim_episode_folder(episode: &Path) {
+    *lock(&BUSY_FOLDERS).entry(episode.to_path_buf()).or_insert(0) += 1;
+}
+
+/// Ends a [`claim_episode_folder`]; the folders are pruned ([`prune_empty_folders`]) once the
+/// last user of `episode` is done.
+pub fn release_episode_folder(episode: &Path, root: &Path) {
+    let mut busy = lock(&BUSY_FOLDERS);
+    let users = busy.get_mut(episode).map(|n| { *n = n.saturating_sub(1); *n }).unwrap_or(0);
+    if users == 0 {
+        busy.remove(episode);
+        prune_empty_folders(episode, root);
+    }
+}
+
 /// Files a download has created and not yet handed over as results.
 #[derive(Clone, Default)]
 struct WorkFiles {
@@ -1130,10 +1154,17 @@ impl WorkFiles {
         lock(&self.files).retain(|p| p != path);
     }
 
-    /// Removes the new download's episode and title folders if nothing is left in them.
+    /// Notes the new download's episode folder, which it prunes at the end.
+    fn use_folder(&self, episode: PathBuf, root: PathBuf) {
+        claim_episode_folder(&episode);
+        *lock(&self.folder) = Some((episode, root));
+    }
+
+    /// Removes the new download's episode and title folders if nothing is left in them and no
+    /// other running download uses the episode folder.
     fn prune_folders(&self) {
         if let Some((episode, root)) = lock(&self.folder).take() {
-            prune_empty_folders(&episode, &root);
+            release_episode_folder(&episode, &root);
         }
     }
 
@@ -1172,6 +1203,8 @@ impl Job<'_> {
     /// Path of a working file; it is removed again unless the download hands it over.
     fn work_path(&self, role: &str) -> PathBuf {
         let path = self.dir.join(work_file_name(&self.base, &self.tag, role));
+        // A job of the same episode may have pruned the folder meanwhile.
+        let _ = std::fs::create_dir_all(&self.dir);
         self.work.track(&path);
         path
     }
@@ -1716,6 +1749,7 @@ async fn reserve_final_path(job: &Job<'_>, ext: &str) -> Result<(PathBuf, String
     let got = job.got_height.load(std::sync::atomic::Ordering::Relaxed);
     let record = job.record;
     let base = downloaded_base_name(&record.series_title, record.episode_num, &record.category, &record.quality, Some(got));
+    let _ = tokio::fs::create_dir_all(&job.dir).await;
     for n in 1..=999u32 {
         let stem = if n == 1 {
             base.clone()
@@ -2089,7 +2123,7 @@ where
     };
     let dir = if nested { download_folder(&root, record) } else { root.clone() };
     if nested && dir != root {
-        *lock(&work.folder) = Some((dir.clone(), root.clone()));
+        work.use_folder(dir.clone(), root.clone());
     }
     tokio::fs::create_dir_all(&dir)
         .await

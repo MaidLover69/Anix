@@ -1,10 +1,10 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Switch } from '../ui/Switch';
 import { PanelSection, PlayerSidePanel } from './PlayerSidePanel';
 import type { AudioMode } from './PlayerControls';
 import type { ScreenFit } from './playerLogic';
-import { MAX_SPEED } from './playerLogic';
+import { CUSTOM_SPEED_MAX, CUSTOM_SPEED_MIN, CUSTOM_SPEED_STEP, FIXED_SPEEDS, isFixedSpeed, parseCustomSpeed, speedSpot } from '../../lib/speed';
 import { useSaveSettings, useSettings } from '../../hooks/useSettings';
 import { ANIME4K_MODES, anime4kParts, anime4kPreset } from '../../lib/anime4k';
 import type { Anime4kPreset, Anime4kQuality } from '../../lib/anime4k';
@@ -19,9 +19,7 @@ export interface PlayerMenuOption {
   label: string;
 }
 
-const SPEEDS = ['0.5', '0.75', '1', '1.25', '1.5', '2', String(MAX_SPEED)];
-// Meme mode › High: the speeds with a meme caption.
-const SPEED_SPOTS: Partial<Record<string, MemeSpot>> = { '0.75': 'spd075', '1.5': 'spd15', '2': 'spd2' };
+const CUSTOM = 'custom';
 
 /** A label with its meme, when the spot is given. */
 const labelled = (plain: string, spot?: MemeSpot) => (spot ? <Meme spot={spot} plain={plain} /> : plain);
@@ -97,7 +95,12 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
   const save = useSaveSettings();
   const saveSetting = (changes: Partial<AppSettings>) => save.mutate(changes);
   const upscale = anime4kParts(anime4k);
-  const speed = SPEEDS.includes(String(rate)) ? String(rate) : '';
+  // "Custom" stays selected while its field is open, and whenever the rate is not a fixed step.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [typed, setTyped] = useState<string | null>(null);
+  const custom = customOpen || !isFixedSpeed(rate);
+  const speed = custom ? CUSTOM : String(rate);
+  const typedSpeed = typed === null ? null : parseCustomSpeed(typed);
 
   return (
     <PlayerSidePanel isOpen={isOpen} onClose={onClose} title={<Meme spot="setBtn" plain={t('common.settings')} />} subtitle={t('playerSettingsPanel.subtitle')} container={container}>
@@ -114,9 +117,38 @@ export const PlayerSettingsPanel: React.FC<PlayerSettingsPanelProps> = ({
             className="max-w-full flex-wrap"
             aria-label={t('playerSettingsPanel.playbackSpeed')}
             value={speed}
-            onChange={(value) => onRateChange(Number(value))}
-            options={SPEEDS.map((value) => ({ value, label: labelled(value === '1' ? '1×' : `${value}`, SPEED_SPOTS[value]) }))}
+            onChange={(value) => {
+              setTyped(null);
+              setCustomOpen(value === CUSTOM);
+              if (value !== CUSTOM) onRateChange(Number(value));
+            }}
+            options={[
+              ...FIXED_SPEEDS.map((rate) => ({
+                value: String(rate),
+                label: labelled(rate === 1 ? '1×' : `${rate}`, speedSpot(rate) ?? undefined),
+              })),
+              { value: CUSTOM, label: labelled(t('playerSettingsPanel.customSpeed'), 'spdCustom') },
+            ]}
           />
+          {custom && (
+            <input
+              type="number"
+              inputMode="decimal"
+              min={CUSTOM_SPEED_MIN}
+              max={CUSTOM_SPEED_MAX}
+              step={CUSTOM_SPEED_STEP}
+              aria-label={t('playerSettingsPanel.customSpeed')}
+              aria-invalid={typed !== null && typedSpeed === null}
+              value={typed ?? Number(rate.toFixed(2))}
+              onChange={(e) => {
+                setTyped(e.target.value);
+                const next = parseCustomSpeed(e.target.value);
+                if (next !== null) onRateChange(next);
+              }}
+              onBlur={() => setTyped(null)}
+              className="ui-select h-9 w-28 rounded-md bg-bg-input px-3 text-[13px] tabular-nums text-text-primary aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-red-400"
+            />
+          )}
         </div>
         {qualityOptions.length > 0 && (
           <div className="flex flex-col gap-1" role="radiogroup" aria-label={t('playerSettingsPanel.quality')}>

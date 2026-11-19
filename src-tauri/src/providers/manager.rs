@@ -3,6 +3,7 @@ use crate::clients::anilist::MediaHint;
 use crate::clients::http::{http_client, no_redirect_client};
 use crate::clients::net_guard::{check_public_url, public_http_client, public_no_redirect_client};
 use crate::error::AppError;
+use crate::providers::resolution::{order_streams, wanted_height};
 use crate::models::{AnimeQuery, Category, EpisodeItem, ProviderData, SourcesResult, StreamItem};
 use crate::providers::common::{fmt_ep, is_hls_url, with_session_allowance, SESSION_LOOKUP_ALLOWANCE};
 use crate::providers::languages::{plan_tiers, prefer_subtitles, served_language, LanguagePrefs, Languages, Tier};
@@ -648,6 +649,9 @@ pub type ProviderSource = Arc<dyn Fn() -> Vec<Arc<dyn AnimeProvider>> + Send + S
 /// The user's language preferences, read at the start of every lookup.
 pub type LanguageSource = Arc<dyn Fn() -> LanguagePrefs + Send + Sync>;
 
+/// The Settings value of the preferred streaming resolution, read at every lookup.
+pub type ResolutionSource = Arc<dyn Fn() -> String + Send + Sync>;
+
 /// What to ask a provider for to answer `category`, or `None` when it has no such version. A
 /// site whose only version is a dub serves it as its plain version.
 fn asked_category(provider: &dyn AnimeProvider, category: &Category) -> Option<Category> {
@@ -715,6 +719,8 @@ struct Inner {
     resolve_hints: bool,
     /// Without it, every provider is asked whatever its languages.
     languages: Option<LanguageSource>,
+    /// The preferred streaming resolution; none keeps each source's own order.
+    resolution: Option<ResolutionSource>,
     /// Where hints come from; the anime catalogue (AniList, then the fallbacks) when unset.
     hint_source: Option<HintSource>,
 }
@@ -1085,6 +1091,7 @@ impl ProviderManager {
                 cooldowns: Mutex::new(HashMap::new()),
                 resolve_hints,
                 languages,
+                resolution: None,
                 hint_source: None,
             }),
         }
@@ -1097,6 +1104,20 @@ impl ProviderManager {
             inner.hint_source = Some(hints);
         }
         manager
+    }
+
+    /// Orders the streams of the chosen source by this resolution ("720", "auto", ...).
+    pub fn with_streaming_resolution(self, setting: &str) -> Self {
+        let setting = setting.to_string();
+        self.with_streaming_resolution_source(Arc::new(move || setting.clone()))
+    }
+
+    /// `with_streaming_resolution` for a setting that can change between lookups.
+    pub fn with_streaming_resolution_source(mut self, source: ResolutionSource) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.resolution = Some(source);
+        }
+        self
     }
 
     pub fn provider_names(&self) -> Vec<&'static str> {
@@ -1289,7 +1310,10 @@ impl ProviderManager {
             None => skip_paused(tiers, &lineup),
         };
 
+        let wanted_height = inner.resolution.as_ref().and_then(|source| wanted_height(&source()));
         let finish = |mut sources: SourcesResult| -> SourcesResult {
+            // The language is already chosen; the resolution only orders that source's streams.
+            order_streams(&mut sources.streams, wanted_height);
             let Some(prefs) = &prefs else {
                 return sources;
             };

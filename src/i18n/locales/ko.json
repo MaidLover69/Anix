@@ -2022,5 +2022,13 @@
   "fastDrawing.reasonSafe": "꺼짐: Anix가 --safe-graphics 옵션으로 시작되었습니다.",
   "fastDrawing.changeFailed": "빠른 그리기를 변경할 수 없습니다",
   "fastDrawing.dialogTitle": "Anix가 제대로 보이나요?",
-  "fastDrawing.dialogBody": "빠른 그리기가 켜졌습니다. 이 창이 제대로 보이고 부드럽게 스크롤되면 유지하세요. 그렇지 않으면 Anix가 끄고 다시 시작합니다."
+  "fastDrawing.dialogBody": "빠른 그리기가 켜졌습니다. 이 창이 제대로 보이고 부드럽게 스크롤되면 유지하세요. 그렇지 않으면 Anix가 끄고 다시 시작합니다.",
+  "settings.streamingResolution": "스트리밍 해상도",
+  "settings.streamingResolutionHint": "에피소드를 시작할 화질입니다. 소스에 없으면 가장 가까운 낮은 해상도, 그다음 가장 가까운 높은 해상도를 사용합니다.",
+  "settings.resolutionAuto": "자동",
+  "downloadSettings.downloadResolution": "다운로드 해상도",
+  "downloadSettings.downloadResolutionHint": "다운로드에 사용할 화질입니다. 소스에 없으면 가장 가까운 낮은 해상도, 그다음 가장 가까운 높은 해상도를 사용합니다.",
+  "settings.defaultPlaybackSpeed": "기본 재생 속도",
+  "settings.defaultPlaybackSpeedHint": "모든 에피소드는 이 속도로 시작합니다(0.5배~4배). 시청 중에 바꾼 속도는 해당 에피소드에만 적용됩니다.",
+  "playerSettingsPanel.customSpeed": "사용자 지정"
 }

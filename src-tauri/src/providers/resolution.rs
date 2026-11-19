@@ -1,0 +1,24 @@
+//! The preferred streaming resolution: it orders the streams of the chosen source and never
+//! overrides the language choice.
+
+use crate::downloads::quality_height;
+use crate::models::StreamItem;
+
+const HEIGHTS: [u32; 4] = [1080, 720, 480, 360];
+
+/// A setting ("720", "720p") as a height; "auto", "best" and anything unknown mean no wish.
+pub fn wanted_height(setting: &str) -> Option<u32> {
+    let height = quality_height(setting.trim())?;
+    HEIGHTS.contains(&height).then_some(height)
+}
+
+/// Exact height first, then the closest lower ones, then the closest higher ones, then streams
+/// without a stated height. The sort is stable, so equal heights keep the provider's order.
+pub fn order_streams(streams: &mut [StreamItem], wanted: Option<u32>) {
+    let Some(wanted) = wanted else { return };
+    streams.sort_by_key(|s| match quality_height(s.quality.as_deref().unwrap_or("")) {
+        Some(h) if h <= wanted => (0, wanted - h),
+        Some(h) => (1, h - wanted),
+        None => (2, 0),
+    });
+}

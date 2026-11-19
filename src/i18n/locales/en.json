@@ -2106,5 +2106,13 @@
   "fastDrawing.reasonSafe": "Turned off: Anix was started with --safe-graphics.",
   "fastDrawing.changeFailed": "Fast drawing could not be changed",
   "fastDrawing.dialogTitle": "Does Anix look right?",
-  "fastDrawing.dialogBody": "Fast drawing is now on. If this window looks right and scrolls smoothly, keep it. Otherwise Anix turns it off and restarts."
+  "fastDrawing.dialogBody": "Fast drawing is now on. If this window looks right and scrolls smoothly, keep it. Otherwise Anix turns it off and restarts.",
+  "settings.streamingResolution": "Streaming resolution",
+  "settings.streamingResolutionHint": "The picture size an episode starts at. If a source lacks it, the closest lower one is used, then the closest higher one.",
+  "settings.resolutionAuto": "Auto",
+  "downloadSettings.downloadResolution": "Download resolution",
+  "downloadSettings.downloadResolutionHint": "The picture size downloads start with. A source without it falls back to the closest lower one, then the closest higher one.",
+  "settings.defaultPlaybackSpeed": "Default playback speed",
+  "settings.defaultPlaybackSpeedHint": "Every episode starts at this speed (0.5× to 4×). A speed changed while watching applies to that episode only.",
+  "playerSettingsPanel.customSpeed": "Custom"
 }

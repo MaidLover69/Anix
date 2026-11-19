@@ -20,15 +20,12 @@ import type { EpisodesResult, Media } from '../types';
 import { CoverThumb } from './library/CoverThumb';
 import { INPUT_CLASS, LABEL_CLASS, formatBytes } from './library/format';
 import { t, tn } from '../i18n';
+import { DOWNLOAD_QUALITY_VALUES } from '../lib/resolution';
 
 type Category = 'sub' | 'dub';
 
-const qualityOptions = () => [
-  { value: 'best', label: t('bulkDownloadDialog.best') },
-  { value: '1080p', label: '1080p' },
-  { value: '720p', label: '720p' },
-  { value: '480p', label: '480p' },
-];
+const qualityOptions = () =>
+  DOWNLOAD_QUALITY_VALUES.map((value) => ({ value, label: value === 'best' ? t('bulkDownloadDialog.best') : value }));
 
 /** Upper bound for one batch when the anime's episode count is not known. */
 const MAX_BATCH_WITHOUT_COUNT = 100;

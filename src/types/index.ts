@@ -466,6 +466,10 @@ export interface AppSettings {
   doh_provider: DohProvider;
   catalogue_source: CatalogueSource;
   download_quality: string;
+  /** 'auto' or a height ('1080', '720', '480', '360'): the stream an episode starts on. */
+  streaming_resolution: string;
+  /** Every episode starts at this speed (0.5 to 4). */
+  default_playback_speed: number;
   download_dir: string;
   /** A built-in theme id (see `theme/themes.ts`). */
   theme: ThemeId;

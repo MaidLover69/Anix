@@ -4,7 +4,9 @@ import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { errorMessage } from '../ui/ErrorState';
 import { Row, Section } from './SettingsLayout';
-import { useSettings } from '../../hooks/useSettings';
+import { CustomSelect } from '../CustomSelect';
+import { useSaveSettings, useSettings } from '../../hooks/useSettings';
+import { DOWNLOAD_QUALITY_VALUES } from '../../lib/resolution';
 import { useDownloadDirectory, useDownloadFolder } from '../../hooks/useDownloads';
 import { useUIStore } from '../../stores/uiStore';
 import { t } from '../../i18n';
@@ -13,6 +15,7 @@ import { t } from '../../i18n';
 export const DownloadSettings: React.FC = () => {
   const showToast = useUIStore((s) => s.showToast);
   const { data: settings } = useSettings();
+  const save = useSaveSettings();
   const directory = useDownloadDirectory();
   const { change, reset } = useDownloadFolder();
   const [problem, setProblem] = useState<string | null>(null);
@@ -75,6 +78,21 @@ export const DownloadSettings: React.FC = () => {
               </p>
             )}
           </div>
+        )}
+      </Row>
+      <Row label={t('downloadSettings.downloadResolution')} hint={t('downloadSettings.downloadResolutionHint')}>
+        {({ labelId, hintId }) => (
+          <CustomSelect
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            className="w-36"
+            value={DOWNLOAD_QUALITY_VALUES.includes(settings?.download_quality ?? '') ? settings?.download_quality ?? 'best' : 'best'}
+            onChange={(value) => save.mutate({ download_quality: value })}
+            options={DOWNLOAD_QUALITY_VALUES.map((value) => ({
+              value,
+              label: value === 'best' ? t('bulkDownloadDialog.best') : value,
+            }))}
+          />
         )}
       </Row>
     </Section>

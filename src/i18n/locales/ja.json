@@ -2022,5 +2022,13 @@
   "fastDrawing.reasonSafe": "オフになりました: Anix が --safe-graphics 付きで起動されました。",
   "fastDrawing.changeFailed": "高速描画を変更できませんでした",
   "fastDrawing.dialogTitle": "Anix は正しく表示されていますか？",
-  "fastDrawing.dialogBody": "高速描画がオンになりました。このウィンドウが正しく表示され、滑らかにスクロールするなら維持してください。そうでなければ Anix はオフにして再起動します。"
+  "fastDrawing.dialogBody": "高速描画がオンになりました。このウィンドウが正しく表示され、滑らかにスクロールするなら維持してください。そうでなければ Anix はオフにして再起動します。",
+  "settings.streamingResolution": "ストリーミング解像度",
+  "settings.streamingResolutionHint": "エピソードの再生を始める画質です。ソースにない場合は、近い低い解像度、次に近い高い解像度を使います。",
+  "settings.resolutionAuto": "自動",
+  "downloadSettings.downloadResolution": "ダウンロード解像度",
+  "downloadSettings.downloadResolutionHint": "ダウンロードで使う画質です。ソースにない場合は、近い低い解像度、次に近い高い解像度を使います。",
+  "settings.defaultPlaybackSpeed": "デフォルトの再生速度",
+  "settings.defaultPlaybackSpeedHint": "すべてのエピソードはこの速度で始まります（0.5倍〜4倍）。視聴中に変えた速度は、そのエピソードだけに適用されます。",
+  "playerSettingsPanel.customSpeed": "カスタム"
 }

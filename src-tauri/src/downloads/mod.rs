@@ -453,11 +453,18 @@ fn stale_part_files(dir: &Path, keep: &[String], depth: u32, skip: Option<&Path>
         Err(_) => return 0,
     };
 
+    // A big direct file also keeps its part files (`….download.p<N>.anix-part`, see
+    // `engine::part_path`), which hold its bytes until they are joined at the end.
     let kept = |name: &str| {
         keep.iter().any(|tag| {
-            RESUME_ROLES
-                .iter()
-                .any(|role| name.ends_with(&format!(".{}.{}{}", tag, role, PART_SUFFIX)))
+            RESUME_ROLES.iter().any(|role| {
+                let file = format!(".{}.{}", tag, role);
+                name.ends_with(&format!("{}{}", file, PART_SUFFIX))
+                    || name
+                        .strip_suffix(PART_SUFFIX)
+                        .and_then(|stem| stem.rsplit_once(".p"))
+                        .is_some_and(|(head, index)| head.ends_with(&file) && index.parse::<usize>().is_ok())
+            })
         })
     };
     let mut removed = 0;

@@ -779,8 +779,9 @@ pub fn read_validator(target: &Path) -> Option<Validator> {
     read_note(&note_path(target)).map(|note| note.validator)
 }
 
-/// The file of part `index` of a ranged download of `partial`.
-pub(super) fn part_path(partial: &Path, index: usize) -> PathBuf {
+/// The file of part `index` of a ranged download of `partial`; parts are joined into `partial`
+/// only at the end, so after a crash they hold all the bytes saved so far.
+pub fn part_path(partial: &Path, index: usize) -> PathBuf {
     let name = partial.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let stem = name.strip_suffix(PART_SUFFIX).unwrap_or(&name);
     partial.with_file_name(format!("{}.p{}{}", stem, index, PART_SUFFIX))
@@ -964,14 +965,27 @@ async fn fetch_part(client: Client, url: String, options: DirectOptions, if_rang
     }
 }
 
-/// Downloads `total` bytes over `count` connections, then joins the parts into `partial`.
-async fn download_in_parts(client: &Client, url: &str, partial: &Path, total: u64, count: u64, validator: &Validator, options: &DirectOptions, meter: Option<&SpeedMeter>) -> Result<(), FetchError> {
+/// Downloads `total` bytes over `count` connections, then joins the parts into `partial`. With
+/// `keep`, part files an earlier run left are continued; returns how many bytes they held.
+async fn download_in_parts(client: &Client, url: &str, partial: &Path, total: u64, count: u64, validator: &Validator, keep: bool, options: &DirectOptions, meter: Option<&SpeedMeter>) -> Result<u64, FetchError> {
     let size = total.div_ceil(count);
     let ranges: Vec<(u64, u64)> = (0..count).map(|i| (i * size, ((i + 1) * size).min(total) - 1)).collect();
     let parts: Vec<(PathBuf, u64)> = ranges.iter().enumerate().map(|(i, (s, e))| (part_path(partial, i), e - s + 1)).collect();
+    let mut kept = 0;
+    for (path, expected) in &parts {
+        let len = file_len(path);
+        // A part longer than its range is not this plan's: the join would copy the extra bytes.
+        if keep && len <= *expected {
+            kept += len;
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    if let Some(meter) = meter {
+        meter.set_bytes(kept);
+    }
     let mut running = JoinSet::new();
     for (range, (path, _)) in ranges.iter().zip(&parts) {
-        let _ = std::fs::remove_file(path);
         running.spawn(fetch_part(client.clone(), url.to_string(), options.clone(), validator.if_range().map(str::to_string), path.clone(), *range, meter.cloned()));
     }
     let mut failure = None;
@@ -984,7 +998,7 @@ async fn download_in_parts(client: &Client, url: &str, partial: &Path, total: u6
     }
     running.shutdown().await;
     merge_parts(partial, &parts).await?;
-    failure.map_or(Ok(()), Err)
+    failure.map_or(Ok(kept), Err)
 }
 
 /// One go at finishing the file; a `Restart` asks for a plain request from byte 0.
@@ -1039,16 +1053,19 @@ async fn direct_pass(client: &Client, url: &str, partial: &Path, note: &Path, op
             let count = total.map_or(0, |t| (t / options.min_part_bytes.max(1)).min(options.max_connections as u64));
             match total {
                 Some(total) if count >= 2 => {
-                    write_note(note, &Note { total: Some(total), validator: Validator::of(&res) }).map_err(|e| io_error(note, e))?;
+                    let validator = Validator::of(&res);
+                    // A run stopped while its parts downloaded (the app killed) left them, and an
+                    // empty partial file. They are still this file's bytes when the size and an
+                    // If-Range validator match the note; each part then asks only for the rest.
+                    let keep = saved.total == Some(total) && validator.if_range().is_some() && saved.validator == validator;
+                    write_note(note, &Note { total: Some(total), validator: validator.clone() }).map_err(|e| io_error(note, e))?;
                     if let Some(meter) = meter {
-                        meter.set_bytes(0);
                         meter.set_expected(Some(total));
                     }
-                    let validator = Validator::of(&res);
                     report.connections = count as usize;
-                    match download_in_parts(client, url, partial, total, count, &validator, options, meter).await {
+                    match download_in_parts(client, url, partial, total, count, &validator, keep, options, meter).await {
                         Err(FetchError::Changed) => return Ok(Pass::Restart),
-                        other => other?,
+                        other => report.resumed_from = other?,
                     }
                     finish_check(file_len(partial), Some(total)).map(|_| Pass::Done)
                 }

@@ -52,6 +52,36 @@ async fn a_collection_row_is_replaced_by_the_newer_result_of_the_same_collection
     assert_eq!((value, at), (json!([2]), 20));
 }
 
+#[tokio::test]
+async fn a_franchise_collection_shows_the_covers_of_its_saved_franchise_in_its_collage() {
+    // Arrange: a franchise collection, and the saved details of the anime it names (a stand-in
+    // id, as from a fallback catalogue), in the AniList shape `fetch_anime_details` saves.
+    let pool = db::init_db_in_memory().await.unwrap();
+    let saved = db::create_custom_playlist(&pool, "Frieren", None, Some("franchise=-100000021")).await.unwrap();
+    let never_opened = db::create_custom_playlist(&pool, "Unknown", None, Some("franchise=99")).await.unwrap();
+    let node = |id: i64, format: &str, cover: &str| json!({ "id": id, "format": format, "coverImage": { "large": cover } });
+    let details = json!({
+        "id": -100000021,
+        "coverImage": { "large": "https://img.example/root.jpg" },
+        "relations": { "edges": [
+            { "relationType": "ADAPTATION", "node": node(5, "MANGA", "https://img.example/manga.jpg") },
+            { "relationType": "PREQUEL", "node": node(1, "TV", "https://img.example/prequel.jpg") },
+            { "relationType": "CHARACTER", "node": node(7, "TV", "https://img.example/crossover.jpg") },
+            { "relationType": "SEQUEL", "node": node(2, "MOVIE", "https://img.example/sequel.jpg") },
+        ] }
+    });
+    offline::store_at(&pool, Kind::Details, "-100000021", &details, 1_000).await.unwrap();
+    // Act
+    let listed = db::list_custom_playlists(&pool).await.unwrap();
+    // Assert: the anime and the entries of its watch order; no print entries or crossovers.
+    let covers = |id: &str| listed.iter().find(|p| p.id == id).unwrap().covers.clone();
+    assert_eq!(
+        covers(&saved.id),
+        ["https://img.example/root.jpg", "https://img.example/prequel.jpg", "https://img.example/sequel.jpg"]
+    );
+    assert!(covers(&never_opened.id).is_empty(), "nothing saved yet: the placeholder tile");
+}
+
 // ------------------------------------------------------------------ saved page note: source and age
 
 #[tokio::test]

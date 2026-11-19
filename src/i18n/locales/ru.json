@@ -2274,5 +2274,13 @@
   "fastDrawing.reasonSafe": "Выключено: Anix запущен с --safe-graphics.",
   "fastDrawing.changeFailed": "Не удалось изменить быструю отрисовку",
   "fastDrawing.dialogTitle": "Anix выглядит правильно?",
-  "fastDrawing.dialogBody": "Быстрая отрисовка включена. Если окно выглядит правильно и прокручивается плавно, оставьте её. Иначе Anix выключит её и перезапустится."
+  "fastDrawing.dialogBody": "Быстрая отрисовка включена. Если окно выглядит правильно и прокручивается плавно, оставьте её. Иначе Anix выключит её и перезапустится.",
+  "settings.streamingResolution": "Разрешение стрима",
+  "settings.streamingResolutionHint": "Размер картинки, с которого начинается серия. Если в источнике его нет, берётся ближайшее меньшее, затем ближайшее большее.",
+  "settings.resolutionAuto": "Авто",
+  "downloadSettings.downloadResolution": "Разрешение загрузок",
+  "downloadSettings.downloadResolutionHint": "Размер картинки, с которого начинаются загрузки. Если в источнике его нет, берётся ближайшее меньшее, затем ближайшее большее.",
+  "settings.defaultPlaybackSpeed": "Скорость воспроизведения по умолчанию",
+  "settings.defaultPlaybackSpeedHint": "Каждая серия начинается с этой скорости (от 0,5× до 4×). Скорость, изменённая во время просмотра, действует только для этой серии.",
+  "playerSettingsPanel.customSpeed": "Своя"
 }

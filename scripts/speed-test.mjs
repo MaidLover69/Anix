@@ -12,7 +12,8 @@ import { LINES } from '../src/lib/memeCatalogue.ts';
 // Fixed steps and the [ ] keys do not change.
 assert.deepEqual(FIXED_SPEEDS, [0.5, 0.75, 1, 1.25, 1.5, 2, 3]);
 assert.equal(MAX_SPEED, 3);
-assert.equal(stepSpeed(2, 1), 3);
+assert.equal(stepSpeed(2, 1), 2.25);
+assert.equal(stepSpeed(2.75, 1), 3);
 assert.equal(stepSpeed(3, 1), 3, '[ ] stop at 3');
 assert.equal(stepSpeed(1, -1), 0.75);
 assert.equal(isFixedSpeed(1.5), true);

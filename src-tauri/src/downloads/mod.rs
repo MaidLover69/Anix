@@ -580,7 +580,7 @@ fn apply_headers(mut req: reqwest::RequestBuilder, headers: &RequestHeaders) -> 
     req
 }
 
-fn quality_height(quality: &str) -> Option<u32> {
+pub(crate) fn quality_height(quality: &str) -> Option<u32> {
     let digits: String = quality
         .chars()
         .skip_while(|c| !c.is_ascii_digit())

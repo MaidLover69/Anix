@@ -22,6 +22,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   doh_provider: 'cloudflare',
   catalogue_source: 'auto',
   download_quality: 'best',
+  streaming_resolution: 'auto',
+  default_playback_speed: 1,
   download_dir: '',
   theme: DEFAULT_THEME,
   minimize_to_tray: false,

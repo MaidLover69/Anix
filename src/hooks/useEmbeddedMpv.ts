@@ -11,6 +11,7 @@ import type { MediaTrackOption, PlayerEngine } from './usePlayerEngine';
 import { defaultSubtitleIndex, SUBTITLES_OFF } from './useSubtitleTracks';
 import type { SubtitleOption } from './useSubtitleTracks';
 import { t } from '../i18n';
+import { pickHeight } from '../lib/resolution';
 import { addedTrackId, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../lib/mpvSubtitles';
 
 /** The hidden hardware decoding self-test's stored result. */
@@ -76,6 +77,7 @@ export type MpvAction =
   | { action: 'set_mute'; muted: boolean }
   | { action: 'set_speed'; value: number }
   | { action: 'set_audio_track'; id: number | null }
+  | { action: 'set_video_track'; id: number | null }
   | { action: 'set_sub_track'; id: number | null }
   | { action: 'set_secondary_sub_track'; id: number | null }
   | { action: 'set_sub_delay'; seconds: number }
@@ -113,6 +115,8 @@ export interface MpvTrack {
   lang: string | null;
   title: string | null;
   codec: string | null;
+  /** The picture height of a video track (an HLS resolution), when mpv knows it. */
+  demux_h?: number | null;
   selected: boolean;
   default?: boolean;
   /** The URL a track was added from with `add_subtitle`; null for the file's own tracks. */
@@ -146,6 +150,8 @@ export interface MpvEngineOptions {
   startVerified: boolean;
   autoplay: boolean;
   preferredAudioLanguages: string[];
+  /** Streaming resolution wanted (a height), or null for mpv's own pick. */
+  wantedHeight: number | null;
   /** Subtitle languages wanted, most wanted first. */
   subtitleLanguages: string[];
   /** Dubbed audio: subtitle files are added but not shown. */
@@ -176,6 +182,7 @@ export function useMpvEngine({
   startVerified,
   autoplay,
   preferredAudioLanguages,
+  wantedHeight,
   subtitleLanguages,
   startSubtitlesOff,
   onFail,
@@ -198,7 +205,7 @@ export function useMpvEngine({
   /** The resume check waits for the file's duration, which mpv reports after it loaded. */
   const resumeCheck = useRef(false);
   // Read once, when loading first begins (as the web engine does).
-  const startRef = useRef({ startAt, startVerified, autoplay, preferredAudioLanguages, subtitleLanguages, startSubtitlesOff });
+  const startRef = useRef({ startAt, startVerified, autoplay, preferredAudioLanguages, wantedHeight, subtitleLanguages, startSubtitlesOff });
 
   // The page is see-through while mpv plays under it; playback stops when leaving.
   useEffect(() => {
@@ -341,6 +348,11 @@ export function useMpvEngine({
         const index = preferredAudioTrack(audio.map((t) => ({ lang: t.lang ?? '', name: t.title ?? '' })), start.preferredAudioLanguages);
         if (index !== -1 && !audio[index].selected) sendMpv({ action: 'set_audio_track', id: audio[index].id });
       }
+      // An HLS stream with several resolutions: start on the wanted one (mpv lists each as a video track).
+      const video = media.tracks.filter((t) => t.type === 'video' && t.id !== null && (t.demux_h ?? 0) > 0);
+      const height = video.length > 1 ? pickHeight(video.map((t) => t.demux_h ?? 0), start.wantedHeight) : null;
+      const chosen = video.find((t) => t.demux_h === height);
+      if (chosen && !chosen.selected) sendMpv({ action: 'set_video_track', id: chosen.id });
       // A replay after the end starts where the user asked, not at the saved position.
       resumeCheck.current = !start.startVerified && !media.replaying;
       onDuration();

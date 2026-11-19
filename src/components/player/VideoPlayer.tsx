@@ -37,6 +37,8 @@ import { sendMpv, useMpvEngine } from '../../hooks/useEmbeddedMpv';
 import { useLanguagePrefs } from '../../hooks/useLanguagePrefs';
 import { useResumePosition } from '../../hooks/useLibrary';
 import { useMediaState } from '../../hooks/useMediaState';
+import { episodeStartRate } from '../../lib/speed';
+import { wantedHeight as wantedHeightOf } from '../../lib/resolution';
 import { supportsPictureInPicture, useMiniPlayer } from '../../hooks/useMiniPlayer';
 import { useMpris } from '../../hooks/useMpris';
 import { usePlayerEngine } from '../../hooks/usePlayerEngine';
@@ -221,6 +223,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const { data: settings } = useSettings();
   // A dub starts in the first preferred dub language the stream has, a sub in Japanese.
   const preferredAudioLanguages = category === 'dub' ? settings?.preferred_dub_languages ?? [] : ['ja'];
+  const wantedHeight = wantedHeightOf(settings?.streaming_resolution);
   const webEngine = usePlayerEngine({
     videoRef: elementRef,
     streams: sources.streams,
@@ -230,6 +233,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     startVerified: start.verified,
     autoplay,
     preferredAudioLanguages,
+    wantedHeight,
   });
   const mpvEngine = useMpvEngine({
     media: mpvMedia,
@@ -241,12 +245,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     startVerified: start.verified,
     autoplay,
     preferredAudioLanguages,
+    wantedHeight,
     subtitleLanguages: languagePrefs.sub,
     startSubtitlesOff: category === 'dub',
     onFail: onEngineFail,
   });
   const engine: PlayerEngine = isMpv ? mpvEngine : webEngine;
-  const media = useMediaState(videoRef);
+  const media = useMediaState(videoRef, episodeStartRate(settings?.default_playback_speed));
 
   // Watch together: a guest follows the host, so its play, pause, seek, speed and episode
   // steps are the host's; volume, subtitles and quality stay its own.

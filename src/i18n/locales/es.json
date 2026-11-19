@@ -2190,5 +2190,13 @@
   "fastDrawing.reasonSafe": "Desactivado: Anix se inició con --safe-graphics.",
   "fastDrawing.changeFailed": "No se pudo cambiar el dibujo rápido",
   "fastDrawing.dialogTitle": "¿Se ve bien Anix?",
-  "fastDrawing.dialogBody": "El dibujo rápido está activado. Si esta ventana se ve bien y se desplaza con fluidez, mantenlo. Si no, Anix lo desactiva y se reinicia."
+  "fastDrawing.dialogBody": "El dibujo rápido está activado. Si esta ventana se ve bien y se desplaza con fluidez, mantenlo. Si no, Anix lo desactiva y se reinicia.",
+  "settings.streamingResolution": "Resolución de streaming",
+  "settings.streamingResolutionHint": "El tamaño de imagen con el que empieza un episodio. Si una fuente no lo tiene, se usa el más cercano por debajo y luego el más cercano por encima.",
+  "settings.resolutionAuto": "Automática",
+  "downloadSettings.downloadResolution": "Resolución de descarga",
+  "downloadSettings.downloadResolutionHint": "El tamaño de imagen con el que empiezan las descargas. Si una fuente no lo tiene, se usa el más cercano por debajo y luego el más cercano por encima.",
+  "settings.defaultPlaybackSpeed": "Velocidad de reproducción predeterminada",
+  "settings.defaultPlaybackSpeedHint": "Cada episodio empieza a esta velocidad (0,5× a 4×). Una velocidad cambiada mientras ves algo solo vale para ese episodio.",
+  "playerSettingsPanel.customSpeed": "Personalizada"
 }

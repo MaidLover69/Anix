@@ -16,18 +16,7 @@ export function preferredAudioTrack(tracks: { lang?: string | null; name?: strin
   return -1;
 }
 
-/** `[` and `]` change the speed in these steps, within these bounds. */
-export const SPEED_STEP = 0.25;
-export const MIN_SPEED = 0.25;
-export const MAX_SPEED = 3;
-
-export function stepSpeed(rate: number, direction: 1 | -1): number {
-  const current = Number.isFinite(rate) && rate > 0 ? rate : 1;
-  // Snap to the grid first, so 1.1 goes to 1.25 / 1, not 1.35 / 0.85.
-  const snapped = direction > 0 ? Math.floor(current / SPEED_STEP + 1e-9) : Math.ceil(current / SPEED_STEP - 1e-9);
-  const next = (snapped + direction) * SPEED_STEP;
-  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, next));
-}
+export { SPEED_STEP, MIN_SPEED, MAX_SPEED, stepSpeed } from '../../lib/speed';
 
 /** Holding Space longer than this plays at `HOLD_RATE` until it is let go; a tap toggles play. */
 export const HOLD_MS = 300;

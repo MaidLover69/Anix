@@ -2,6 +2,7 @@ pub mod common;
 pub mod languages;
 pub mod manager;
 pub mod matching;
+pub mod resolution;
 
 pub use manager::*;
 

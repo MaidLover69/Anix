@@ -18,7 +18,7 @@ export interface MediaState {
  * with the media. The current time is left out on purpose: it changes several times a
  * second and only the timeline needs it.
  */
-export function useMediaState(videoRef: RefObject<HTMLVideoElement>): MediaState {
+export function useMediaState(videoRef: RefObject<HTMLVideoElement>, startRate = 1): MediaState {
   const [state, setState] = useState<MediaState>(() => {
     const prefs = usePlayerStore.getState();
     return {
@@ -27,7 +27,7 @@ export function useMediaState(videoRef: RefObject<HTMLVideoElement>): MediaState
       ended: false,
       muted: prefs.muted,
       volume: prefs.volume,
-      rate: prefs.playbackRate,
+      rate: startRate,
       duration: 0,
     };
   });
@@ -41,7 +41,9 @@ export function useMediaState(videoRef: RefObject<HTMLVideoElement>): MediaState
     // Out-of-range values throw when assigned, and the volume comes from storage.
     video.volume = prefs.volume >= 0 && prefs.volume <= 1 ? prefs.volume : 1;
     video.muted = prefs.muted === true;
-    const rate = prefs.playbackRate > 0 ? prefs.playbackRate : 1;
+    // Every episode starts at the default speed; a speed chosen in the last one is not carried over.
+    const rate = startRate;
+    usePlayerStore.getState().setPlaybackRate(rate);
     video.defaultPlaybackRate = rate;
     video.playbackRate = rate;
 

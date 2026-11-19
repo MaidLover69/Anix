@@ -1,7 +1,11 @@
-import React, { useState, useRef, useEffect, useId } from 'react';
+import React, { useState, useRef, useEffect, useId, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { t } from '../i18n';
+import { menuPlacement, type Placement } from './selectPlacement';
+
+const MENU_MAX_HEIGHT = 240;
 
 interface Option {
   value: string;
@@ -43,6 +47,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const [spot, setSpot] = useState<Placement | null>(null);
   const listId = useId();
 
   const normalizedOptions: Option[] = options.map((opt) =>
@@ -55,13 +60,42 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !listRef.current?.contains(target)) {
         setIsOpen(false);
       }
     };
+    // The menu is fixed to the viewport: it closes when the page scrolls or resizes under it.
+    const close = (event: Event) => {
+      if (event.type === 'scroll' && listRef.current?.contains(event.target as Node)) return;
+      setIsOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
   }, [isOpen]);
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current;
+    const list = listRef.current;
+    if (!isOpen || !trigger || !list) return setSpot(null);
+    const rect = trigger.getBoundingClientRect();
+    setSpot(
+      menuPlacement({
+        trigger: rect,
+        menuWidth: Math.max(rect.width, list.offsetWidth),
+        menuHeight: Math.min(list.scrollHeight + 2, MENU_MAX_HEIGHT),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        preferred: placement,
+      })
+    );
+  }, [isOpen, placement, normalizedOptions.length]);
 
   useEffect(() => {
     if (!isOpen || activeIndex < 0) return;
@@ -151,15 +185,20 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-text-muted" />
       </button>
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div
           ref={listRef}
           id={listId}
           role="listbox"
-          className={clsx(
-            'ui-menu absolute end-0 z-50 max-h-60 w-full min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-pop animate-fade-in',
-            placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          )}
+          style={{
+            position: 'fixed',
+            top: spot?.top ?? 0,
+            left: spot?.left ?? 0,
+            maxHeight: spot?.maxHeight ?? MENU_MAX_HEIGHT,
+            width: triggerRef.current?.offsetWidth,
+            visibility: spot ? 'visible' : 'hidden',
+          }}
+          className="ui-menu z-[1000] min-w-[160px] overflow-y-auto rounded-xl border border-border-strong bg-bg-elevated p-1 shadow-pop animate-fade-in"
         >
           {normalizedOptions.map((opt, index) => {
             const isSelected = opt.value === value;
@@ -200,7 +239,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
               </React.Fragment>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

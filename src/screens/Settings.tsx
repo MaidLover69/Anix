@@ -48,6 +48,7 @@ import { ACCOUNT_LABELS, ACCOUNT_SERVICES, isAccountAvailable, useAccountStatus 
 import { AccountAction, accountSummary } from '../components/AuthDialog';
 import { useUIStore } from '../stores/uiStore';
 import type { AppSettings, CatalogueSource, DohMode, DohProvider, ExternalPlayer, PluginInfo, PluginRepo, PluginUpdate } from '../types';
+import { PlaybackDefaults } from '../components/settings/PlaybackDefaults';
 import { PlayerEngineSettings } from '../components/settings/PlayerEngineSettings';
 import { locale, t } from '../i18n';
 import { Meme, MemeFrame, MemeImage, useHighModule } from '../components/meme/Meme';
@@ -847,6 +848,7 @@ export const Settings: React.FC = () => {
               />
             )}
           </Row>
+          <PlaybackDefaults settings={settings} onChange={updateSetting} />
           <PlayerEngineSettings settings={settings} onChange={updateSetting} />
         </Section>
 

@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import Hls from 'hls.js';
 import type { ErrorData, Level, MediaPlaylist } from 'hls.js';
 import { preferredAudioTrack } from '../components/player/playerLogic';
+import { startLevelIndex } from '../lib/resolution';
 import { buildProxyUrl } from '../lib/streamProxy';
 import type { StreamItem } from '../types';
 import { t } from '../i18n';
@@ -37,6 +38,8 @@ export interface PlayerEngineOptions {
    * first); the stream's own default is kept when none of them is offered.
    */
   preferredAudioLanguages?: string[];
+  /** Streaming resolution wanted (a height): an HLS stream starts on that level; null keeps Auto. */
+  wantedHeight?: number | null;
 }
 
 export interface PlayerEngine {
@@ -157,9 +160,12 @@ export function usePlayerEngine({
   startVerified,
   autoplay,
   preferredAudioLanguages = [],
+  wantedHeight = null,
 }: PlayerEngineOptions): PlayerEngine {
   const preferredAudioRef = useRef(preferredAudioLanguages);
   preferredAudioRef.current = preferredAudioLanguages;
+  const wantedHeightRef = useRef(wantedHeight);
+  wantedHeightRef.current = wantedHeight;
   const [streamIndex, setStreamIndex] = useState(0);
   const [phase, setPhase] = useState<EnginePhase>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -299,7 +305,14 @@ export function usePlayerEngine({
 
       instance.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         manifestParsed = true;
-        setLevels(toLevels(data.levels));
+        const parsed = toLevels(data.levels);
+        setLevels(parsed);
+        // Start on the wanted resolution; the quality menu changes it for this episode, and Auto stays available.
+        const wanted = startLevelIndex(parsed, wantedHeightRef.current);
+        if (wanted !== -1) {
+          instance.currentLevel = wanted;
+          setSelectedLevel(wanted);
+        }
       });
       instance.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => setActiveLevel(data.level));
       let audioChosen = false;

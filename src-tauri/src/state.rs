@@ -40,6 +40,12 @@ impl AppState {
                 }),
                 std::sync::Arc::new(crate::commands::settings::language_prefs),
             )
+            .with_streaming_resolution_source(std::sync::Arc::new(|| {
+                crate::commands::settings::saved_settings()["streaming_resolution"]
+                    .as_str()
+                    .unwrap_or("auto")
+                    .to_string()
+            }))
         };
 
         Self {

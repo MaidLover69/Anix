@@ -51,6 +51,19 @@ export function fileSubtitleTracks(tracks: MpvTrack[]): MpvTrack[] {
 }
 
 /**
+ * Whether the side file labelled `label` ("english", "spanish_(latin_america)") is exactly a
+ * track already inside the video: a downloaded episode keeps its first subtitle in the file
+ * (titled with the language) and as a side file, and the picker would list it twice. `_` in the
+ * label reads as a space; a track's language code counts only when it is the whole label.
+ */
+export function duplicatesFileTrack(label: string, tracks: MpvTrack[]): boolean {
+  const norm = (text: string | null) => (text ?? '').trim().toLowerCase();
+  const wanted = norm(label.replace(/_/g, ' '));
+  if (wanted.length < 2) return false;
+  return fileSubtitleTracks(tracks).some((t) => wanted === norm(t.title) || wanted === norm(t.lang));
+}
+
+/**
  * The track mpv must switch to so it shows the user's latest choice, or undefined when it
  * already does (or the choice is not known to mpv yet). Files are added in the background, so a
  * download that finishes after the user picked something else can select itself; this undoes

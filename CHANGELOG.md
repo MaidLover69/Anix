@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2 (unreleased)
+
+### Downloads and playing
+- Downloads are saved in a folder per title with a folder per episode (`Title/Episode 03`), and an empty folder left by a cancelled or failed download is tidied away. Downloads that were already queued or finished keep working where they are.
+- Subtitles: a download keeps the subtitle languages you prefer (Settings › Language) instead of every language, in your order, each as a file next to the video; a new switch in Settings › Downloads brings back "all languages".
+- Downloaded episodes play from their file, also from Continue, History and the Home banners; a server only wins when you pick it yourself.
+- RPM and DEB: the embedded mpv player now uses the system's mpv library (libmpv) when there is one, whatever its licence, and quietly uses the web player when there is none. The AppImage still carries its own.
+
 ## 1.4.1
 
 A small update for stability, speed and interface fixes.

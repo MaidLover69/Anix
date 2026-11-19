@@ -41,8 +41,8 @@ export const ContinueCard: React.FC<{ entry: HistoryEntry; className?: string }>
         to={
           finished
             ? `/detail/${entry.anilist_id}`
-            : // No server: Watch plays a downloaded episode from its file, else the remembered server.
-              watchPath(entry.anilist_id, entry.episode_number, entry.category)
+            : // Only a hint: Watch plays a downloaded episode from its file, else tries this server first.
+              watchPath(entry.anilist_id, entry.episode_number, entry.category, null, entry.provider?.trim())
         }
         draggable={false}
         aria-haspopup="menu"

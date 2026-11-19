@@ -61,8 +61,14 @@ pub async fn delete_download(
             .and_then(|r| r.file_path.clone())
         {
             tokio::task::spawn_blocking(move || {
-                let root = downloads::get_download_dir().map_err(|e| e.to_string())?;
-                downloads::delete_download_files(Path::new(&path), &root)
+                match downloads::get_download_dir() {
+                    Ok(root) => downloads::delete_download_files(Path::new(&path), &root),
+                    // E.g. an unmounted disk: still delete the file, just no folder tidying.
+                    Err(e) => {
+                        tracing::warn!("Download folder unavailable while deleting: {}", e);
+                        downloads::delete_finished_files(Path::new(&path))
+                    }
+                }
             })
                 .await
                 .map_err(|e| e.to_string())??;

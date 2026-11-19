@@ -617,7 +617,11 @@ async fn hls_stream_is_muxed_with_headers_and_survives_a_bad_subtitle() {
     assert!(kinds.contains("Subtitle:"), "{}", kinds);
     assert_eq!(
         tmp.file_names(),
-        vec!["Test Show - EP 03 [SUB 720p].mkv", "Test Show - EP 03 [SUB 720p].spanish.srt"]
+        vec![
+            "Test Show - EP 03 [SUB 720p].english.vtt",
+            "Test Show - EP 03 [SUB 720p].mkv",
+            "Test Show - EP 03 [SUB 720p].spanish.srt"
+        ]
     );
 
     let stored = row(&pool, "hls-ok").await;

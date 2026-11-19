@@ -5,7 +5,7 @@ import { create } from 'zustand';
 import { Button } from './ui/Button';
 import { useAnimeDetails } from '../hooks/useAniList';
 import { useContinueWatching } from '../hooks/useLibrary';
-import { useSettings, AUTO_PROVIDER } from '../hooks/useSettings';
+import { useSettings } from '../hooks/useSettings';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
 import { mediaFormatLabel } from './library/format';
 import { t } from '../i18n';
@@ -206,7 +206,8 @@ export const QuickPeekCard: React.FC<QuickPeekCardProps> = ({ media, title, id }
                     media.id,
                     playEpisode,
                     target?.category ?? (settings?.prefer_dub ? 'dub' : 'sub'),
-                    target?.provider ?? settings?.preferred_provider ?? AUTO_PROVIDER
+                    null,
+                    target?.provider ?? settings?.preferred_provider
                   )
                 )
               }

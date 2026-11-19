@@ -98,16 +98,22 @@ export function getContinueTarget({
   return { episode, resume: false, category, provider };
 }
 
-/** Route to the player for an episode, with the audio and provider choice in the query. */
+/**
+ * Route to the player for an episode, with the audio and provider choice in the query.
+ * `provider` is an explicit pick (it beats a downloaded file); `hint` is only the server used
+ * last, which Watch tries first when the episode has no file.
+ */
 export function watchPath(
   anilistId: number,
   episode: number,
   category?: string | null,
-  provider?: string | null
+  provider?: string | null,
+  hint?: string | null
 ): string {
   const params = new URLSearchParams();
   params.set('cat', category === 'dub' ? 'dub' : 'sub');
   params.set('prov', provider || 'auto');
+  if (hint && hint !== 'auto') params.set('hint', hint);
   return `/watch/${anilistId}/${episode}?${params.toString()}`;
 }
 

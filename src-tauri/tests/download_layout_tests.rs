@@ -470,7 +470,7 @@ fn names_in(dir: &Path) -> Vec<String> {
 }
 
 /// Runs one HLS download with four subtitle tracks on offer and returns what was saved.
-async fn run(wanted_languages: Option<Vec<String>>) -> Option<(TempDir, DownloadOutcome, Vec<String>)> {
+async fn run(wanted_languages: Option<Vec<String>>) -> Option<(TempDir, DownloadOutcome, Vec<String>, sqlx::SqlitePool)> {
     english_ui::english_ui();
     if !ffmpeg_available() {
         eprintln!("skipped: ffmpeg is not installed");
@@ -509,19 +509,24 @@ async fn run(wanted_languages: Option<Vec<String>>) -> Option<(TempDir, Download
     let root = TempDir::new("root");
     let outcome = downloads::download_under(&pool, &rec, source, root.path()).await;
     let requested = seen.lock().unwrap().iter().filter(|p| p.starts_with("/subs/")).cloned().collect();
-    Some((root, outcome, requested))
+    Some((root, outcome, requested, pool))
 }
 
 #[tokio::test]
 async fn only_the_preferred_languages_are_fetched_and_the_first_is_embedded() {
-    let Some((root, outcome, requested)) = run(Some(vec!["en".into(), "es".into()])).await else { return };
+    let Some((root, outcome, requested, _pool)) = run(Some(vec!["en".into(), "es".into()])).await else { return };
 
     let DownloadOutcome::Completed { path, .. } = outcome else { panic!("got {:?}", outcome) };
     let folder = root.path().join("Test Show").join("Episode 03");
     assert_eq!(path, folder.join("Test Show - EP 03 [SUB 720p].mkv"));
     assert_eq!(
         names_in(&folder),
-        vec!["Test Show - EP 03 [SUB 720p].mkv", "Test Show - EP 03 [SUB 720p].spanish.vtt"],
+        vec![
+            "Test Show - EP 03 [SUB 720p].english.vtt",
+            "Test Show - EP 03 [SUB 720p].mkv",
+            "Test Show - EP 03 [SUB 720p].spanish.vtt"
+        ],
+        // The embedded first language is also a side file: the web player reads only those.
         "no working files, no other languages"
     );
     assert_eq!(names_in(root.path()), vec!["Test Show"], "nothing flat in the download folder");
@@ -538,9 +543,12 @@ async fn only_the_preferred_languages_are_fetched_and_the_first_is_embedded() {
 
 #[tokio::test]
 async fn without_a_preferred_match_only_the_default_track_is_used() {
-    let Some((root, outcome, requested)) = run(Some(vec!["ja".into()])).await else { return };
+    let Some((root, outcome, requested, _pool)) = run(Some(vec!["ja".into()])).await else { return };
     let DownloadOutcome::Completed { path, .. } = outcome else { panic!("got {:?}", outcome) };
-    assert_eq!(names_in(path.parent().unwrap()), vec!["Test Show - EP 03 [SUB 720p].mkv"]);
+    assert_eq!(
+        names_in(path.parent().unwrap()),
+        vec!["Test Show - EP 03 [SUB 720p].french.vtt", "Test Show - EP 03 [SUB 720p].mkv"]
+    );
     assert!(ffmpeg_info(&path).contains("French"));
     assert_eq!(requested, ["/subs/fr.vtt"]);
     drop(root);
@@ -548,15 +556,127 @@ async fn without_a_preferred_match_only_the_default_track_is_used() {
 
 #[tokio::test]
 async fn the_all_languages_switch_keeps_todays_behaviour() {
-    let Some((root, outcome, requested)) = run(None).await else { return };
+    let Some((root, outcome, requested, _pool)) = run(None).await else { return };
     let DownloadOutcome::Completed { path, .. } = outcome else { panic!("got {:?}", outcome) };
-    // The source's default (French) is embedded; the other three are side files.
-    assert_eq!(names_in(path.parent().unwrap()).len(), 4);
+    // The source's default (French) is embedded and a side file too; so are the other three.
+    assert_eq!(names_in(path.parent().unwrap()).len(), 5);
     assert_eq!(requested.len(), 4);
     drop(root);
+}
+
+#[tokio::test]
+async fn the_first_preferred_language_is_a_side_file_and_stored_as_the_sub_language() {
+    let Some((root, outcome, _, pool)) = run(Some(vec!["es".into(), "fr".into()])).await else { return };
+    let DownloadOutcome::Completed { path, .. } = outcome else { panic!("got {:?}", outcome) };
+    let spanish = path.with_file_name("Test Show - EP 03 [SUB 720p].spanish.vtt");
+    assert!(spanish.exists(), "the embedded first language also exists as a side file");
+    assert!(ffmpeg_info(&path).contains("Spanish"));
+    // French is the source's default flag but second in the user's order: the first is embedded.
+    let stored = db::get_download_by_id(&pool, "layout-e2e").await.unwrap().unwrap();
+    assert_eq!(stored.sub_lang.as_deref(), Some("es"));
+    drop(root);
+}
+
+#[test]
+fn cleaning_up_a_cancelled_download_removes_its_empty_folders_and_only_those() {
+    let root = TempDir::new("prune");
+    let ep = root.path().join("Show").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    let keep = root.path().join("Other").join("Episode 01");
+    std::fs::create_dir_all(&keep).unwrap();
+    touch(&keep.join("v.mkv"));
+    downloads::prune_empty_folders(&ep, root.path());
+    assert!(!root.path().join("Show").exists());
+    downloads::prune_empty_folders(&keep, root.path());
+    assert!(keep.join("v.mkv").exists());
+    // never the download folder itself, nor anything through `..`
+    downloads::prune_empty_folders(root.path(), root.path());
+    downloads::prune_empty_folders(&root.path().join("Other").join("..").join(".."), root.path());
+    assert!(root.path().exists());
+}
+
+#[test]
+fn startup_clean_up_removes_the_folders_it_emptied() {
+    let root = TempDir::new("stale-prune");
+    let rec = record("dead", "Show", 5.0);
+    let ep = output_dir(root.path(), &rec.series_title, rec.episode_num);
+    touch(&work_file_path(&ep, &rec, "download"));
+    std::fs::create_dir_all(root.path().join("Untouched")).unwrap();
+
+    remove_stale_part_files(root.path(), &[]);
+
+    assert!(!root.path().join("Show").exists());
+    assert!(root.path().join("Untouched").exists(), "folders it did not empty stay");
+}
+
+#[test]
+fn removing_the_kept_files_of_a_failed_try_removes_the_empty_folders() {
+    let root = TempDir::new("retry-prune");
+    let rec = record("failed", "Show", 6.0);
+    let ep = output_dir(root.path(), &rec.series_title, rec.episode_num);
+    touch(&work_file_path(&ep, &rec, "resume"));
+    remove_resume_files(root.path(), &rec);
+    assert!(!root.path().join("Show").exists());
+}
+
+#[test]
+fn a_download_queued_under_1_4_1_resumes_in_its_flat_folder() {
+    let root = TempDir::new("flat-resume");
+    let rec = record("old", "Show", 7.0);
+    assert_eq!(downloads::download_folder(root.path(), &rec), output_dir(root.path(), "Show", 7.0));
+    touch(&work_file_path(root.path(), &rec, "resume"));
+    assert_eq!(downloads::download_folder(root.path(), &rec), root.path());
+    // another record's flat partial does not pull this one flat
+    assert_eq!(
+        downloads::download_folder(root.path(), &record("other", "Show", 8.0)),
+        output_dir(root.path(), "Show", 8.0)
+    );
 }
 
 #[test]
 fn part_suffix_constant_is_unchanged() {
     assert_eq!(PART_SUFFIX, ".anix-part");
+}
+
+#[test]
+fn an_episode_folder_a_second_job_still_uses_is_not_pruned() {
+    let root = TempDir::new("busy");
+    let ep = root.path().join("Show").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    // a sub and a dub of one episode run at once
+    downloads::claim_episode_folder(&ep);
+    downloads::claim_episode_folder(&ep);
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(ep.exists(), "the other job still uses the folder");
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(!root.path().join("Show").exists(), "the last one out removes the empty folders");
+}
+
+#[test]
+fn the_old_folder_pass_leaves_a_current_folder_inside_an_old_one_alone() {
+    let root = TempDir::new("old-around-current");
+    let current = root.path().join("Anix");
+    let ep = current.join("Show").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    let part = |dir: &Path, name: &str| dir.join(format!("{}.{}.download{}", name, work_tag("q"), PART_SUFFIX));
+    touch(&part(&ep, "queued"));
+    touch(&part(root.path(), "old"));
+    let list = root.path().join("dirs.txt");
+    downloads::remember_work_dir(&list, root.path());
+    assert_eq!(downloads::remove_part_files_in_old_dirs(&list, &current), 1);
+    assert!(!part(root.path(), "old").exists());
+    assert!(part(&ep, "queued").exists(), "the current folder keeps its partials");
+}
+
+#[test]
+fn pruning_skips_a_folder_a_running_download_holds() {
+    let root = TempDir::new("busy-prune");
+    let ep = root.path().join("Held").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    downloads::claim_episode_folder(&ep);
+    // what delete and Try again clean-up call
+    downloads::prune_empty_folders(&ep, root.path());
+    assert!(ep.exists());
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(!root.path().join("Held").exists());
 }

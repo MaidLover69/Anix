@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { MpvMedia } from '../src/components/player/mpvMedia.ts';
 import { LOAD_STALL_MS, STALL_MS, watchStall } from '../src/lib/stall.ts';
-import { addedTrackId, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../src/lib/mpvSubtitles.ts';
+import { addedTrackId, duplicatesFileTrack, fileSubtitleTracks, providerIndex, subtitleAtLoad, subtitleCorrection } from '../src/lib/mpvSubtitles.ts';
 
 /** A stand-in with a record of what it sent to mpv and which events it fired. */
 function player() {
@@ -145,6 +145,21 @@ const loaded = (paused) => ({ kind: 'loaded', tracks: [], paused });
   assert.equal(addedTrackId(tracks, 'http://p/s1'), 2);
   assert.equal(addedTrackId(tracks, 'http://p/s2'), null, 'not added yet');
   assert.deepEqual(fileSubtitleTracks(tracks).map((t) => t.id), [1], "added files are listed from the extension's list");
+{
+  const own = [{ id: 1, type: 'sub', lang: 'eng', title: null, codec: 'subrip', selected: true }];
+  const titled = (title) => [{ id: 1, type: 'sub', lang: 'eng', title, codec: 'subrip', selected: true }];
+  assert.equal(duplicatesFileTrack('english', titled('English')), true, 'the side file the app writes');
+  assert.equal(duplicatesFileTrack('spanish_(latin_america)', titled('Spanish (Latin America)')), true);
+  assert.equal(duplicatesFileTrack('eng', own), true, 'a whole language code');
+  assert.equal(duplicatesFileTrack('english_sdh', titled('English')), false);
+  assert.equal(duplicatesFileTrack('portuguese', titled('Portuguese (Brazil)')), false);
+  assert.equal(duplicatesFileTrack('spanish_(latin_america)', titled('Spanish')), false);
+  assert.equal(duplicatesFileTrack('en', titled('English Signs & Songs')), false);
+  assert.equal(duplicatesFileTrack('english', own), false, 'a name is not a code');
+  assert.equal(duplicatesFileTrack('spanish', own), false);
+  assert.equal(duplicatesFileTrack('Subtitles (SRT)', own), false);
+  assert.equal(duplicatesFileTrack('english', []), false);
+}
 }
 
 // Review follow-ups: a seek that ends during a stall keeps the spinner; a load or an end clears the stall.

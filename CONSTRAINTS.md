@@ -45,7 +45,7 @@ compare medians of three runs.
 ## External checks
 
 - Dependencies: `cargo audit` on `src-tauri/Cargo.lock` and `npm audit --omit=dev`, weekly in CI.
-- Licences: LGPL-only libmpv and FFmpeg (AGENTS.md › Embedded mpv and licensing).
+- Licences: LGPL-only libmpv and FFmpeg for the libmpv Anix bundles (the AppImage); the system packages use the system's own libmpv under its licence (AGENTS.md › Embedded mpv and licensing).
 
 ## Exceptions
 

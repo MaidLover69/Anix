@@ -24,7 +24,7 @@ import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
 import { describeStream, sourceLabel } from '../lib/languages';
 import { splitPlayFailure } from '../lib/playFailure';
-import { episodeLookupsEnabled, playsFromFile } from '../lib/playSource';
+import { playsFromFile } from '../lib/playSource';
 import { episodeExists, parseAnimeId } from '../lib/routes';
 import { useRememberedSource } from '../hooks/useRememberedSource';
 import { useDesktopStatus } from '../hooks/useSystem';
@@ -160,7 +160,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     [notify, high]
   );
   // Embedded mpv was wanted but did not start (libmpv missing, GL failed): say why, once a run.
-  const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available ? mpvStatus.data.error : null;
+  const mpvStartError = mpvStatus.data?.requested && !mpvStatus.data.available && !mpvStatus.data.quiet ? mpvStatus.data.error : null;
   useEffect(() => {
     if (!mpvStartError || mpvStartNoticeShown) return;
     mpvStartNoticeShown = true;
@@ -206,7 +206,9 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // A server its repository paused is not asked first on its own; picking it by hand (`prov`) still works.
   const unpaused = (key: string | null): string | null =>
     key && providers.usable.some((plugin) => plugin.id === key && plugin.paused) ? null : key;
+  // `hint` is the server a Continue link last used: a default, never a pick.
   const preferredProvider =
+    unpaused(knownProvider(searchParams.get('hint'))) ??
     unpaused(remembered?.category === category ? knownProvider(remembered.provider) : null) ??
     unpaused(knownProvider(settings.preferred_provider));
   const requestedProvider = explicitProvider ?? preferredProvider;
@@ -219,7 +221,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     localChosen ||
     playsFromFile({
       hasLocalFile: localMedia.hasEpisode(episodeNumber),
-      explicitProvider: searchParams.get('prov'),
+      explicitProvider,
       rememberedProvider: remembered?.provider,
       preferredProvider: settings.preferred_provider,
     });
@@ -260,10 +262,7 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // The all-providers listing is otherwise only fetched for the server dialog. Whatever is
   // already cached (the detail page loads it) is used right away.
   const episodesQuery = useEpisodes(anilistId, malId, titleRomaji, {
-    enabled:
-      !!details &&
-      (serversOpen || checkExtensionLists) &&
-      episodeLookupsEnabled({ fromFile: localRequested, playbackStarted: localQuery.isSuccess }),
+    enabled: !!details && (serversOpen || checkExtensionLists),
   });
   const episodesData = episodesQuery.data;
 
@@ -460,11 +459,14 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
         }));
       }
       const provider = target.anilistId === anilistId ? routeProvider : null;
-      navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider), {
+      // Within the same title the server serving now is the next episode's default (a hint, not a pick).
+      const sameAudio = (target.category ?? category) === category;
+      const hint = target.anilistId === anilistId && !localRequested && sameAudio ? servingProvider : null;
+      navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider, hint ?? 'auto'), {
         replace: true,
       });
     },
-    [anilistId, category, routeProvider, navigate]
+    [anilistId, category, routeProvider, servingProvider, localRequested, navigate]
   );
 
   const handleBack = useCallback(() => {

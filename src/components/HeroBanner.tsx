@@ -212,6 +212,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                       current.id,
                       watchEpisode,
                       target?.category ?? defaultCategory,
+                      null,
                       target?.provider ?? defaultProvider
                     )
                   )

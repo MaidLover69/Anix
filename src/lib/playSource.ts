@@ -16,8 +16,3 @@ export function playsFromFile(input: {
   const { hasLocalFile, explicitProvider } = input;
   return hasLocalFile && (!explicitProvider || FILE_FRIENDLY.has(explicitProvider));
 }
-
-/** Extension episode lookups wait until an episode played from a file has started. */
-export function episodeLookupsEnabled(input: { fromFile: boolean; playbackStarted: boolean }): boolean {
-  return !input.fromFile || input.playbackStarted;
-}

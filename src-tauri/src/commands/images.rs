@@ -24,20 +24,9 @@ pub async fn save_image(url: String) -> Result<(), String> {
     if image_cache::find(&dir, &url).is_some() {
         return Ok(());
     }
-    let client = crate::clients::http::http_client().map_err(|e| e.to_string())?;
-    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    let is_image = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("image/"));
-    if !response.status().is_success() || !is_image {
+    let Some(bytes) = image_cache::fetch_public(&url, image_cache::MAX_IMAGE_BYTES).await? else {
         return Ok(());
-    }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() > image_cache::MAX_IMAGE_BYTES {
-        return Ok(());
-    }
+    };
     image_cache::save(&dir, &url, &bytes, image_cache::limit_bytes(&settings())).map_err(|e| e.to_string())?;
     Ok(())
 }

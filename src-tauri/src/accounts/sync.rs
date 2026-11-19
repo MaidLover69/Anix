@@ -291,7 +291,9 @@ pub async fn cancel_watchlist_addition(pool: &SqlitePool, anilist_id: i32) -> Re
 pub async fn waiting_changes(pool: &SqlitePool) -> Result<usize, AppError> {
     ensure_queue(pool).await?;
     let n: i64 = sqlx::query(
-        "SELECT COUNT(*) AS n FROM (SELECT anilist_id FROM watchlist WHERE synced = 0 UNION SELECT anilist_id FROM account_sync_queue)",
+        "SELECT COUNT(*) AS n FROM (SELECT anilist_id FROM watchlist WHERE synced = 0 \
+         AND anilist_id NOT IN (SELECT stand_in FROM catalogue_merged_ids) \
+         UNION SELECT anilist_id FROM account_sync_queue)",
     )
     .fetch_one(pool)
     .await?

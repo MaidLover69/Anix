@@ -75,6 +75,7 @@ export function useToggleWatchlist() {
       cover,
       format,
       averageScore,
+      episodes,
       inWatchlist,
     }: {
       anilistId: number;
@@ -82,6 +83,7 @@ export function useToggleWatchlist() {
       cover?: string | null;
       format?: string | null;
       averageScore?: number | null;
+      episodes?: number | null;
       inWatchlist: boolean;
     }) => {
       if (inWatchlist) {
@@ -93,6 +95,7 @@ export function useToggleWatchlist() {
           cover: cover || null,
           format: format || null,
           averageScore: averageScore !== undefined ? averageScore : null,
+          episodes: episodes ?? null,
         });
       }
     },

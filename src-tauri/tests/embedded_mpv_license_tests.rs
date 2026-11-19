@@ -8,7 +8,7 @@
 //!   (the AppImage layout), false for a system library. `load_lib` calls it in release builds.
 //! - `no_libmpv_message() -> String`: shown (as the web-player reason) when no libmpv loads.
 
-use anix_lib::embedded_mpv::{license_refusal, no_libmpv_message};
+use anix_lib::embedded_mpv::{default_engine, libmpv_is_bundled, license_refusal, no_libmpv_message, no_libmpv_message_for};
 
 const GPL: &str = "GPL version 3 or later";
 const LGPL: &str = "LGPL version 2.1 or later";
@@ -44,4 +44,33 @@ fn without_any_libmpv_the_message_explains_the_way_forward() {
     assert!(message.contains("Open in mpv"), "points to the external player: {}", message);
     assert!(!message.contains("not an LGPL"), "{}", message);
     assert!(!message.contains("could not be loaded"), "no raw dlopen error: {}", message);
+}
+
+#[test]
+fn the_flatpak_message_suggests_neither_a_system_libmpv_nor_open_in_mpv() {
+    let message = no_libmpv_message_for(true);
+    assert!(message.contains("web player"), "{}", message);
+    assert!(!message.contains("Open in mpv"), "{}", message);
+    assert!(!message.contains("installed"), "{}", message);
+    assert!(no_libmpv_message_for(false).contains("Open in mpv"));
+}
+
+#[test]
+fn an_install_that_never_chose_uses_mpv_only_where_it_can() {
+    // debug builds and the AppImage: mpv without asking whether a libmpv loads
+    assert_eq!(default_engine(true, false, false, || false), "mpv");
+    assert_eq!(default_engine(false, true, false, || false), "mpv");
+    // RPM/DEB/AUR: mpv when the system's libmpv loads, else quietly the web player
+    assert_eq!(default_engine(false, false, false, || true), "mpv");
+    assert_eq!(default_engine(false, false, false, || false), "web");
+    // the Flatpak never loads a system libmpv
+    assert_eq!(default_engine(false, false, true, || true), "web");
+}
+
+#[test]
+fn an_appimage_without_its_own_libmpv_is_still_bundled() {
+    assert!(libmpv_is_bundled(true, false));
+    assert!(libmpv_is_bundled(true, true));
+    assert!(libmpv_is_bundled(false, true));
+    assert!(!libmpv_is_bundled(false, false));
 }

@@ -390,11 +390,19 @@ fn library_path() -> Result<(String, bool), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("The app folder is unknown")?;
     let bundled = dir.join("../lib/anix/libmpv.so.2");
+    let in_appimage = std::env::var_os("APPIMAGE").is_some();
+    let is_bundled = libmpv_is_bundled(in_appimage, bundled.exists());
     Ok(if bundled.exists() {
-        (bundled.to_string_lossy().into_owned(), true)
+        (bundled.to_string_lossy().into_owned(), is_bundled)
     } else {
-        ("libmpv.so.2".to_string(), false)
+        ("libmpv.so.2".to_string(), is_bundled)
     })
+}
+
+/// Whether the LGPL-only rule applies: the AppImage's libmpv, or an AppImage that lost its
+/// own (it must never take a system GPL one).
+pub fn libmpv_is_bundled(in_appimage: bool, bundled_file_exists: bool) -> bool {
+    in_appimage || bundled_file_exists
 }
 
 /// Why a libmpv may not be used, or `None`. Only the bundled build must be LGPL (Anix ships
@@ -407,9 +415,19 @@ pub fn license_refusal(license: &str, bundled: bool) -> Option<String> {
 
 /// The web-player reason shown when no libmpv can be loaded.
 pub fn no_libmpv_message() -> String {
-    "The embedded player needs the AppImage, or mpv's library (libmpv) installed on this system. \
-     Using the web player instead. \"Open in mpv\" still works with the system mpv."
-        .to_string()
+    no_libmpv_message_for(crate::system::is_flatpak())
+}
+
+/// `no_libmpv_message` for a given packaging: the Flatpak cannot load a system libmpv or start
+/// an external player, so it suggests neither.
+pub fn no_libmpv_message_for(flatpak: bool) -> String {
+    if flatpak {
+        "The embedded player is not available in the Flatpak. Using the web player instead.".to_string()
+    } else {
+        "The embedded player needs the AppImage, or mpv's library (libmpv.so.2) installed on this \
+         system. Using the web player instead. \"Open in mpv\" still works with the system mpv."
+            .to_string()
+    }
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -422,18 +440,36 @@ fn read_settings() -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
-/// The "Player engine" setting; settings from before it existed mean embedded mpv.
+/// The "Player engine" setting; with none saved, `default_engine`.
 fn engine_setting(settings: &Value) -> String {
-    settings.get(SETTING_KEY).and_then(Value::as_str).unwrap_or(default_engine()).to_string()
+    match settings.get(SETTING_KEY).and_then(Value::as_str) {
+        Some(engine) => engine.to_string(),
+        None => default_engine(
+            cfg!(debug_assertions),
+            std::env::var_os("APPIMAGE").is_some(),
+            crate::system::is_flatpak(),
+            || load_lib().is_ok(),
+        )
+        .to_string(),
+    }
 }
 
-/// Release RPM/DEB builds start on the web player (only the AppImage bundles a libmpv), so
-/// there is no fallback notice on every run; the user can pick embedded mpv in Settings.
-fn default_engine() -> &'static str {
-    if cfg!(debug_assertions) || std::env::var_os("APPIMAGE").is_some() {
+/// The engine of an install that never chose one. Debug builds and the AppImage use embedded
+/// mpv; the Flatpak has no libmpv, so the web player. Other release builds (RPM/DEB/AUR) use
+/// mpv only when the system's libmpv loads, else quietly the web player (no notice: nobody
+/// asked for mpv).
+pub fn default_engine(
+    debug: bool,
+    appimage: bool,
+    flatpak: bool,
+    libmpv_loads: impl FnOnce() -> bool,
+) -> &'static str {
+    if debug || appimage {
         "mpv"
-    } else {
+    } else if flatpak || !libmpv_loads() {
         "web"
+    } else {
+        "mpv"
     }
 }
 

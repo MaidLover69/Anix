@@ -83,7 +83,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ query }) => {
                 to={
                   finished
                     ? `/detail/${entry.anilist_id}`
-                    : watchPath(entry.anilist_id, entry.episode_number, entry.category, entry.provider?.trim())
+                    : watchPath(entry.anilist_id, entry.episode_number, entry.category, null, entry.provider?.trim())
                 }
                 aria-label={
                   finished

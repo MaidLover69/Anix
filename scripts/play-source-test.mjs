@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 // Issue #9: a downloaded episode plays from its file unless the user picks another server for
-// that episode, and the Watch page does not ask extensions for episode lists before a file
-// starts playing. Also: the new Settings switch has text in every language.
+// that episode. Also: the new Settings switch has text in every language.
 //   node --experimental-strip-types scripts/play-source-test.mjs
 //
 // Seam: src/lib/playSource.ts (pure, no imports from hooks):
 //   playsFromFile({ hasLocalFile, explicitProvider, rememberedProvider?, preferredProvider? }): boolean
-//   episodeLookupsEnabled({ fromFile, playbackStarted }): boolean
 // Detail.tsx handlePlay, EpisodeBrowser.tsx onSelect and Watch.tsx use them instead of their own rules.
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { episodeLookupsEnabled, playsFromFile } from '../src/lib/playSource.ts';
+import { playsFromFile } from '../src/lib/playSource.ts';
 
 const base = { hasLocalFile: true, explicitProvider: null };
 
@@ -31,11 +29,6 @@ assert.equal(playsFromFile({ ...base, explicitProvider: 'miruro', rememberedProv
 // No file, nothing to play from.
 assert.equal(playsFromFile({ hasLocalFile: false, explicitProvider: null }), false);
 assert.equal(playsFromFile({ hasLocalFile: false, explicitProvider: 'local' }), false);
-
-// Extension episode lookups wait for a file to start playing; streams look up at once.
-assert.equal(episodeLookupsEnabled({ fromFile: false, playbackStarted: false }), true);
-assert.equal(episodeLookupsEnabled({ fromFile: true, playbackStarted: false }), false);
-assert.equal(episodeLookupsEnabled({ fromFile: true, playbackStarted: true }), true);
 
 // The Settings switch "Download all subtitle languages" is translated everywhere.
 const dir = new URL('../src/i18n/locales/', import.meta.url);

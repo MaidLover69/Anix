@@ -372,8 +372,9 @@ fn is_resume_file(path: &Path) -> bool {
 /// entries were removed. Call it only while the download is not running.
 pub fn remove_resume_files(dir: &Path, record: &DownloadRecord) -> usize {
     // The episode folder of the current layout, and the folder itself for older downloads.
-    let folders = [output_dir(dir, &record.series_title, record.episode_num), dir.to_path_buf()];
-    folders
+    let episode = output_dir(dir, &record.series_title, record.episode_num);
+    let folders = [episode.clone(), dir.to_path_buf()];
+    let removed = folders
         .iter()
         .flat_map(|folder| RESUME_ROLES.iter().map(move |role| work_file_path(folder, record, role)))
         .filter(|path| match std::fs::symlink_metadata(path) {
@@ -381,7 +382,22 @@ pub fn remove_resume_files(dir: &Path, record: &DownloadRecord) -> usize {
             Ok(_) => std::fs::remove_file(path).is_ok(),
             Err(_) => false,
         })
-        .count()
+        .count();
+    if removed > 0 {
+        prune_empty_folders(&episode, dir);
+    }
+    removed
+}
+
+/// Where a new download of `record` is saved under `root`: `<title>/Episode NN`, except that a
+/// download queued under 1.4.1 and part-way done keeps its flat folder, so it resumes.
+pub fn download_folder(root: &Path, record: &DownloadRecord) -> PathBuf {
+    let flat_partial = RESUME_ROLES.iter().any(|role| work_file_path(root, record, role).exists());
+    if flat_partial {
+        root.to_path_buf()
+    } else {
+        output_dir(root, &record.series_title, record.episode_num)
+    }
 }
 
 /// Whether a download that failed with `error` keeps its resumable files for Try again. Only
@@ -448,7 +464,12 @@ fn stale_part_files(dir: &Path, keep: &[String], depth: u32) -> usize {
         let is_part = name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX);
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if !is_part && is_dir && depth < WORK_DEPTH {
-            removed += stale_part_files(&entry.path(), keep, depth + 1);
+            let inner = stale_part_files(&entry.path(), keep, depth + 1);
+            if inner > 0 {
+                // A folder the clean-up emptied (a cancelled new download) goes too.
+                let _ = std::fs::remove_dir(entry.path());
+            }
+            removed += inner;
             continue;
         }
         if !is_part || kept(&name) {
@@ -1094,15 +1115,26 @@ struct Finished {
 
 /// Files a download has created and not yet handed over as results.
 #[derive(Clone, Default)]
-struct WorkFiles(Arc<Mutex<Vec<PathBuf>>>);
+struct WorkFiles {
+    files: Arc<Mutex<Vec<PathBuf>>>,
+    /// The `<title>/Episode NN` folder of a new download and the download folder it is in.
+    folder: Arc<Mutex<Option<(PathBuf, PathBuf)>>>,
+}
 
 impl WorkFiles {
     fn track(&self, path: &Path) {
-        lock(&self.0).push(path.to_path_buf());
+        lock(&self.files).push(path.to_path_buf());
     }
 
     fn release(&self, path: &Path) {
-        lock(&self.0).retain(|p| p != path);
+        lock(&self.files).retain(|p| p != path);
+    }
+
+    /// Removes the new download's episode and title folders if nothing is left in them.
+    fn prune_folders(&self) {
+        if let Some((episode, root)) = lock(&self.folder).take() {
+            prune_empty_folders(&episode, &root);
+        }
     }
 
     async fn remove_all(&self) {
@@ -1111,7 +1143,7 @@ impl WorkFiles {
 
     /// Removes the tracked files `doomed` picks and forgets the rest, which stay on disk.
     async fn remove_where(&self, doomed: impl Fn(&Path) -> bool) {
-        let paths: Vec<PathBuf> = std::mem::take(&mut *lock(&self.0));
+        let paths: Vec<PathBuf> = std::mem::take(&mut *lock(&self.files));
         for path in paths.into_iter().filter(|p| doomed(p)) {
             // The HLS segment folder is the one tracked directory.
             if tokio::fs::remove_file(&path).await.is_err() {
@@ -1628,11 +1660,11 @@ async fn download_hls_files(
     }
 
     let input = FfmpegInput::LocalHls { playlist: index, hls };
-    let (video, embedded) =
+    let (video, _) =
         mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, Some(plan.duration_s), (0.90, 0.99))
             .await
             .map_err(|e| e.to_string())?;
-    finalize(job, &video, "mkv", subtitles, embedded.then_some(0)).await
+    finalize(job, &video, "mkv", subtitles).await
 }
 
 /// `bytes <start>-<end>/<total>` of a `Content-Range` header as `(start, total)`.
@@ -1713,14 +1745,13 @@ async fn reserve_final_path(job: &Job<'_>, ext: &str) -> Result<(PathBuf, String
     ))
 }
 
-/// Moves the finished video to its final name and keeps the subtitles that are not inside
-/// it as side files next to it.
+/// Moves the finished video to its final name and keeps every subtitle as a side file next to
+/// it. The first one is also inside the video, but the web player reads only side files.
 async fn finalize(
     job: &Job<'_>,
     video: &Path,
     ext: &str,
     subtitles: &[SubtitleInput],
-    embedded: Option<usize>,
 ) -> Result<Finished, String> {
     let size = match tokio::fs::metadata(video).await {
         Ok(meta) if meta.len() > 0 => meta.len() as i64,
@@ -1737,9 +1768,6 @@ async fn finalize(
 
     let mut used: Vec<String> = Vec::new();
     for (idx, sub) in subtitles.iter().enumerate() {
-        if embedded == Some(idx) {
-            continue;
-        }
         let language = sanitize_filename(&sub.language).to_lowercase().replace(' ', "_");
         let mut label = truncate_to_bytes(&language, 24).to_string();
         if label.is_empty() {
@@ -1811,15 +1839,23 @@ pub fn delete_finished_files(video: &Path) -> Result<usize, String> {
 /// folder was changed, or a flat one, leaves its folder alone.
 pub fn delete_download_files(video: &Path, root: &Path) -> Result<usize, String> {
     let removed = delete_finished_files(video)?;
-    if video.components().all(|c| c != std::path::Component::ParentDir) {
-        let episode = video.parent();
-        for dir in [episode, episode.and_then(Path::parent)].into_iter().flatten() {
-            if dir == root || !dir.starts_with(root) || std::fs::remove_dir(dir).is_err() {
-                break;
-            }
-        }
+    if let Some(episode) = video.parent() {
+        prune_empty_folders(episode, root);
     }
     Ok(removed)
+}
+
+/// Removes `episode` and then its parent (the title folder) while they are empty. Only folders
+/// strictly inside `root` go, and never through a `..`.
+pub fn prune_empty_folders(episode: &Path, root: &Path) {
+    if episode.components().any(|c| c == std::path::Component::ParentDir) {
+        return;
+    }
+    for dir in [Some(episode), episode.parent()].into_iter().flatten() {
+        if dir == root || !dir.starts_with(root) || std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
 }
 
 async fn download_stream_with_ffmpeg(
@@ -1851,12 +1887,12 @@ async fn download_stream_with_ffmpeg(
     };
 
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let (video, embedded) =
+    let (video, _) =
         mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, duration_s, (0.05, 0.99))
         .await
         .map_err(|e| e.to_string())?;
 
-    finalize(job, &video, "mkv", subtitles, embedded.then_some(0)).await
+    finalize(job, &video, "mkv", subtitles).await
 }
 
 async fn download_file(
@@ -1994,8 +2030,8 @@ async fn download_file(
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
     let input = FfmpegInput::Local(temp.clone());
     match mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, job.record.duration_s, (0.95, 0.99)).await {
-        Ok((video, embedded)) => {
-            let finished = finalize(job, &video, "mkv", subtitles, embedded.then_some(0)).await?;
+        Ok((video, _)) => {
+            let finished = finalize(job, &video, "mkv", subtitles).await?;
             let _ = tokio::fs::remove_file(&temp).await;
             job.work.release(&temp);
             Ok(finished)
@@ -2007,7 +2043,7 @@ async fn download_file(
                 }
                 other => warn!("Keeping download {} in its original container: {}", job.record.id, other),
             }
-            finalize(job, &temp, container_extension(url), subtitles, None).await
+            finalize(job, &temp, container_extension(url), subtitles).await
         }
     }
 }
@@ -2026,7 +2062,12 @@ where
     let url = guarded_stream_url(&source.url)?;
 
     let chosen = select_subtitles(&source.subtitles, source.subtitle_languages.as_deref());
-    let (audio, sub) = download_languages(&record.category, source.language.as_deref(), &chosen);
+    let (audio, sub) = download_languages(
+        &record.category,
+        source.language.as_deref(),
+        // The first chosen track is the one embedded in the video.
+        &chosen[..chosen.len().min(1)],
+    );
     if let Err(e) = db::set_download_languages(pool, &record.id, audio.as_deref(), sub.as_deref()).await {
         warn!("Could not save the languages of download {}: {}", record.id, e);
     }
@@ -2046,7 +2087,10 @@ where
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?, true),
     };
-    let dir = if nested { output_dir(&root, &record.series_title, record.episode_num) } else { root };
+    let dir = if nested { download_folder(&root, record) } else { root.clone() };
+    if nested && dir != root {
+        *lock(&work.folder) = Some((dir.clone(), root.clone()));
+    }
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Could not create the download folder {}: {}", dir.display(), e))?;
@@ -2130,6 +2174,7 @@ where
         }
         _ => work.remove_all().await,
     }
+    work.prune_folders();
 
     match result {
         None => {

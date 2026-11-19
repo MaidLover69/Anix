@@ -1647,7 +1647,8 @@ pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
         match local {
             Some((uri, name)) => {
                 files.push((absolute(uri)?, name.clone()));
-                encrypted.push(false);
+                // An init section after an AES-128 key is encrypted too (RFC 8216 4.3.2.5); a key is not.
+                encrypted.push(encrypting && name.starts_with("init"));
                 playlist.push(line.replacen(&format!("URI=\"{}\"", uri), &format!("URI=\"{}\"", name), 1));
             }
             None => playlist.push(line.to_string()),
@@ -1656,13 +1657,16 @@ pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
     (segments > 0).then(|| HlsPlan { playlist: playlist.join("\n") + "\n", files, encrypted, duration_s })
 }
 
-/// Whether two local playlists describe the same stream: the same number of segments and the same
-/// key and init-section lines (so the same IVs). Only then can a renewed stream take over the
+/// Whether two local playlists describe the same stream: the same number of segments, media sequence
+/// and key and init-section lines (so the same IVs). Only then can a renewed stream take over the
 /// segments already saved.
 pub fn same_hls_shape(saved: &str, fresh: &str) -> bool {
     let shape = |text: &str| {
         let segments = text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).count();
-        let keys: Vec<&str> = text.lines().filter(|l| l.starts_with("#EXT-X-KEY") || l.starts_with("#EXT-X-MAP")).collect();
+        let keys: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("#EXT-X-KEY") || l.starts_with("#EXT-X-MAP") || l.starts_with("#EXT-X-MEDIA-SEQUENCE"))
+            .collect();
         (segments, keys.iter().map(|l| l.to_string()).collect::<Vec<_>>())
     };
     shape(saved) == shape(fresh)
@@ -1701,7 +1705,7 @@ async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> R
 }
 
 /// The playlist at `target` and the URL it ended up at, retried like a segment. `None` when the
-/// host keeps refusing it; a refused redirect is an error.
+/// host keeps refusing it; a refused redirect or a 403 is an error.
 async fn get_playlist(client: &reqwest::Client, target: &str, headers: &RequestHeaders) -> Result<Option<(String, String)>, String> {
     use engine::FetchError;
     let policy = engine::RetryPolicy::APP;
@@ -1720,6 +1724,10 @@ async fn get_playlist(client: &reqwest::Client, target: &str, headers: &RequestH
             Err(e) if e.is_timeout() => FetchError::Timeout,
             Err(e) => FetchError::Connect(e.to_string()),
         };
+        engine::note_failure(target, &error);
+        if matches!(error, FetchError::Status { code: 403, .. }) {
+            return Err(PLAYLIST_REFUSED.to_string());
+        }
         attempt += 1;
         if !engine::is_retryable(&error) || attempt >= policy.max_tries {
             return Ok(None);
@@ -1727,6 +1735,9 @@ async fn get_playlist(client: &reqwest::Client, target: &str, headers: &RequestH
         engine::wait_before_retry(&policy, attempt - 1, &error).await;
     }
 }
+
+/// `get_playlist`'s error for a 403: the signed link expired, which a renewed stream can fix.
+const PLAYLIST_REFUSED: &str = "The stream's playlist answered HTTP 403";
 
 /// Why a redirect was not followed: the hop's refusal from `check_download_url`, or too many
 /// hops. reqwest's own text names only the first URL.
@@ -2046,9 +2057,21 @@ async fn download_stream_with_ffmpeg(
 ) -> Result<Finished, String> {
     let hls_options = probe_ffmpeg().await.map_err(|e| e.to_string())?;
     if kind == StreamKind::Hls {
-        if let Some((plan, height)) = fetch_hls_plan(url, headers, &job.record.quality).await? {
+        let (planned, headers) = match fetch_hls_plan(url, headers, &job.record.quality).await {
+            // An expired link goes through renewal when there is a way to renew it.
+            Err(e) if e == PLAYLIST_REFUSED => match &job.renew {
+                None => (None, headers.clone()),
+                Some(renew) => {
+                    let fresh = renew().await.map_err(|e| format!("The stream link expired and could not be renewed: {}", e))?;
+                    let fresh_headers = request_headers(&fresh);
+                    (fetch_hls_plan(&fresh.url, &fresh_headers, &job.record.quality).await?, fresh_headers)
+                }
+            },
+            other => (other?, headers.clone()),
+        };
+        if let Some((plan, height)) = planned {
             job.got_height.store(height, std::sync::atomic::Ordering::Relaxed);
-            return download_hls_files(job, &plan, headers, hls_options, subtitles).await;
+            return download_hls_files(job, &plan, &headers, hls_options, subtitles).await;
         }
     }
     let input = FfmpegInput::Remote {
@@ -2438,21 +2461,30 @@ fn spawn_job<S>(
     active.insert(id, ActiveDownload { cancel: cancel_tx, handle });
 }
 
-/// Starts downloading `source` for `record` in the background. The row of `record` must
-/// already exist with status `DOWNLOADING`.
-pub fn start_download(pool: SqlitePool, record: DownloadRecord, source: DownloadSource) {
-    spawn_job(pool, record, async move { Ok(source) }, Place::Default, None, None);
-}
-
 /// Streams the player already resolved, by download id, for rows waiting in the queue.
-static PLAYER_SOURCES: Lazy<Mutex<HashMap<String, DownloadSource>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static PLAYER_SOURCES: Lazy<Mutex<HashMap<String, (DownloadSource, Instant)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Remembers the stream the player picked for the `QUEUED` row `id` (the row must be created by
 /// the caller) and wakes the queue, so the download follows the same limits and renewal as any
 /// other. A restart forgets it, and the row is then resolved like any queued one.
 pub fn queue_with_source(id: &str, source: DownloadSource) {
-    lock(&PLAYER_SOURCES).insert(id.to_string(), source);
+    queue_with_source_at(id, source, Instant::now());
+}
+
+/// [`queue_with_source`] as of `at`, for tests.
+#[doc(hidden)]
+pub fn queue_with_source_at(id: &str, source: DownloadSource, at: Instant) {
+    lock(&PLAYER_SOURCES).insert(id.to_string(), (source, at));
     notify_queue();
+}
+
+/// Signed links expire; a row that waited longer than this is resolved again instead.
+const PLAYER_SOURCE_MAX_AGE: Duration = Duration::from_secs(5 * 60);
+
+/// The remembered stream of row `id`, taken out, if it is still fresh.
+#[doc(hidden)]
+pub fn take_queued_source(id: &str) -> Option<DownloadSource> {
+    lock(&PLAYER_SOURCES).remove(id).filter(|(_, at)| at.elapsed() < PLAYER_SOURCE_MAX_AGE).map(|(source, _)| source)
 }
 
 /// Forgets the source of a row that could not be created.
@@ -2460,7 +2492,7 @@ pub fn forget_queued_source(id: &str) {
     lock(&PLAYER_SOURCES).remove(id);
 }
 
-/// [`start_download`] into `dir` instead of the download folder, for tests.
+/// `start_download_in` runs a job into `dir` instead of the download folder, for tests.
 #[doc(hidden)]
 pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
     spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None, None);
@@ -2580,7 +2612,7 @@ async fn queue_loop(app: tauri::AppHandle) {
                     Box::pin(async move { resolve_queued_source(&app, &record).await })
                 });
                 // A stream the player picked is used as it is; the extension is asked only to renew it.
-                let first: Pin<Box<dyn Future<Output = Result<DownloadSource, String>> + Send>> = match lock(&PLAYER_SOURCES).remove(&record.id) {
+                let first: Pin<Box<dyn Future<Output = Result<DownloadSource, String>> + Send>> = match take_queued_source(&record.id) {
                     Some(source) => Box::pin(async move { Ok(source) }),
                     None => resolve(),
                 };

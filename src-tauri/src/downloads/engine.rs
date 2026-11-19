@@ -127,7 +127,7 @@ pub fn doh_switch_decision(mode: DohMode, error: &FetchError) -> bool {
 
 /// After a failed request: a host that cannot be connected to is looked up through DoH from now
 /// on (Automatic mode), so the retry uses it.
-fn note_failure(url: &str, error: &FetchError) {
+pub(super) fn note_failure(url: &str, error: &FetchError) {
     if doh_switch_decision(app_settings::current().doh_mode, error) {
         if let Some(host) = reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)) {
             note_unreachable_host(&host, &error.to_string());
@@ -142,9 +142,6 @@ struct HostState {
     limit: usize,
     successes: u32,
     ceiling: Option<usize>,
-    /// Halved already and not grown since: pushback from requests that started under the old
-    /// limit says nothing new.
-    halved: bool,
     /// Steps of successes spent at the ceiling.
     capped_steps: u32,
 }
@@ -166,7 +163,7 @@ impl HostLimits {
     }
 
     fn state(&self, host: &str) -> HostState {
-        lock(&self.hosts).get(host).copied().unwrap_or(HostState { limit: self.start, successes: 0, ceiling: None, halved: false, capped_steps: 0 })
+        lock(&self.hosts).get(host).copied().unwrap_or(HostState { limit: self.start, successes: 0, ceiling: None, capped_steps: 0 })
     }
 
     pub fn limit(&self, host: &str) -> usize {
@@ -184,7 +181,6 @@ impl HostLimits {
             state.successes = 0;
             if state.limit < state.ceiling.unwrap_or(self.max).min(self.max) {
                 state.limit += 1;
-                state.halved = false;
             } else if let Some(ceiling) = state.ceiling {
                 state.capped_steps += 1;
                 if state.capped_steps >= CEILING_RELAX_STEPS {
@@ -196,15 +192,16 @@ impl HostLimits {
         lock(&self.hosts).insert(host.to_string(), state);
     }
 
-    pub fn record_pressure(&self, host: &str) {
+    /// `started` is the limit the failed request began under: pushback from a request that began
+    /// above the current (already lowered) limit says nothing new.
+    pub fn record_pressure(&self, host: &str, started: usize) {
         let mut state = self.state(host);
-        if state.halved {
+        if started > state.limit {
             return;
         }
         let refused = state.limit.saturating_sub(1).max(1);
         state.ceiling = Some(state.ceiling.map_or(refused, |c| c.min(refused)));
         state.limit = (state.limit / 2).max(1);
-        state.halved = true;
         state.successes = 0;
         state.capped_steps = 0;
         lock(&self.hosts).insert(host.to_string(), state);
@@ -571,13 +568,14 @@ async fn fetch_with_retry(
     let host = host_key(url).unwrap_or_default();
     let mut attempt = 0;
     loop {
+        let started = limits.map_or(1, |l| l.limit(&host));
         let error = match attempt_file(client, url, headers, path, encrypted).await {
             Ok(body) => return Ok(body),
             Err(e) => e,
         };
         note_failure(url, &error);
         if let Some(limits) = limits.filter(|_| pressure_error(&error)) {
-            limits.record_pressure(&host);
+            limits.record_pressure(&host, started);
         }
         attempt += 1;
         if !is_retryable(&error) || attempt >= policy.max_tries {
@@ -663,7 +661,13 @@ pub(super) async fn fetch_files(
                 renewals += 1;
                 let renew = options.renew.as_ref().expect("checked above");
                 urls = match renew().await {
-                    Ok(fresh) if fresh.len() == urls.len() => fresh,
+                    Ok(fresh) if fresh.len() == urls.len() => {
+                        // Keys are fetched again: the renewed stream may carry a new one.
+                        for key in paths.iter().filter(|p| p.extension().is_some_and(|e| e == "key")) {
+                            let _ = tokio::fs::remove_file(key).await;
+                        }
+                        fresh
+                    }
                     Ok(_) => return Err(FetchError::Integrity("The renewed stream is not the same as the one being downloaded.".to_string())),
                     Err(e) => return Err(FetchError::Integrity(format!("The stream link expired and could not be renewed: {}", e))),
                 };

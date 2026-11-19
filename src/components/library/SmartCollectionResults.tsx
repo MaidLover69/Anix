@@ -9,26 +9,34 @@ import { AnimeCard } from '../AnimeCard';
 import { SkeletonCard } from '../SkeletonCard';
 import { Button, EmptyState, ErrorState } from '../ui';
 import { useSearchAnime } from '../../hooks/useAniList';
-import { discoverLink, searchFromRule } from '../../lib/smartRule';
+import { discoverLink, franchiseFromRule, searchFromRule } from '../../lib/smartRule';
+import { FranchiseCollectionResults } from './FranchiseCollectionResults';
+import { SavedNote } from '../SavedNote';
 import { t } from '../../i18n';
 
 const GRID_CLASS = 'grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-4 gap-y-6';
 const PLACEHOLDER_CARDS = 12;
 
-export const SmartCollectionResults: React.FC<{ rule: string }> = ({ rule }) => {
+export const SmartCollectionResults: React.FC<{ rule: string; playlistId: string }> = ({ rule, playlistId }) => {
   const navigate = useNavigate();
-  const search = useSearchAnime(searchFromRule(rule));
+  const franchise = franchiseFromRule(rule);
+  // A franchise rule is not a Discover filter: it never searches.
+  const search = useSearchAnime(searchFromRule(rule), { collectionId: playlistId, enabled: franchise === null });
+  if (franchise !== null) return <FranchiseCollectionResults animeId={franchise} />;
   const results = search.data ?? [];
+  const studio = searchFromRule(rule).studio;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <p className="flex-1 min-w-0 text-[13px] text-text-secondary">{t('smartCollection.hint')}</p>
+        {studio && <span className="rounded-sm bg-bg-elevated px-2 py-1 text-xs text-text-secondary">{t('smartCollection.studio', { name: studio })}</span>}
         <Button variant="secondary" onClick={() => navigate(discoverLink(rule))}>
           <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
           <span>{t('smartCollection.openInDiscover')}</span>
         </Button>
       </div>
+      <SavedNote kind="collection" id={playlistId} />
       {search.isLoading ? (
         <div className={GRID_CLASS} aria-busy="true" aria-label={t('smartCollection.loading')}>
           {Array.from({ length: PLACEHOLDER_CARDS }, (_, i) => (

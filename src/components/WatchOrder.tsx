@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { scrollBehavior } from '../lib/motion';
-import { Link } from 'react-router-dom';
-import { useQueries } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
+import { Link, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { BookmarkPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShimmerImage } from './ShimmerImage';
 import { Spinner } from './ui/Spinner';
 import { Button } from './ui/Button';
 import { mediaFormatLabel } from './library/format';
-import { MAX_ENTRIES, watchOrder, type OrderDetails } from '../lib/watchOrder';
+import { CreatePlaylistModal } from './library/CreatePlaylistModal';
+import { ruleForFranchise } from '../lib/smartRule';
+import { useFranchiseOrder } from '../hooks/useFranchise';
+import type { OrderDetails } from '../lib/watchOrder';
 import type { AnimeDetails } from '../types';
 import { t } from '../i18n';
 import { Meme } from './meme/Meme';
@@ -24,31 +25,10 @@ function titleOf(node: OrderDetails): string {
  * chain ends. Hidden when this anime has no prequel or sequel.
  */
 export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => {
-  const [ids, setIds] = useState<number[]>([]);
   const scrollRef = useRef<HTMLOListElement>(null);
-  const results = useQueries({
-    queries: ids.map((id) => ({
-      queryKey: ['animeDetails', id],
-      queryFn: () => invoke<OrderDetails>('fetch_anime_details', { id }), // i18n-ignore
-      staleTime: 15 * 60 * 1000,
-      retry: 1,
-    })),
-  });
-
-  const known = useMemo(() => {
-    const map = new Map<number, OrderDetails>([[details.id, details as OrderDetails]]);
-    results.forEach((r, i) => r.data && map.set(ids[i], r.data));
-    return map;
-    // `results` is a new array each render; its data is what matters.
-  }, [details, ids, results.map((r) => r.dataUpdatedAt).join()]);
-
-  const { entries, missing } = useMemo(() => watchOrder(details.id, known), [details.id, known]);
-  const loading = results.some((r) => r.isFetching);
-
-  useEffect(() => {
-    const add = missing.filter((id) => !ids.includes(id));
-    if (add.length > 0 && ids.length < MAX_ENTRIES) setIds((prev) => [...prev, ...add].slice(0, MAX_ENTRIES));
-  }, [missing, ids]);
+  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const { entries, loading, state } = useFranchiseOrder(details.id, details as OrderDetails);
 
   if (entries.length < 2) return null;
 
@@ -72,6 +52,11 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
           </h2>
           {loading && <Spinner size="sm" label={t('watchOrder.findingMore')} className="text-text-muted" />}
         </div>
+        <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setSaving(true)} title={t('smartCollection.franchise')}>
+          <BookmarkPlus aria-hidden="true" className="h-4 w-4" />
+          {t('discover.saveCollection')}
+        </Button>
         <div dir="ltr" className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/rail:opacity-100">
           <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollLeft', { title: heading })} onClick={() => scroll('left')}>
             <ChevronLeft aria-hidden="true" className="h-4 w-4" />
@@ -79,6 +64,7 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
           <Button icon variant="ghost" size="sm" aria-label={t('horizontalRail.scrollRight', { title: heading })} onClick={() => scroll('right')}>
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </Button>
+        </div>
         </div>
       </div>
       <ol ref={scrollRef} className="relative -mx-1 flex snap-x gap-3 overflow-x-auto px-1 py-1 scroll-px-1 no-scrollbar">
@@ -137,6 +123,17 @@ export const WatchOrder: React.FC<{ details: AnimeDetails }> = ({ details }) => 
           );
         })}
       </ol>
+      {saving && (
+        <CreatePlaylistModal
+          rule={ruleForFranchise(details.id)}
+          onClose={() => setSaving(false)}
+          onCreated={(collection) => {
+            setSaving(false);
+            navigate(`/library?tab=playlists&playlist=${encodeURIComponent(collection.id)}`);
+          }}
+        />
+      )}
+      {state === 'partial' && !loading && <p className="text-xs text-text-muted">{t('franchise.partial')}</p>}
     </section>
   );
 };

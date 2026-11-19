@@ -14,6 +14,7 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { SurpriseCard } from '../components/SurpriseCard';
 import { CreatePlaylistModal } from '../components/library/CreatePlaylistModal';
 import { ruleFromSearch } from '../lib/smartRule';
+import { searchInvokeArgs } from '../lib/searchArgs';
 import { useSearchAnime } from '../hooks/useAniList';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useSearchHistory } from '../hooks/useSearchHistory';
@@ -153,12 +154,13 @@ export const Discover: React.FC = () => {
   const minScore = oneOf(searchParams.get('score'), minScores, '');
   const year = oneOf(searchParams.get('year'), years, '');
   const season = oneOf(searchParams.get('season'), seasons, '');
+  const studio = (searchParams.get('studio') ?? '').trim().slice(0, 80);
   const hideWatched = searchParams.get('unwatched') === '1';
   const format = oneOf(searchParams.get('format'), formats, '');
   const status = oneOf(searchParams.get('status'), statuses, '');
   const sort = oneOf(searchParams.get('sort'), sorts, DEFAULT_SORT);
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
-  const rareFilterSet = !!(format || status || season || year || minScore);
+  const rareFilterSet = !!(format || status || season || year || minScore || studio);
   const [moreOpen, setMoreOpen] = useState(rareFilterSet);
   // A link or the palette can set one while the screen is open: unfold so no active filter is hidden.
   useEffect(() => {
@@ -230,6 +232,7 @@ export const Discover: React.FC = () => {
       minScore: minScore ? Number(minScore) : undefined,
       year: year ? Number(year) : undefined,
       season: season || undefined,
+      studio: studio || undefined,
     },
     { keepPrevious: true }
   );
@@ -297,15 +300,7 @@ export const Discover: React.FC = () => {
     const list = await queryClient.fetchQuery<Media[]>({
       queryKey: ['searchAnime', params],
       queryFn: () =>
-        invoke<Media[]>('search_anime', {
-          query: null,
-          genres: null,
-          format: null,
-          status: null,
-          sort: params.sort,
-          page: params.page,
-          perPage: params.perPage,
-        }),
+        invoke<Media[]>('search_anime', searchInvokeArgs(params)),
       staleTime: 30 * 60 * 1000,
     });
     // The backend already leaves adult titles out unless they are allowed in Settings.
@@ -327,6 +322,7 @@ export const Discover: React.FC = () => {
     !!minScore ||
     !!year ||
     !!season ||
+    !!studio ||
     hideWatched ||
     sort !== DEFAULT_SORT;
 
@@ -490,6 +486,20 @@ export const Discover: React.FC = () => {
             {(year || season) && anilistOnly}
             <CustomSelect aria-label={t('discover.minimumScore')} className="min-w-36 max-w-64" value={minScore} onChange={(val) => setParam('score', val)} options={minScores} />
             {minScore && anilistOnly}
+            {/* Committed on Enter or when the box loses focus; `key` resets it when the URL changes. */}
+            <input
+              key={studio}
+              type="text"
+              aria-label={t('discover.studio')}
+              placeholder={t('discover.studioPlaceholder')}
+              defaultValue={studio}
+              maxLength={80}
+              autoComplete="off"
+              spellCheck={false}
+              onBlur={(e) => e.target.value.trim() !== studio && setParam('studio', e.target.value.trim())}
+              onKeyDown={(e) => e.key === 'Enter' && setParam('studio', e.currentTarget.value.trim())}
+              className="h-9 w-40 rounded-md bg-bg-input px-3 text-[13px] text-text-primary placeholder:text-text-muted"
+            />
           </div>
         </details>
 

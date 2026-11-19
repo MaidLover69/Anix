@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import type { QueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { isNotFoundError } from '../lib/errorCodes';
+import { searchInvokeArgs } from '../lib/searchArgs';
 import type {
   Media,
   HomeData,
@@ -46,6 +47,8 @@ export interface SearchParams {
   year?: number;
   /** WINTER, SPRING, SUMMER or FALL. */
   season?: string;
+  /** Studio name (AniList, Shikimori as the fallback). */
+  studio?: string;
 }
 
 export function useSearchAnime(
@@ -54,24 +57,14 @@ export function useSearchAnime(
     enabled?: boolean;
     /** Keep showing the previous result while a new search or page loads. */
     keepPrevious?: boolean;
+    /** A smart collection's id: its last result is kept for when every catalogue is down. */
+    collectionId?: string;
   }
 ) {
   return useQuery<Media[]>({
     queryKey: ['searchAnime', params],
     queryFn: async () => {
-      return await invoke<Media[]>('search_anime', {
-        query: params.query || null,
-        genres: params.genres && params.genres.length > 0 ? params.genres : null,
-        format: params.format || null,
-        status: params.status || null,
-        sort: params.sort || 'POPULARITY_DESC',
-        page: params.page || 1,
-        perPage: params.perPage || 24,
-        excludeGenres: params.excludeGenres && params.excludeGenres.length > 0 ? params.excludeGenres : null,
-        minScore: params.minScore || null,
-        year: params.year || null,
-        season: params.season || null,
-      });
+      return await invoke<Media[]>('search_anime', { ...searchInvokeArgs(params), collectionId: options?.collectionId ?? null });
     },
     enabled: options?.enabled,
     placeholderData: options?.keepPrevious ? keepPreviousData : undefined,

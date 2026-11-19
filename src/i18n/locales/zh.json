@@ -2032,5 +2032,28 @@
   "downloadSettings.downloadResolutionHint": "下载时使用的画面大小。如果片源没有，就使用最接近的较低分辨率，再其次是最接近的较高分辨率。",
   "settings.defaultPlaybackSpeed": "默认播放速度",
   "settings.defaultPlaybackSpeedHint": "每一集都以此速度开始（0.5 倍到 4 倍）。观看时更改的速度只对该集有效。",
-  "playerSettingsPanel.customSpeed": "自定义"
+  "playerSettingsPanel.customSpeed": "自定义",
+  "discover.studio": "制作公司",
+  "discover.studioPlaceholder": "例如 MAPPA",
+  "smartCollection.studio": "制作公司：{name}",
+  "smartCollection.franchise": "按观看顺序排列的系列",
+  "franchise.partial": "该系列的部分条目暂时未知，连上目录后顺序会补全。",
+  "franchise.unavailable": "目录无法连接时，无法读取观看顺序。",
+  "offline.savedPage": "来自 {source} 的已保存页面，{age}",
+  "offline.savedPageNoSource": "已保存页面，{age}",
+  "offline.ageNow": "刚刚",
+  "offline.ageMinutes": {
+    "other": "{count} 分钟前"
+  },
+  "offline.ageHours": {
+    "other": "{count} 小时前"
+  },
+  "offline.ageDays": {
+    "other": "{count} 天前"
+  },
+  "offline.changesWaiting": {
+    "other": "{count} 项列表更改将在联网后发送"
+  },
+  "settings.imageCacheLimit": "已保存的封面和横幅",
+  "settings.imageCacheLimitHint": "图片可占用多少磁盘空间，以便离线时仍能显示。最旧的会先被删除。当前已用："
 }

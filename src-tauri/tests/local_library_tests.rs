@@ -570,6 +570,7 @@ fn test_catalogue(base: &str, pool: sqlx::SqlitePool) -> anix_lib::catalogue::Ca
         mal: at("mal"),
         kitsu: at("kitsu"),
         shikimori: at("shiki"),
+        shikimori_studios: at("shiki_studios"),
         comick: at("comick"),
         jikan: at("jikan"),
         imdb: at("imdb"),

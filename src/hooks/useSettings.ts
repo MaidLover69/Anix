@@ -45,6 +45,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   player_readahead_secs: 30,
   player_disk_cache: false,
   player_disk_cache_mb: 1024,
+  // 1.4.2: saved covers and banners, in MB (oldest dropped first)
+  image_cache_mb: 200,
 };
 
 /** Stands for "no specific provider" wherever a provider key (a plugin id) is expected. */

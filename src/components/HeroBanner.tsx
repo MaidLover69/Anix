@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { Button } from './ui/Button';
 import { AmbientGlow } from './AmbientGlow';
 import { ShimmerImage } from './ShimmerImage';
+import { SavedImg } from './SavedImg';
 import { useReducedMotion } from '../hooks/useMediaQuery';
 import { useWindowActive } from '../hooks/useWindowActive';
 import { getContinueTarget, releasedEpisodeCount, watchPath } from '../hooks/watchProgress';
@@ -124,12 +125,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           const url = backdropOf(item);
           if (!url || failedImages.has(item.id)) return null;
           return (
-            <img
+            <SavedImg
               key={item.id}
               src={url}
               alt=""
               draggable={false}
-              onError={() => setFailedImages((prev) => new Set(prev).add(item.id))}
+              onFailed={() => setFailedImages((prev) => new Set(prev).add(item.id))}
               className={clsx(
                 'ui-hero-art pointer-events-none absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-300',
                 // Only the first title drifts, once per visit: a drift per title would keep Home animating.

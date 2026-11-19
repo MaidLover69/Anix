@@ -148,6 +148,8 @@ pub async fn search_anime(
     min_score: Option<i32>,
     year: Option<i32>,
     season: Option<String>,
+    studio: Option<String>,
+    collection_id: Option<String>,
 ) -> Result<Vec<Media>, String> {
     const SEASONS: [&str; 4] = ["WINTER", "SPRING", "SUMMER", "FALL"];
     let request = SearchQuery {
@@ -163,31 +165,34 @@ pub async fn search_anime(
         min_score: min_score.filter(|s| (1..=100).contains(s)),
         year: year.filter(|y| (1900..=3000).contains(y)),
         season: season.filter(|s| SEASONS.contains(&s.as_str())),
+        studio: studio.map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.chars().count() <= 80),
     };
-    let mut key = offline::search_key(
-        request.query.as_deref(),
-        &request.genres,
-        request.format.as_deref(),
-        request.status.as_deref(),
-        request.sort.as_deref(),
-        request.page,
-        request.per_page,
-        request.hide_adult,
-    );
-    // Only searches with the newer filters get a longer key, so saved results of plain ones still match.
-    if !request.exclude_genres.is_empty() || request.min_score.is_some() || request.year.is_some() || request.season.is_some() {
-        key.push_str(&json!([request.exclude_genres, request.min_score, request.year, request.season]).to_string());
-    }
+    let key = offline::query_key(&request);
+    let collection = collection_id.filter(|id| !id.trim().is_empty() && id.len() <= 100);
     match state.catalogue.search(&request).await {
         Ok(served) => {
-            if let Err(e) = offline::store(&state.pool, offline::Kind::Search, &key, &json!(served.value)).await {
+            let value = json!(served.value);
+            let source = Some(served.source.label());
+            if let Err(e) = offline::store_from(&state.pool, offline::Kind::Search, &key, &value, source).await {
                 tracing::warn!("Could not save search results for offline use: {}", e);
+            }
+            // A smart collection also keeps its own copy, which the search cache's limit cannot evict.
+            if let Some(id) = &collection {
+                if let Err(e) = offline::store_from(&state.pool, offline::Kind::Collection, id, &value, source).await {
+                    tracing::warn!("Could not save the collection's result: {}", e);
+                }
             }
             offline::mark_served(&app, served.notice());
             Ok(served.value)
         }
         Err(e) if offline::is_offline_error(&e) => {
-            let saved = offline::load(&state.pool, offline::Kind::Search, &key).await.ok().flatten();
+            let mut saved = None;
+            if let Some(id) = &collection {
+                saved = offline::load(&state.pool, offline::Kind::Collection, id).await.ok().flatten();
+            }
+            if saved.is_none() {
+                saved = offline::load(&state.pool, offline::Kind::Search, &key).await.ok().flatten();
+            }
             let parsed = saved.and_then(|(value, at)| {
                 serde_json::from_value::<Vec<Media>>(value).ok().map(|list| (list, at))
             });
@@ -206,6 +211,34 @@ pub async fn search_anime(
     }
 }
 
+/// Where a saved copy came from and how old it is, for the "saved page" note. `kind` is
+/// `details` (key: the anime id), `search` or `collection`.
+#[derive(serde::Serialize)]
+pub struct SavedNote {
+    pub source: Option<String>,
+    pub age_s: i64,
+}
+
+#[tauri::command]
+pub async fn saved_page_note(state: State<'_, AppState>, kind: String, key: String) -> Result<Option<SavedNote>, String> {
+    let kind = match kind.as_str() {
+        "details" => offline::Kind::Details,
+        "search" => offline::Kind::Search,
+        "collection" => offline::Kind::Collection,
+        _ => return Ok(None),
+    };
+    let page = offline::load_saved(&state.pool, kind, &key, crate::db::current_unix_timestamp())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(page.map(|p| SavedNote { source: p.source, age_s: p.age_s }))
+}
+
+/// How many anime have list changes that wait to be sent to the connected services.
+#[tauri::command]
+pub async fn waiting_list_changes(state: State<'_, AppState>) -> Result<usize, String> {
+    accounts::sync::waiting_changes(&state.pool).await.map_err(|e| e.to_string())
+}
+
 /// One anime's details (`id` is an AniList id or a synthetic one, see `catalogue::ids`), in
 /// AniList's shape whichever catalogue answered. Saved for offline use; a fallback
 /// catalogue's copy does not replace a saved AniList copy, which has more in it.
@@ -221,8 +254,14 @@ pub async fn fetch_anime_details(
             let keep = served.source == Source::AniList
                 || matches!(offline::load(&state.pool, offline::Kind::Details, &key).await, Ok(None));
             if keep {
-                if let Err(e) = offline::store(&state.pool, offline::Kind::Details, &key, &served.value).await {
+                if let Err(e) = offline::store_from(&state.pool, offline::Kind::Details, &key, &served.value, Some(served.source.label())).await {
                     tracing::warn!("Could not save anime {} for offline use: {}", id, e);
+                }
+            }
+            // The library keeps the episode count for entries whose details have aged out.
+            if let (Ok(id32), Some(n)) = (i32::try_from(id), served.value["episodes"].as_i64().and_then(|n| i32::try_from(n).ok())) {
+                if let Err(e) = crate::db::set_watchlist_episodes(&state.pool, id32, Some(n)).await {
+                    tracing::warn!("Could not save the episode count of anime {}: {}", id, e);
                 }
             }
             offline::mark_served(&app, served.notice());

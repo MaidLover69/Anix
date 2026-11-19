@@ -2032,5 +2032,28 @@
   "downloadSettings.downloadResolutionHint": "ダウンロードで使う画質です。ソースにない場合は、近い低い解像度、次に近い高い解像度を使います。",
   "settings.defaultPlaybackSpeed": "デフォルトの再生速度",
   "settings.defaultPlaybackSpeedHint": "すべてのエピソードはこの速度で始まります（0.5倍〜4倍）。視聴中に変えた速度は、そのエピソードだけに適用されます。",
-  "playerSettingsPanel.customSpeed": "カスタム"
+  "playerSettingsPanel.customSpeed": "カスタム",
+  "discover.studio": "スタジオ",
+  "discover.studioPlaceholder": "例: MAPPA",
+  "smartCollection.studio": "スタジオ: {name}",
+  "smartCollection.franchise": "視聴順のシリーズ",
+  "franchise.partial": "このシリーズにはまだ分かっていない作品があります。カタログに接続できると順番が補われます。",
+  "franchise.unavailable": "カタログに接続できないため、視聴順を読み込めません。",
+  "offline.savedPage": "{source}から保存したページ（{age}）",
+  "offline.savedPageNoSource": "保存したページ（{age}）",
+  "offline.ageNow": "たった今",
+  "offline.ageMinutes": {
+    "other": "{count}分前"
+  },
+  "offline.ageHours": {
+    "other": "{count}時間前"
+  },
+  "offline.ageDays": {
+    "other": "{count}日前"
+  },
+  "offline.changesWaiting": {
+    "other": "リストの変更{count}件は、オンラインになると送信されます"
+  },
+  "settings.imageCacheLimit": "保存したカバーとバナー",
+  "settings.imageCacheLimitHint": "オフラインでも表示できるよう、画像が使えるディスク容量です。古いものから削除されます。現在の使用量:"
 }

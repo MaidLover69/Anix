@@ -6,7 +6,7 @@
  */
 
 /** The Discover parameters a rule keeps, in the order they are written. */
-const SINGLE_KEYS = ['q', 'format', 'status', 'season', 'year', 'score', 'sort'] as const;
+const SINGLE_KEYS = ['q', 'format', 'status', 'season', 'year', 'score', 'studio', 'sort'] as const;
 const LIST_KEYS = ['genre', 'xgenre'] as const;
 const MAX_VALUE_CHARS = 80;
 const MAX_GENRES = 12;
@@ -24,6 +24,7 @@ export interface RuleSearch {
   year?: number;
   minScore?: number;
   sort?: string;
+  studio?: string;
 }
 
 const clean = (value: string | null) => {
@@ -61,6 +62,7 @@ export function searchFromRule(rule: string): RuleSearch {
     const value = clean(params.get(key));
     return ENUM.test(value) ? value : undefined;
   };
+  const studio = clean(params.get('studio'));
   const year = Number(params.get('year'));
   const score = Number(params.get('score'));
   return {
@@ -73,10 +75,29 @@ export function searchFromRule(rule: string): RuleSearch {
     year: Number.isInteger(year) && year >= 1900 && year <= 3000 ? year : undefined,
     minScore: Number.isInteger(score) && score >= 1 && score <= 100 ? score : undefined,
     sort: enumOf('sort'),
+    // Left out when unset, so a rule without a studio gives the same object as before 1.4.2.
+    ...(studio ? { studio } : {}),
   };
 }
 
 /** The Discover link that shows the same titles as the rule. */
 export function discoverLink(rule: string): string {
   return `/discover?${rule}`;
+}
+
+/** The largest id a franchise rule may name (AniList ids and stand-ins are far below it). */
+const MAX_ID = 1e12;
+
+/** The rule of a franchise collection: the watch order of the franchise this anime belongs to. */
+export function ruleForFranchise(id: number): string {
+  if (!Number.isInteger(id) || id <= 0 || id > MAX_ID) throw new Error('A franchise rule needs a positive anime id');
+  return `franchise=${id}`;
+}
+
+/** The anime a franchise rule names, or null for any other rule (or an id that cannot be real). */
+export function franchiseFromRule(rule: string): number | null {
+  const value = new URLSearchParams(rule).get('franchise');
+  if (!value || !/^\d+$/.test(value)) return null;
+  const id = Number(value);
+  return id > 0 && id <= MAX_ID ? id : null;
 }

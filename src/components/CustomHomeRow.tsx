@@ -10,7 +10,8 @@ import { useWatchlist } from '../hooks/useLibrary';
 import { usePlaylistItems, usePlaylists } from '../hooks/usePlaylists';
 import { useSearchAnime } from '../hooks/useAniList';
 import { uniqueCards } from '../lib/cardMedia';
-import { discoverLink, searchFromRule } from '../lib/smartRule';
+import { discoverLink, franchiseFromRule, searchFromRule } from '../lib/smartRule';
+import { useFranchiseOrder } from '../hooks/useFranchise';
 import type { RowKind, StatusRowValue } from '../lib/homeRows';
 import { t, type TKey } from '../i18n';
 import type { CustomPlaylist } from '../types';
@@ -67,7 +68,15 @@ const StatusRow: React.FC<{ status: StatusRowValue }> = ({ status }) => {
 };
 
 const SmartRow: React.FC<{ playlist: CustomPlaylist; rule: string }> = ({ playlist, rule }) => {
-  const { data, isLoading } = useSearchAnime(searchFromRule(rule));
+  const franchise = franchiseFromRule(rule);
+  // A franchise rule is not a Discover filter: its row shows the watch order instead.
+  const search = useSearchAnime(searchFromRule(rule), { collectionId: playlist.id, enabled: franchise === null });
+  const order = useFranchiseOrder(franchise ?? 0);
+  const { data, isLoading } = search;
+  if (franchise !== null) {
+    const items = uniqueCards(order.entries, ({ node }) => ({ id: node.id, title: node.title?.english || node.title?.romaji || '', cover: node.coverImage?.large ?? null, format: node.format }));
+    return <HorizontalRail title={playlist.name} items={items} isLoading={order.loading} viewAllLink={`/library?tab=playlists&playlist=${encodeURIComponent(playlist.id)}`} />;
+  }
   return <HorizontalRail title={playlist.name} items={data} isLoading={isLoading} viewAllLink={discoverLink(rule)} />;
 };
 

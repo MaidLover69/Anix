@@ -286,6 +286,19 @@ pub async fn cancel_watchlist_addition(pool: &SqlitePool, anilist_id: i32) -> Re
     Ok(())
 }
 
+/// How many anime have a list change that has not been sent yet (a status chosen here, or a
+/// queued push), each counted once.
+pub async fn waiting_changes(pool: &SqlitePool) -> Result<usize, AppError> {
+    ensure_queue(pool).await?;
+    let n: i64 = sqlx::query(
+        "SELECT COUNT(*) AS n FROM (SELECT anilist_id FROM watchlist WHERE synced = 0 UNION SELECT anilist_id FROM account_sync_queue)",
+    )
+    .fetch_one(pool)
+    .await?
+    .get("n");
+    Ok(n as usize)
+}
+
 /// Queued pushes of one service, oldest first.
 pub async fn pending(pool: &SqlitePool, service: Service) -> Result<Vec<PendingSync>, AppError> {
     ensure_queue(pool).await?;

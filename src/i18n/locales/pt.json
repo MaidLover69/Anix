@@ -2200,5 +2200,36 @@
   "downloadSettings.downloadResolutionHint": "O tamanho da imagem com que os downloads começam. Se uma fonte não o tiver, usa-se o mais próximo abaixo e depois o mais próximo acima.",
   "settings.defaultPlaybackSpeed": "Velocidade de reprodução padrão",
   "settings.defaultPlaybackSpeedHint": "Cada episódio começa nesta velocidade (0,5× a 4×). Uma velocidade alterada durante a exibição vale só para esse episódio.",
-  "playerSettingsPanel.customSpeed": "Personalizada"
+  "playerSettingsPanel.customSpeed": "Personalizada",
+  "discover.studio": "Estúdio",
+  "discover.studioPlaceholder": "ex.: MAPPA",
+  "smartCollection.studio": "Estúdio: {name}",
+  "smartCollection.franchise": "Franquia na ordem de exibição",
+  "franchise.partial": "Algumas entradas desta franquia ainda não são conhecidas. A ordem se completa quando um catálogo estiver acessível.",
+  "franchise.unavailable": "A ordem de exibição não pode ser lida enquanto nenhum catálogo estiver acessível.",
+  "offline.savedPage": "Página salva de {source}, {age}",
+  "offline.savedPageNoSource": "Página salva, {age}",
+  "offline.ageNow": "agora mesmo",
+  "offline.ageMinutes": {
+    "one": "há {count} minuto",
+    "many": "há {count} minutos",
+    "other": "há {count} minutos"
+  },
+  "offline.ageHours": {
+    "one": "há {count} hora",
+    "many": "há {count} horas",
+    "other": "há {count} horas"
+  },
+  "offline.ageDays": {
+    "one": "há {count} dia",
+    "many": "há {count} dias",
+    "other": "há {count} dias"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} alteração da lista será enviada quando você estiver online",
+    "many": "{count} alterações da lista serão enviadas quando você estiver online",
+    "other": "{count} alterações da lista serão enviadas quando você estiver online"
+  },
+  "settings.imageCacheLimit": "Capas e banners salvos",
+  "settings.imageCacheLimitHint": "Quanto espaço em disco as imagens podem usar para continuar visíveis offline. As mais antigas são removidas primeiro. Em uso:"
 }

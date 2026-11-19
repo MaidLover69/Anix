@@ -1,6 +1,7 @@
 import React from 'react';
 import { HardDrive, Info, WifiOff } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { invoke } from '@tauri-apps/api/core';
 import { useLocation } from 'react-router-dom';
 import { useDataDiskLow, useOfflineStatus } from '../hooks/useSystem';
 import { locale, t } from '../i18n';
@@ -26,6 +27,13 @@ export const OfflineBanner: React.FC = () => {
   const high = useHighModule();
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
+  // List changes made while offline wait in the sync queue; say how many.
+  const waiting = useQuery({
+    queryKey: ['waitingListChanges'],
+    queryFn: () => invoke<number>('waiting_list_changes'),
+    enabled: offline,
+    refetchInterval: 15_000,
+  }).data;
   // Comes first: with a full disk, extension and watch-progress saves fail and other errors mislead.
   if (diskLow) {
     return (
@@ -70,6 +78,7 @@ export const OfflineBanner: React.FC = () => {
         ) : (
           <Meme spot="offline" plain={t('offlineBanner.unreachable')} medium={t('fun.offlineUnreachable')} />
         )}
+        {!!waiting && <> · {t('offline.changesWaiting', { count: waiting })}</>}
       </span>
       <button
         type="button"

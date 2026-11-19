@@ -18,8 +18,8 @@ const MAX_CHARACTERS: usize = 18;
 const FIELDS: &str = "id malId name english japanese synonyms kind rating score status episodes episodesAired duration airedOn { year month } nextEpisodeAt poster { originalUrl mainUrl } genres { name kind } studios { name }";
 const DETAIL_FIELDS: &str = "related { relationKind anime { id malId name english kind status score poster { originalUrl mainUrl } } } characterRoles { rolesEn character { id name japanese poster { mainUrl } } }";
 
-const QUERY_ARGS: &str = "$search: String, $limit: PositiveInt, $page: PositiveInt, $order: OrderEnum, $kind: AnimeKindString, $status: AnimeStatusString, $censored: Boolean, $ids: String";
-const ANIMES_ARGS: &str = "search: $search, limit: $limit, page: $page, order: $order, kind: $kind, status: $status, censored: $censored, ids: $ids";
+const QUERY_ARGS: &str = "$search: String, $limit: PositiveInt, $page: PositiveInt, $order: OrderEnum, $kind: AnimeKindString, $status: AnimeStatusString, $censored: Boolean, $ids: String, $studio: String";
+const ANIMES_ARGS: &str = "search: $search, limit: $limit, page: $page, order: $order, kind: $kind, status: $status, censored: $censored, ids: $ids, studio: $studio";
 
 /// Runs `animes(...)` with `variables` and returns the list.
 pub async fn animes(client: &Client, url: &str, variables: Value, details: bool) -> Result<Vec<Value>, AppError> {
@@ -36,7 +36,29 @@ pub async fn animes(client: &Client, url: &str, variables: Value, details: bool)
     Ok(json["data"]["animes"].as_array().cloned().unwrap_or_default())
 }
 
+/// The id of studio `name` in Shikimori's REST studio list (matched by `name` or `filtered_name`,
+/// ignoring case); `None` when it has no such studio.
+async fn studio_id(client: &Client, url: &str, name: &str) -> Result<Option<i64>, AppError> {
+    let request = client.get(url).header("User-Agent", APP_USER_AGENT);
+    let list = model::read_json(LABEL, request).await?;
+    let same = |v: &Value| v.as_str().is_some_and(|s| s.trim().eq_ignore_ascii_case(name));
+    Ok(list
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| same(&s["name"]) || same(&s["filtered_name"]))
+        .and_then(|s| s["id"].as_i64()))
+}
+
+/// Shikimori's REST list of studios.
+pub const STUDIOS_URL: &str = "https://shikimori.io/api/studios";
+
 pub async fn search(client: &Client, url: &str, q: &SearchQuery) -> Result<Vec<Found>, AppError> {
+    search_in(client, url, STUDIOS_URL, q).await
+}
+
+/// [`search`] with the studio list at `studios_url` (tests point it at a local server).
+pub async fn search_in(client: &Client, url: &str, studios_url: &str, q: &SearchQuery) -> Result<Vec<Found>, AppError> {
     let mut vars = json!({
         "limit": q.per_page.clamp(1, MAX_PAGE),
         "page": q.page.max(1),
@@ -62,6 +84,12 @@ pub async fn search(client: &Client, url: &str, q: &SearchQuery) -> Result<Vec<F
     });
     if let Some(status) = status {
         vars["status"] = json!(status);
+    }
+    if let Some(name) = q.studio() {
+        match studio_id(client, studios_url, name).await? {
+            Some(id) => vars["studio"] = json!(id.to_string()),
+            None => return Ok(Vec::new()),
+        }
     }
     let list = animes(client, url, vars, false).await?;
     model::kept(LABEL, q, list.iter().filter_map(parse_anime).collect())

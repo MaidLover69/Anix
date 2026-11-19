@@ -22,6 +22,7 @@ import { useEmbeddedMpvStatus } from '../../hooks/useEmbeddedMpv';
 import { selfTestSummary } from './PlayerEngineSettings';
 import { t, type TKey } from '../../i18n';
 import { Meme, MemeImage } from '../meme/Meme';
+import { CustomSelect } from '../CustomSelect';
 
 const VENDOR_LABELS: Record<string, string> = { intel: 'Intel', amd: 'AMD', nvidia: 'NVIDIA' };
 
@@ -185,6 +186,45 @@ const GoBackRow: React.FC = () => {
   );
 };
 
+const IMAGE_LIMITS_MB = [50, 100, 200, 500, 1000];
+const sizeLabel = (mb: number) => (mb >= 1000 ? t('playerEngineSettings.gigabytes', { size: mb / 1000 }) : t('playerEngineSettings.megabytes', { size: mb }));
+
+/** Covers and banners saved on disk for offline use: the size limit, and how much is used now. */
+const ImageCacheRow: React.FC = () => {
+  const queryClient = useQueryClient();
+  const showToast = useUIStore((s) => s.showToast);
+  const { data: settings } = useSettings();
+  const save = useSaveSettings();
+  const used = useQuery({ queryKey: ['imageCacheSize'], queryFn: () => invoke<number>('image_cache_size'), staleTime: 60_000 });
+  const limit = settings?.image_cache_mb ?? 200;
+  const options = IMAGE_LIMITS_MB.includes(limit) ? IMAGE_LIMITS_MB : [...IMAGE_LIMITS_MB, limit].sort((a, b) => a - b);
+  const change = (next: string) =>
+    save.mutate(
+      { image_cache_mb: Number(next) },
+      {
+        // A lower limit applies at once, not at the next cover.
+        onSuccess: () => invoke('trim_image_cache').finally(() => queryClient.invalidateQueries({ queryKey: ['imageCacheSize'] })),
+        onError: (err) => showToast({ type: 'error', title: t('systemSection.couldNotSaveSetting'), message: errorMessage(err) }),
+      }
+    );
+  return (
+    <Row
+      label={t('settings.imageCacheLimit')}
+      hint={`${t('settings.imageCacheLimitHint')} ${t('playerEngineSettings.megabytes', { size: Math.round((used.data ?? 0) / 1048576) })}`}
+    >
+      {() => (
+        <CustomSelect
+          aria-label={t('settings.imageCacheLimit')}
+          className="w-28"
+          value={String(limit)}
+          onChange={change}
+          options={options.map((mb) => ({ value: String(mb), label: sizeLabel(mb) }))}
+        />
+      )}
+    </Row>
+  );
+};
+
 const FAST_DRAWING_REASONS: Record<string, TKey> = {
   not_confirmed: 'fastDrawing.reasonNotConfirmed',
   declined: 'fastDrawing.reasonDeclined',
@@ -323,6 +363,7 @@ export const SystemSection: React.FC = () => {
           );
         }}
       </Row>
+      <ImageCacheRow />
       <GoBackRow />
       <Row
         label={t('systemSection.diagnostics')}

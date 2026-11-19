@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { t } from '../i18n';
+import { rememberImage, savedImage } from '../lib/savedImages';
 
 interface ShimmerImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> {
   src?: string | null;
@@ -19,6 +20,8 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
   // Load and error state are remembered per URL, so a new `src` starts clean.
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  // The picture as saved on disk, when the address itself cannot be loaded.
+  const [saved, setSaved] = useState<{ src: string; data: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,6 +47,12 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
     return () => observer.disconnect();
   }, []);
 
+  const onError = () => {
+    if (!src) return;
+    if (saved?.src === src) return setFailedSrc(src);
+    savedImage(src).then((data) => (data ? setSaved({ src, data }) : setFailedSrc(src)));
+  };
+  const shown = src && saved?.src === src ? saved.data : src;
   const loaded = !!src && loadedSrc === src;
   const failed = !!src && failedSrc === src;
 
@@ -58,12 +67,15 @@ export const ShimmerImage: React.FC<ShimmerImageProps> = ({
           {!loaded && <div className="absolute inset-0 shimmer-placeholder" />}
           {inView && (
             <img
-              src={src}
+              src={shown ?? undefined}
               alt={alt}
               loading="lazy"
               draggable={false}
-              onLoad={() => setLoadedSrc(src)}
-              onError={() => setFailedSrc(src)}
+              onLoad={() => {
+                setLoadedSrc(src);
+                if (shown === src) rememberImage(src);
+              }}
+              onError={onError}
               className={`w-full h-full object-cover transition-opacity duration-200 ${
                 loaded ? 'opacity-100' : 'opacity-0'
               }`}

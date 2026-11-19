@@ -370,6 +370,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     crate::release_check::create_tables(&mut tx).await?;
     crate::notices::create_tables(&mut tx).await?;
     migrate_watchlist_status(&mut tx).await?;
+    migrate_watchlist_episodes(&mut tx).await?;
     migrate_download_languages(&mut tx).await?;
     migrate_playlist_rule(&mut tx).await?;
 
@@ -1007,7 +1008,7 @@ pub async fn is_in_watchlist(pool: &SqlitePool, anilist_id: i32) -> Result<bool,
 pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<crate::models::WatchlistEntry>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT anilist_id, title, cover, format, average_score, added_at, status, synced
+        SELECT anilist_id, title, cover, format, average_score, added_at, status, synced, episodes
         FROM watchlist
         WHERE anilist_id NOT IN (SELECT stand_in FROM catalogue_merged_ids)
         ORDER BY added_at DESC
@@ -1027,6 +1028,7 @@ pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<crate::models::Watch
             added_at: r.get("added_at"),
             status: r.get("status"),
             synced: r.get::<i64, _>("synced") != 0,
+            episodes: r.get("episodes"),
         })
         .collect();
 
@@ -1055,6 +1057,33 @@ async fn migrate_watchlist_status(conn: &mut SqliteConnection) -> Result<(), App
             .execute(&mut *conn)
             .await?;
     }
+    Ok(())
+}
+
+/// 1.4.2: the episode count of a library entry, kept past the details cache's row limit.
+async fn migrate_watchlist_episodes(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let has = sqlx::query("PRAGMA table_info(watchlist)")
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .any(|r| r.get::<String, _>("name") == "episodes");
+    if !has {
+        sqlx::query("ALTER TABLE watchlist ADD COLUMN episodes INTEGER").execute(&mut *conn).await?;
+    }
+    Ok(())
+}
+
+/// Remembers the episode count of a library entry; `None` never erases a known count, and an
+/// anime that is not in the library is left alone.
+pub async fn set_watchlist_episodes(pool: &SqlitePool, anilist_id: i32, episodes: Option<i32>) -> Result<(), AppError> {
+    let Some(episodes) = episodes.filter(|e| *e > 0) else {
+        return Ok(());
+    };
+    sqlx::query("UPDATE watchlist SET episodes = ?2 WHERE anilist_id = ?1")
+        .bind(anilist_id)
+        .bind(episodes)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -1815,6 +1844,20 @@ pub async fn import_custom_playlist(
     Ok((playlist, parsed.items.len()))
 }
 
+/// The covers of a smart collection's last saved result (up to four), for its collage; none
+/// while it has no saved result. A hand-made playlist has no saved result either.
+async fn smart_collection_covers(pool: &SqlitePool, playlist_id: &str) -> Vec<String> {
+    let saved = crate::offline::load(pool, crate::offline::Kind::Collection, playlist_id).await.ok().flatten();
+    let Some((serde_json::Value::Array(list), _)) = saved else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|m| m["cover_image"]["large"].as_str().or_else(|| m["coverImage"]["large"].as_str()))
+        .take(4)
+        .map(String::from)
+        .collect()
+}
+
 pub async fn list_custom_playlists(
     pool: &SqlitePool,
 ) -> Result<Vec<CustomPlaylist>, AppError> {
@@ -1836,7 +1879,7 @@ pub async fn list_custom_playlists(
     let mut playlists = Vec::new();
     for r in rows {
         let covers_str: Option<String> = r.get("covers_str");
-        let covers = covers_str
+        let mut covers: Vec<String> = covers_str
             .map(|s| {
                 s.split(',')
                     .filter(|c| !c.is_empty())
@@ -1845,9 +1888,13 @@ pub async fn list_custom_playlists(
                     .collect()
             })
             .unwrap_or_default();
+        let id: String = r.get("id");
+        if covers.is_empty() {
+            covers = smart_collection_covers(pool, &id).await;
+        }
 
         playlists.push(CustomPlaylist {
-            id: r.get("id"),
+            id,
             name: r.get("name"),
             description: r.get("description"),
             created_at: r.get("created_at"),

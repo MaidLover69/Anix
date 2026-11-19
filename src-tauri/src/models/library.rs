@@ -59,6 +59,9 @@ pub struct WatchlistEntry {
     /// False while a status chosen here waits to be sent to the connected lists.
     #[serde(default)]
     pub synced: bool,
+    /// Episode count last seen, kept so the entry can be drawn without the details cache.
+    #[serde(default)]
+    pub episodes: Option<i32>,
 }
 
 impl WatchlistEntry {
@@ -79,6 +82,7 @@ impl WatchlistEntry {
             added_at,
             status: "PLANNING".to_string(),
             synced: true,
+            episodes: None,
         }
     }
 }

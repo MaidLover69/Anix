@@ -2032,5 +2032,28 @@
   "downloadSettings.downloadResolutionHint": "다운로드에 사용할 화질입니다. 소스에 없으면 가장 가까운 낮은 해상도, 그다음 가장 가까운 높은 해상도를 사용합니다.",
   "settings.defaultPlaybackSpeed": "기본 재생 속도",
   "settings.defaultPlaybackSpeedHint": "모든 에피소드는 이 속도로 시작합니다(0.5배~4배). 시청 중에 바꾼 속도는 해당 에피소드에만 적용됩니다.",
-  "playerSettingsPanel.customSpeed": "사용자 지정"
+  "playerSettingsPanel.customSpeed": "사용자 지정",
+  "discover.studio": "스튜디오",
+  "discover.studioPlaceholder": "예: MAPPA",
+  "smartCollection.studio": "스튜디오: {name}",
+  "smartCollection.franchise": "시청 순서대로 보는 시리즈",
+  "franchise.partial": "이 시리즈의 일부 작품은 아직 알 수 없습니다. 카탈로그에 연결되면 순서가 채워집니다.",
+  "franchise.unavailable": "카탈로그에 연결할 수 없어 시청 순서를 읽을 수 없습니다.",
+  "offline.savedPage": "{source}에서 저장한 페이지, {age}",
+  "offline.savedPageNoSource": "저장한 페이지, {age}",
+  "offline.ageNow": "방금",
+  "offline.ageMinutes": {
+    "other": "{count}분 전"
+  },
+  "offline.ageHours": {
+    "other": "{count}시간 전"
+  },
+  "offline.ageDays": {
+    "other": "{count}일 전"
+  },
+  "offline.changesWaiting": {
+    "other": "목록 변경 {count}건은 온라인이 되면 전송됩니다"
+  },
+  "settings.imageCacheLimit": "저장된 표지와 배너",
+  "settings.imageCacheLimitHint": "오프라인에서도 보이도록 이미지가 사용할 수 있는 디스크 공간입니다. 오래된 것부터 삭제됩니다. 현재 사용량:"
 }

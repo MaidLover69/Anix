@@ -151,6 +151,8 @@ pub struct Endpoints {
     pub mal: String,
     pub kitsu: String,
     pub shikimori: String,
+    /// Shikimori's REST studio list, which a studio name is looked up in.
+    pub shikimori_studios: String,
     pub comick: String,
     pub jikan: String,
     pub imdb: String,
@@ -165,6 +167,7 @@ impl Default for Endpoints {
             mal: crate::clients::mal::MAL_API_URL.to_string(),
             kitsu: "https://kitsu.app/api/edge".to_string(),
             shikimori: "https://shikimori.io/api/graphql".to_string(),
+            shikimori_studios: shikimori::STUDIOS_URL.to_string(),
             comick: "https://api.comick.dev/v1.0".to_string(),
             jikan: "https://api.jikan.moe/v4".to_string(),
             imdb: "https://v3.sg.media-imdb.com/suggestion/x".to_string(),
@@ -389,13 +392,16 @@ impl Catalogue {
             let search = self.anilist.search(q);
             return timed(source, self.timeout, search).await;
         }
+        if q.studio().is_some() && !matches!(source, Source::Shikimori) {
+            return Err(model::unsupported(source.label(), "filter by studio"));
+        }
         let found = timed(source, self.timeout, async {
             Ok(match source {
                 Source::Mal => {
                     mal::search(&self.client, &self.urls.mal, crate::commands::mal::MAL_CLIENT_ID, q).await?
                 }
                 Source::Kitsu => kitsu::search(&self.client, &self.urls.kitsu, q).await?,
-                Source::Shikimori => shikimori::search(&self.client, &self.urls.shikimori, q).await?,
+                Source::Shikimori => shikimori::search_in(&self.client, &self.urls.shikimori, &self.urls.shikimori_studios, q).await?,
                 Source::Comick => comick::search(&self.client, &self.urls.comick, q).await?,
                 Source::Jikan => jikan::search(&self.client, &self.urls.jikan, q).await?,
                 Source::Imdb => {

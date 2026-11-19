@@ -2200,5 +2200,36 @@
   "downloadSettings.downloadResolutionHint": "El tamaño de imagen con el que empiezan las descargas. Si una fuente no lo tiene, se usa el más cercano por debajo y luego el más cercano por encima.",
   "settings.defaultPlaybackSpeed": "Velocidad de reproducción predeterminada",
   "settings.defaultPlaybackSpeedHint": "Cada episodio empieza a esta velocidad (0,5× a 4×). Una velocidad cambiada mientras ves algo solo vale para ese episodio.",
-  "playerSettingsPanel.customSpeed": "Personalizada"
+  "playerSettingsPanel.customSpeed": "Personalizada",
+  "discover.studio": "Estudio",
+  "discover.studioPlaceholder": "p. ej. MAPPA",
+  "smartCollection.studio": "Estudio: {name}",
+  "smartCollection.franchise": "Franquicia en orden de visionado",
+  "franchise.partial": "Aún no se conocen algunas entradas de esta franquicia. El orden se completa cuando se pueda acceder a un catálogo.",
+  "franchise.unavailable": "No se puede leer el orden de visionado mientras no haya acceso a ningún catálogo.",
+  "offline.savedPage": "Página guardada de {source}, {age}",
+  "offline.savedPageNoSource": "Página guardada, {age}",
+  "offline.ageNow": "ahora mismo",
+  "offline.ageMinutes": {
+    "one": "hace {count} minuto",
+    "many": "hace {count} minutos",
+    "other": "hace {count} minutos"
+  },
+  "offline.ageHours": {
+    "one": "hace {count} hora",
+    "many": "hace {count} horas",
+    "other": "hace {count} horas"
+  },
+  "offline.ageDays": {
+    "one": "hace {count} día",
+    "many": "hace {count} días",
+    "other": "hace {count} días"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} cambio de la lista se enviará cuando estés en línea",
+    "many": "{count} cambios de la lista se enviarán cuando estés en línea",
+    "other": "{count} cambios de la lista se enviarán cuando estés en línea"
+  },
+  "settings.imageCacheLimit": "Portadas y banners guardados",
+  "settings.imageCacheLimitHint": "Espacio en disco que pueden usar las imágenes para verse sin conexión. Se borran primero las más antiguas. En uso:"
 }

@@ -2200,5 +2200,36 @@
   "downloadSettings.downloadResolutionHint": "La taille d'image des téléchargements. Si une source ne l'a pas, la plus proche en dessous est utilisée, puis la plus proche au-dessus.",
   "settings.defaultPlaybackSpeed": "Vitesse de lecture par défaut",
   "settings.defaultPlaybackSpeedHint": "Chaque épisode démarre à cette vitesse (0,5× à 4×). Une vitesse modifiée pendant le visionnage ne vaut que pour cet épisode.",
-  "playerSettingsPanel.customSpeed": "Personnalisée"
+  "playerSettingsPanel.customSpeed": "Personnalisée",
+  "discover.studio": "Studio",
+  "discover.studioPlaceholder": "ex. MAPPA",
+  "smartCollection.studio": "Studio : {name}",
+  "smartCollection.franchise": "Franchise dans l’ordre de visionnage",
+  "franchise.partial": "Certaines entrées de cette franchise ne sont pas encore connues. L’ordre se complète dès qu’un catalogue est joignable.",
+  "franchise.unavailable": "L’ordre de visionnage est illisible tant qu’aucun catalogue n’est joignable.",
+  "offline.savedPage": "Page enregistrée de {source}, {age}",
+  "offline.savedPageNoSource": "Page enregistrée, {age}",
+  "offline.ageNow": "à l’instant",
+  "offline.ageMinutes": {
+    "one": "il y a {count} minute",
+    "many": "il y a {count} minutes",
+    "other": "il y a {count} minutes"
+  },
+  "offline.ageHours": {
+    "one": "il y a {count} heure",
+    "many": "il y a {count} heures",
+    "other": "il y a {count} heures"
+  },
+  "offline.ageDays": {
+    "one": "il y a {count} jour",
+    "many": "il y a {count} jours",
+    "other": "il y a {count} jours"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} modification de liste sera envoyée une fois en ligne",
+    "many": "{count} modifications de liste seront envoyées une fois en ligne",
+    "other": "{count} modifications de liste seront envoyées une fois en ligne"
+  },
+  "settings.imageCacheLimit": "Jaquettes et bannières enregistrées",
+  "settings.imageCacheLimitHint": "Espace disque que les images peuvent utiliser pour rester visibles hors ligne. Les plus anciennes sont supprimées en premier. Utilisé :"
 }

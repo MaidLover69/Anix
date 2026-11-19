@@ -147,7 +147,15 @@ const loaded = (paused) => ({ kind: 'loaded', tracks: [], paused });
   assert.deepEqual(fileSubtitleTracks(tracks).map((t) => t.id), [1], "added files are listed from the extension's list");
 {
   const own = [{ id: 1, type: 'sub', lang: 'eng', title: null, codec: 'subrip', selected: true }];
-  assert.equal(duplicatesFileTrack('english', own), true, 'the first language is in the file already');
+  const titled = (title) => [{ id: 1, type: 'sub', lang: 'eng', title, codec: 'subrip', selected: true }];
+  assert.equal(duplicatesFileTrack('english', titled('English')), true, 'the side file the app writes');
+  assert.equal(duplicatesFileTrack('spanish_(latin_america)', titled('Spanish (Latin America)')), true);
+  assert.equal(duplicatesFileTrack('eng', own), true, 'a whole language code');
+  assert.equal(duplicatesFileTrack('english_sdh', titled('English')), false);
+  assert.equal(duplicatesFileTrack('portuguese', titled('Portuguese (Brazil)')), false);
+  assert.equal(duplicatesFileTrack('spanish_(latin_america)', titled('Spanish')), false);
+  assert.equal(duplicatesFileTrack('en', titled('English Signs & Songs')), false);
+  assert.equal(duplicatesFileTrack('english', own), false, 'a name is not a code');
   assert.equal(duplicatesFileTrack('spanish', own), false);
   assert.equal(duplicatesFileTrack('Subtitles (SRT)', own), false);
   assert.equal(duplicatesFileTrack('english', []), false);

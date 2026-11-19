@@ -369,9 +369,10 @@ static CRASH_SWITCH_NOTICE: AtomicBool = AtomicBool::new(false);
 /// (Settings still says why); the AppImage, whose own libmpv failed, stays loud.
 static QUIET_FALLBACK: AtomicBool = AtomicBool::new(false);
 
-/// Whether a libmpv load failure is quiet: the system's library is just not installed.
+/// Whether a libmpv load failure is quiet: the system's library is just not installed, or this
+/// is the Flatpak, which can never load one (the page saves "mpv" there too).
 pub fn quiet_no_libmpv(bundled: bool, flatpak: bool) -> bool {
-    !bundled && !flatpak
+    flatpak || !bundled
 }
 
 fn set_status(status: Result<(), String>) {

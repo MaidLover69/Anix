@@ -667,3 +667,16 @@ fn the_old_folder_pass_leaves_a_current_folder_inside_an_old_one_alone() {
     assert!(!part(root.path(), "old").exists());
     assert!(part(&ep, "queued").exists(), "the current folder keeps its partials");
 }
+
+#[test]
+fn pruning_skips_a_folder_a_running_download_holds() {
+    let root = TempDir::new("busy-prune");
+    let ep = root.path().join("Held").join("Episode 01");
+    std::fs::create_dir_all(&ep).unwrap();
+    downloads::claim_episode_folder(&ep);
+    // what delete and Try again clean-up call
+    downloads::prune_empty_folders(&ep, root.path());
+    assert!(ep.exists());
+    downloads::release_episode_folder(&ep, root.path());
+    assert!(!root.path().join("Held").exists());
+}

@@ -79,7 +79,7 @@ fn a_forced_web_run_never_probes_libmpv() {
 fn a_missing_system_libmpv_is_quiet_but_a_failing_bundled_one_is_not() {
     assert!(quiet_no_libmpv(false, false));
     assert!(!quiet_no_libmpv(true, false));
-    assert!(!quiet_no_libmpv(false, true));
+    assert!(quiet_no_libmpv(false, true), "the Flatpak never has a libmpv");
 }
 
 #[test]

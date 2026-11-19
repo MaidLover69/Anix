@@ -460,7 +460,8 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
       }
       const provider = target.anilistId === anilistId ? routeProvider : null;
       // Within the same title the server serving now is the next episode's default (a hint, not a pick).
-      const hint = target.anilistId === anilistId && !localRequested ? servingProvider : null;
+      const sameAudio = (target.category ?? category) === category;
+      const hint = target.anilistId === anilistId && !localRequested && sameAudio ? servingProvider : null;
       navigate(watchPath(target.anilistId, target.episode, target.category ?? category, provider, hint ?? 'auto'), {
         replace: true,
       });

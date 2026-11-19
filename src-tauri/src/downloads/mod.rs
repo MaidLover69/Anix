@@ -1129,11 +1129,27 @@ pub fn claim_episode_folder(episode: &Path) {
 /// Ends a [`claim_episode_folder`]; the folders are pruned ([`prune_empty_folders`]) once the
 /// last user of `episode` is done.
 pub fn release_episode_folder(episode: &Path, root: &Path) {
-    let mut busy = lock(&BUSY_FOLDERS);
-    let users = busy.get_mut(episode).map(|n| { *n = n.saturating_sub(1); *n }).unwrap_or(0);
-    if users == 0 {
-        busy.remove(episode);
-        prune_empty_folders(episode, root);
+    {
+        let mut busy = lock(&BUSY_FOLDERS);
+        if let Some(n) = busy.get_mut(episode) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                busy.remove(episode);
+            }
+        }
+    }
+    prune_empty_folders(episode, root);
+}
+
+/// Holds a claim on an episode folder and releases it (pruning) on drop, also when the job panics.
+struct FolderClaim {
+    episode: PathBuf,
+    root: PathBuf,
+}
+
+impl Drop for FolderClaim {
+    fn drop(&mut self) {
+        release_episode_folder(&self.episode, &self.root);
     }
 }
 
@@ -1142,7 +1158,7 @@ pub fn release_episode_folder(episode: &Path, root: &Path) {
 struct WorkFiles {
     files: Arc<Mutex<Vec<PathBuf>>>,
     /// The `<title>/Episode NN` folder of a new download and the download folder it is in.
-    folder: Arc<Mutex<Option<(PathBuf, PathBuf)>>>,
+    folder: Arc<Mutex<Option<FolderClaim>>>,
 }
 
 impl WorkFiles {
@@ -1157,15 +1173,13 @@ impl WorkFiles {
     /// Notes the new download's episode folder, which it prunes at the end.
     fn use_folder(&self, episode: PathBuf, root: PathBuf) {
         claim_episode_folder(&episode);
-        *lock(&self.folder) = Some((episode, root));
+        *lock(&self.folder) = Some(FolderClaim { episode, root });
     }
 
     /// Removes the new download's episode and title folders if nothing is left in them and no
     /// other running download uses the episode folder.
     fn prune_folders(&self) {
-        if let Some((episode, root)) = lock(&self.folder).take() {
-            release_episode_folder(&episode, &root);
-        }
+        drop(lock(&self.folder).take());
     }
 
     async fn remove_all(&self) {
@@ -1882,7 +1896,7 @@ pub fn delete_download_files(video: &Path, root: &Path) -> Result<usize, String>
 /// Removes `episode` and then its parent (the title folder) while they are empty. Only folders
 /// strictly inside `root` go, and never through a `..`.
 pub fn prune_empty_folders(episode: &Path, root: &Path) {
-    if episode.components().any(|c| c == std::path::Component::ParentDir) {
+    if episode.components().any(|c| c == std::path::Component::ParentDir) || lock(&BUSY_FOLDERS).contains_key(episode) {
         return;
     }
     for dir in [Some(episode), episode.parent()].into_iter().flatten() {

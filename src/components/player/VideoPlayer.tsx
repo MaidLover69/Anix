@@ -154,7 +154,11 @@ function qualityMenu(levels: QualityLevel[], activeLevel: number): PlayerMenuOpt
     const mbps = t('videoPlayer.mbps', { value: (level.bitrate / 1_000_000).toFixed(1) });
     if (!level.height) return level.bitrate ? mbps : t('videoPlayer.qualityLevel', { number: level.id + 1 });
     const ambiguous = heights.filter((h) => h === level.height).length > 1;
-    return ambiguous && level.bitrate ? `${level.height}p · ${mbps}` : `${level.height}p`;
+    if (!ambiguous) return `${level.height}p`;
+    if (level.bitrate) return `${level.height}p · ${mbps}`;
+    // No bitrate to tell equal heights apart: number them.
+    const same = levels.filter((l) => l.height === level.height);
+    return `${level.height}p (${same.indexOf(level) + 1})`;
   };
   return [
     { value: '-1', label: active?.height ? t('videoPlayer.autoQuality', { height: active.height }) : t('common.auto') },

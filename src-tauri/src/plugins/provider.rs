@@ -683,6 +683,8 @@ impl AnimeProvider for PluginProvider {
         let servers = servers_for(&self.settings.episode_servers, &category);
 
         let allow_private = self.runtime.allows_private_network();
+        // Task-locals do not reach spawned tasks: read once here and move the value in.
+        let wanted = current_wanted();
         let (events_tx, mut events) = mpsc::unbounded_channel::<ServerEvent>();
         let permits = Arc::new(Semaphore::new(SERVER_CONCURRENCY));
         let mut tasks = JoinSet::new();
@@ -696,7 +698,7 @@ impl AnimeProvider for PluginProvider {
                 };
                 let streams = resolved.as_ref().ok().map(|sources| {
                     let mut streams = sources.streams.clone();
-                    order_streams(&mut streams, current_wanted());
+                    order_streams(&mut streams, wanted);
                     streams
                 });
                 let _ = events_tx.send(ServerEvent::Resolved(index, resolved));

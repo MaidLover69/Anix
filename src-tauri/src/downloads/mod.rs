@@ -1059,6 +1059,8 @@ struct Job<'a> {
     base: String,
     tag: String,
     work: &'a WorkFiles,
+    /// The height of the HLS variant that is downloaded; 0 when unknown.
+    got_height: std::sync::atomic::AtomicU32,
 }
 
 impl Job<'_> {
@@ -1292,6 +1294,11 @@ pub fn best_hls_variant(text: &str, base: &str) -> Option<String> {
 /// exact one, else the closest lower, else the closest higher. Variants without a
 /// `RESOLUTION` are only used when none has one, or when no height is wanted.
 pub fn hls_variant_for(text: &str, base: &str, wanted: Option<u32>) -> Option<String> {
+    hls_variant_pick(text, base, wanted).map(|(url, _)| url)
+}
+
+/// `hls_variant_for` with the picked variant's height (0 when it states none).
+fn hls_variant_pick(text: &str, base: &str, wanted: Option<u32>) -> Option<(String, u32)> {
     let base = reqwest::Url::parse(base).ok()?;
     let mut lines = text.lines().map(str::trim);
     // (height, pixels, bandwidth, url)
@@ -1311,21 +1318,38 @@ pub fn hls_variant_for(text: &str, base: &str, wanted: Option<u32>) -> Option<St
         let bandwidth = hls_attribute(attrs, "BANDWIDTH").and_then(|b| b.parse::<u64>().ok()).unwrap_or(0);
         variants.push((height, width * height, bandwidth, base.join(uri).ok()?.to_string()));
     }
-    let best = |candidates: Vec<&(u64, u64, u64, String)>| {
-        candidates.into_iter().max_by_key(|v| (v.1, v.2)).map(|v| v.3.clone())
-    };
+    // The first of equal variants wins (max_by_key would take the last).
+    type Variant = (u64, u64, u64, String);
+    fn best(candidates: Vec<&Variant>) -> Option<&Variant> {
+        candidates.into_iter().fold(None, |best, v| match best {
+            Some(b) if (b.1, b.2) >= (v.1, v.2) => Some(b),
+            _ => Some(v),
+        })
+    }
     let rated: Vec<&(u64, u64, u64, String)> = variants.iter().filter(|v| v.0 > 0).collect();
-    let Some(wanted) = wanted.filter(|_| !rated.is_empty()).map(u64::from) else {
-        return best(variants.iter().collect());
-    };
-    // Heights in the order exact, closest lower, closest higher; the best of the first group present.
-    let pick_height = rated
-        .iter()
-        .map(|v| v.0)
-        .filter(|h| *h <= wanted)
-        .max()
-        .or_else(|| rated.iter().map(|v| v.0).min())?;
-    best(rated.into_iter().filter(|v| v.0 == pick_height).collect())
+    let chosen = match wanted.filter(|_| !rated.is_empty()).map(u64::from) {
+        None => best(variants.iter().collect()),
+        Some(wanted) => {
+            // Heights in the order exact, closest lower, closest higher.
+            let pick_height = rated
+                .iter()
+                .map(|v| v.0)
+                .filter(|h| *h <= wanted)
+                .max()
+                .or_else(|| rated.iter().map(|v| v.0).min())?;
+            best(rated.into_iter().filter(|v| v.0 == pick_height).collect())
+        }
+    }?;
+    Some((chosen.3.clone(), chosen.0 as u32))
+}
+
+/// The base name of the finished file: named by the height that was actually downloaded when
+/// that is not the one asked for (720p asked, 480p the closest the stream had).
+pub fn downloaded_base_name(series_title: &str, episode_num: f64, category: &str, asked: &str, got: Option<u32>) -> String {
+    match got.filter(|h| *h > 0 && quality_height(asked) != Some(*h)) {
+        Some(h) => output_base_name(series_title, episode_num, category, &format!("{}p", h)),
+        None => output_base_name(series_title, episode_num, category, asked),
+    }
 }
 
 /// Plans the download of a finished (VOD) media playlist. `None` for anything the plan does
@@ -1407,9 +1431,10 @@ pub fn hls_source_stamp(plan: &HlsPlan) -> String {
 /// the download. `None` when it cannot be read or planned; ffmpeg then reads it itself. A
 /// private address (the variant, or a redirect hop) is an error instead, because handing the
 /// playlist to ffmpeg would reach that address anyway.
-async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> Result<Option<HlsPlan>, String> {
+async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> Result<Option<(HlsPlan, u32)>, String> {
     let client = stream_client()?;
     let mut current = url.to_string();
+    let mut height = 0;
     for _ in 0..3 {
         let target = guarded_stream_url(&current)?;
         let response = match apply_headers(client.get(&target), headers).timeout(Duration::from_secs(30)).send().await {
@@ -1421,11 +1446,11 @@ async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> R
         let final_url = response.url().to_string();
         let Ok(text) = response.text().await else { return Ok(None) };
         if text.contains("#EXT-X-STREAM-INF") {
-            let Some(variant) = hls_variant_for(&text, &final_url, quality_height(quality)) else { return Ok(None) };
-            current = variant;
+            let Some((variant, picked)) = hls_variant_pick(&text, &final_url, quality_height(quality)) else { return Ok(None) };
+            (current, height) = (variant, picked);
             continue;
         }
-        return Ok(plan_hls_download(&text, &final_url));
+        return Ok(plan_hls_download(&text, &final_url).map(|plan| (plan, height)));
     }
     Ok(None)
 }
@@ -1586,11 +1611,14 @@ async fn mux_with_ffmpeg(
 /// by creating it, so two downloads finishing together cannot pick the same one and an
 /// existing file is never overwritten. Returns the path and its stem.
 async fn reserve_final_path(job: &Job<'_>, ext: &str) -> Result<(PathBuf, String), String> {
+    let got = job.got_height.load(std::sync::atomic::Ordering::Relaxed);
+    let record = job.record;
+    let base = downloaded_base_name(&record.series_title, record.episode_num, &record.category, &record.quality, Some(got));
     for n in 1..=999u32 {
         let stem = if n == 1 {
-            job.base.clone()
+            base.clone()
         } else {
-            format!("{} ({})", job.base, n)
+            format!("{} ({})", base, n)
         };
         let path = job.dir.join(format!("{}.{}", stem, ext));
         match tokio::fs::OpenOptions::new()
@@ -1610,7 +1638,7 @@ async fn reserve_final_path(job: &Job<'_>, ext: &str) -> Result<(PathBuf, String
     }
     Err(format!(
         "Too many files named \"{}\" in {}",
-        job.base,
+        base,
         job.dir.display()
     ))
 }
@@ -1717,7 +1745,8 @@ async fn download_stream_with_ffmpeg(
 ) -> Result<Finished, String> {
     let hls_options = probe_ffmpeg().await.map_err(|e| e.to_string())?;
     if kind == StreamKind::Hls {
-        if let Some(plan) = fetch_hls_plan(url, headers, &job.record.quality).await? {
+        if let Some((plan, height)) = fetch_hls_plan(url, headers, &job.record.quality).await? {
+            job.got_height.store(height, std::sync::atomic::Ordering::Relaxed);
             return download_hls_files(job, &plan, headers, hls_options, subtitles).await;
         }
     }
@@ -1940,6 +1969,7 @@ where
         base: output_base_name(&record.series_title, record.episode_num, &record.category, &record.quality),
         tag: work_tag(&record.id),
         work,
+        got_height: std::sync::atomic::AtomicU32::new(0),
     };
 
     if let Err(e) = db::update_download_progress(pool, &record.id, Some(0.05), None).await {

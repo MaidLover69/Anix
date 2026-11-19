@@ -117,6 +117,8 @@ export interface MpvTrack {
   codec: string | null;
   /** The picture height of a video track (an HLS resolution), when mpv knows it. */
   demux_h?: number | null;
+  /** An HLS variant's declared bits per second, when mpv knows it. */
+  hls_bitrate?: number | null;
   selected: boolean;
   default?: boolean;
   /** The URL a track was added from with `add_subtitle`; null for the file's own tracks. */
@@ -423,7 +425,7 @@ export function useMpvEngine({
 
   // The resolutions of an HLS stream; a track without a height stays out.
   const levels = useMemo<QualityLevel[]>(
-    () => tracks.filter((t) => t.type === 'video' && t.id !== null && (t.demux_h ?? 0) > 0).map((t) => ({ id: t.id as number, height: t.demux_h as number, bitrate: 0 })),
+    () => tracks.filter((t) => t.type === 'video' && t.id !== null && (t.demux_h ?? 0) > 0).map((t) => ({ id: t.id as number, height: t.demux_h as number, bitrate: t.hls_bitrate ?? 0 })),
     [tracks]
   );
   const activeLevel = tracks.find((t) => t.type === 'video' && t.selected)?.id ?? -1;

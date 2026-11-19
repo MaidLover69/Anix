@@ -26,7 +26,6 @@ export function useMediaState(videoRef: RefObject<HTMLVideoElement>, episodeKey:
   const startRate = useRef<number | null>(null);
   if (startRate.current === null) {
     startRate.current = startRateFor(episodeKey, lastEpisodeKey, usePlayerStore.getState().playbackRate, defaultSpeed);
-    lastEpisodeKey = episodeKey;
   }
   const [state, setState] = useState<MediaState>(() => {
     const prefs = usePlayerStore.getState();
@@ -51,6 +50,7 @@ export function useMediaState(videoRef: RefObject<HTMLVideoElement>, episodeKey:
     video.volume = prefs.volume >= 0 && prefs.volume <= 1 ? prefs.volume : 1;
     video.muted = prefs.muted === true;
     // A new episode starts at the default speed; the same one keeps what the user chose.
+    lastEpisodeKey = episodeKey;
     const rate = startRate.current ?? 1;
     usePlayerStore.getState().setPlaybackRate(rate);
     video.defaultPlaybackRate = rate;

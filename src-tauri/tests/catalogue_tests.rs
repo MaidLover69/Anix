@@ -445,6 +445,7 @@ impl TestServer {
             imdb: at("imdb"),
             arm: at("arm"),
             anizip: at("anizip"),
+            shikimori_studios: at("shiki_studios"),
         }
     }
 }
@@ -1337,4 +1338,133 @@ fn anilist_request_rejections_do_not_pause_anilist() {
         let err = interpret_graphql_response(status, None, r#"{"errors":[{"message":"down","status":500}]}"#).unwrap_err();
         assert!(breaker::trips(&err), "{}: {:?}", status, err);
     }
+}
+
+// ---------------------------------------------------------------------------- studio filter (#6, RED)
+// `SearchQuery.studio` and `Endpoints.shikimori_studios` (Shikimori's REST studio list, which
+// the studio name is looked up in) are what the coder has to add. See `collections_v142_API.md`.
+
+fn studio_media(id: i64, genres: &[&str], format: &str, year: i64) -> Value {
+    json!({ "id": id, "title": { "romaji": format!("Show {}", id) }, "genres": genres, "format": format,
+            "seasonYear": year, "averageScore": 80, "isAdult": false })
+}
+
+fn anilist_studio_answer() -> String {
+    json!({ "data": { "Studio": { "name": "MAPPA", "media": { "nodes": [
+        studio_media(1, &["Action", "Drama"], "TV", 2023),
+        studio_media(2, &["Drama"], "TV", 2023),
+        studio_media(3, &["Action"], "MOVIE", 2023),
+        studio_media(4, &["Action"], "TV", 2019),
+    ] } } } })
+    .to_string()
+}
+
+fn mappa_action_tv_2023() -> SearchQuery {
+    SearchQuery {
+        studio: Some("MAPPA".into()),
+        genres: vec!["Action".into()],
+        format: Some("TV".into()),
+        year: Some(2023),
+        page: 1,
+        per_page: 24,
+        hide_adult: true,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn studio_search_asks_anilist_for_the_studio_and_applies_the_other_filters_in_the_app() {
+    let bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = bodies.clone();
+    let server = serve(move |method, url, body| match (method, url) {
+        ("POST", "/anilist") => {
+            seen.lock().unwrap().push(body.to_string());
+            (200, anilist_studio_answer())
+        }
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let served = catalogue.search(&mappa_action_tv_2023()).await.unwrap();
+    assert_eq!(served.source, Source::AniList);
+    assert!(!served.fallback);
+    // Only show 1 is an Action TV show of 2023; the studio's other titles are filtered here.
+    assert_eq!(served.value.iter().map(|m| m.id).collect::<Vec<_>>(), vec![1]);
+    let bodies = bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 1, "one request");
+    let sent: Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert!(sent["query"].as_str().unwrap().contains("Studio(search: $studio"), "{}", sent["query"]);
+    assert_eq!(sent["variables"]["studio"], json!("MAPPA"));
+}
+
+#[tokio::test]
+async fn studio_search_of_a_studio_anilist_does_not_know_is_nothing_found_not_an_error() {
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (200, r#"{"data":{"Studio":null}}"#.to_string()),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let served = catalogue.search(&mappa_action_tv_2023()).await.unwrap();
+    assert!(served.value.is_empty());
+    assert_eq!(served.source, Source::AniList);
+}
+
+#[tokio::test]
+async fn studio_search_falls_back_to_shikimori_and_maps_ids_through_the_id_tables() {
+    let bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = bodies.clone();
+    let server = serve(move |method, url, body| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        // Shikimori's REST studio list: the studio's name is looked up here.
+        ("GET", u) if u.starts_with("/shiki_studios") => (
+            200,
+            json!([{ "id": 43, "name": "Madhouse", "filtered_name": "Madhouse", "real": true },
+                   { "id": 569, "name": "MAPPA", "filtered_name": "MAPPA", "real": true }])
+            .to_string(),
+        ),
+        ("POST", "/shiki") => {
+            seen.lock().unwrap().push(body.to_string());
+            (200, fixture("shiki_search.json"))
+        }
+        ("POST", "/arm/ids") => (200, arm_route(body)),
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    // Only "Sousou no Frieren" (MAL 52991) of the two answers has the "Award Winning" genre.
+    let q = SearchQuery { studio: Some("mappa".into()), genres: vec!["Award Winning".into()], page: 1, per_page: 24, hide_adult: true, ..Default::default() };
+    let served = catalogue.search(&q).await.unwrap();
+    assert_eq!(served.source, Source::Shikimori);
+    assert!(served.fallback, "AniList was asked first");
+    assert_eq!(served.value.iter().map(|m| m.id).collect::<Vec<_>>(), vec![154587], "MAL 52991 -> AniList 154587");
+    let bodies = bodies.lock().unwrap();
+    let sent: Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert!(sent["query"].as_str().unwrap().contains("studio: $studio"), "{}", sent["query"]);
+    assert_eq!(sent["variables"]["studio"], json!("569"), "the studio id, found by name without regard to case");
+}
+
+#[tokio::test]
+async fn studio_search_is_unavailable_only_when_anilist_and_shikimori_both_fail() {
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        _ => down(502),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let err = catalogue.search(&mappa_action_tv_2023()).await.unwrap_err();
+    assert!(offline::is_offline_error(&err), "{:?}", err);
+    // No catalogue that cannot filter by studio is asked for a studio search.
+    for prefix in ["/mal", "/kitsu", "/comick", "/jikan", "/imdb"] {
+        assert_eq!(server.hits(prefix), 0, "{} cannot filter by studio and says so without a request", prefix);
+    }
+}
+
+#[tokio::test]
+async fn studio_search_with_a_studio_shikimori_lacks_is_empty_not_unavailable() {
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => (403, fixture("anilist_disabled.json")),
+        ("GET", u) if u.starts_with("/shiki_studios") => (200, json!([{ "id": 43, "name": "Madhouse", "filtered_name": "Madhouse" }]).to_string()),
+        _ => down(502),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let served = catalogue.search(&mappa_action_tv_2023()).await.unwrap();
+    assert!(served.value.is_empty());
+    assert_eq!(served.source, Source::Shikimori);
 }

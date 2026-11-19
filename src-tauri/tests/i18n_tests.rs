@@ -98,9 +98,9 @@ fn system_language_follows_gettext_order() {
     assert_eq!(pick(&[("LC_MESSAGES", "ru_RU.UTF-8"), ("LANG", "de_DE.UTF-8")]), "ru");
 }
 
-/// Keys for the play-failure headline, the failed-download notice, the file pickers and the
+/// Keys for the play-failure headline, the failed-download notice and retry note, the file pickers and the
 /// fatal database dialog.
-const SHOWN_BY_COMMANDS: [&str; 24] = [
+const SHOWN_BY_COMMANDS: [&str; 25] = [
     "play_verify",
     "play_removed",
     "play_unreadable_host",
@@ -112,6 +112,7 @@ const SHOWN_BY_COMMANDS: [&str; 24] = [
     "play_no_language",
     "play_unknown_provider",
     "download_failed",
+    "download_retrying",
     "db_open_failed",
     "picker_download_folder",
     "picker_episode_files",
@@ -139,7 +140,7 @@ fn every_language_has_the_texts_commands_show() {
                 assert_ne!(text, i18n::text("en", key), "{lang} {key} is still English");
             }
             // A placeholder in English must be kept by every translation.
-            for name in ["{hosts}", "{wanted}", "{title}", "{episode}", "{name}"] {
+            for name in ["{hosts}", "{wanted}", "{title}", "{episode}", "{name}", "{try}", "{tries}"] {
                 assert_eq!(i18n::text("en", key).contains(name), text.contains(name), "{lang} {key} {name}");
             }
         }

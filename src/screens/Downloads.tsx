@@ -259,8 +259,9 @@ const Row: React.FC<{ record: DownloadRecord; speed?: DownloadSpeed; children?: 
           </p>
         ) : status === 'COMPLETED' ? (
           <span className="text-xs text-state-success">{t('downloads.saved')}{size ? <span className="text-text-muted"> · {size}</span> : null}</span>
-        ) : status === 'QUEUED' ? (
-          <span className="text-xs text-text-muted">{t('downloads.waiting')}</span>
+        ) : status === 'QUEUED' || record.error_msg ? (
+          // A queued or waiting row with a message is between two tries ("Trying another stream").
+          <span className="text-xs text-text-muted">{record.error_msg || t('downloads.waiting')}</span>
         ) : (
           <>
             <span aria-hidden="true" className="h-1.5 w-full max-w-md overflow-hidden rounded-full bg-ink/10">

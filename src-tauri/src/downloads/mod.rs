@@ -7,7 +7,7 @@ use crate::models::downloads::{
     HEADROOM_BYTES, P1080_BYTES, P360_BYTES, P480_BYTES, P720_BYTES,
 };
 use crate::models::{DownloadRecord, SourcesResult, StreamItem, SubtitleItem};
-use crate::providers::manager::ProviderManager;
+use crate::providers::manager::{ProviderManager, NO_OTHER_PROVIDER_MESSAGE, NO_PLUGIN_MESSAGE};
 use crate::state::AppState;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
@@ -1119,6 +1119,9 @@ pub enum DownloadOutcome {
     Failed(String),
     /// Stopped on request; working files are gone and the row was left alone.
     Cancelled,
+    /// A queued try failed and try `next_try` follows `after` from now; the row stays
+    /// `DOWNLOADING` with a note until then.
+    Retrying { next_try: u32, after: Duration },
 }
 
 struct Finished {
@@ -2210,6 +2213,7 @@ async fn transfer<S>(
     place: Place,
     work: &WorkFiles,
     renew: Option<SourceFn>,
+    attempt: Option<&Attempt>,
 ) -> Result<Finished, String>
 where
     S: Future<Output = Result<DownloadSource, String>>,
@@ -2244,6 +2248,14 @@ where
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?, true),
     };
+    // What an earlier try kept belongs to its own stream; joined with this one it would be garbage.
+    if attempt.is_some_and(|a| a.switches_stream(&source.url)) {
+        let (folder, row) = (root.clone(), record.clone());
+        let removed = tokio::task::spawn_blocking(move || remove_resume_files(&folder, &row)).await.unwrap_or(0);
+        if removed > 0 {
+            info!("Download {} moved to another stream; removed {} saved part(s) of the previous one", record.id, removed);
+        }
+    }
     let dir = if nested { download_folder(&root, record) } else { root.clone() };
     if nested && dir != root {
         work.use_folder(dir.clone(), root.clone());
@@ -2291,6 +2303,7 @@ async fn cancelled(mut cancel: watch::Receiver<bool>) {
 
 /// Where a job saves: straight into a folder (old layout, tests), under a download folder in
 /// `<title>/Episode NN`, or under the configured download folder.
+#[derive(Clone)]
 enum Place {
     Flat(PathBuf),
     Under(PathBuf),
@@ -2306,6 +2319,7 @@ async fn run_job<S>(
     place: Place,
     cancel: watch::Receiver<bool>,
     renew: Option<SourceFn>,
+    attempt: Option<&Attempt>,
 ) -> DownloadOutcome
 where
     S: Future<Output = Result<DownloadSource, String>>,
@@ -2322,7 +2336,7 @@ where
 
     let work = WorkFiles::default();
     let result = tokio::select! {
-        result = transfer(pool, record, source, place, &work, renew) => Some(result),
+        result = transfer(pool, record, source, place, &work, renew, attempt) => Some(result),
         _ = cancelled(cancel) => None,
     };
     // Nothing of the transfer is running any more, so its leftovers can go. A network failure
@@ -2360,6 +2374,25 @@ where
             DownloadOutcome::Completed { path: finished.path, size: finished.size }
         }
         Some(Err(message)) => {
+            if let Some((next_try, after)) = attempt.and_then(|a| a.plan_next(id, &message)) {
+                info!("Download {} failed ({}); try {} of {} follows in {} s", id, message, next_try, DOWNLOAD_TRIES, after.as_secs());
+                let note = crate::i18n::fill(
+                    crate::i18n::current(),
+                    "download_retrying",
+                    &[("try", &next_try.to_string()), ("tries", &DOWNLOAD_TRIES.to_string())],
+                );
+                // Still DOWNLOADING, so the queue does not start it again before the wait is over.
+                if let Err(e) =
+                    db::update_download_status(pool, id, db::STATUS_DOWNLOADING, Some(0.0), None, None, None, Some(&note)).await
+                {
+                    warn!("Could not note the next try of download {}: {}", id, e);
+                }
+                return DownloadOutcome::Retrying { next_try, after };
+            }
+            let message = match attempt {
+                Some(attempt) => attempt.reason(message),
+                None => message,
+            };
             warn!("Download {} failed: {}", id, message);
             if let Err(e) = db::update_download_status(
                 pool,
@@ -2397,7 +2430,7 @@ pub async fn download_into(
     dir: &Path,
 ) -> DownloadOutcome {
     let (_keep_open, cancel) = watch::channel(false);
-    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None, None).await
 }
 
 /// Like [`download_into`], saving in `<root>/<title>/Episode NN` as new downloads do.
@@ -2408,7 +2441,7 @@ pub async fn download_under(
     root: &Path,
 ) -> DownloadOutcome {
     let (_keep_open, cancel) = watch::channel(false);
-    run_job(pool, record, async move { Ok(source) }, Place::Under(root.to_path_buf()), cancel, None).await
+    run_job(pool, record, async move { Ok(source) }, Place::Under(root.to_path_buf()), cancel, None, None).await
 }
 
 /// Like [`download_into`], stopping as soon as `cancel` holds `true`.
@@ -2419,7 +2452,7 @@ pub async fn download_into_cancellable(
     dir: &Path,
     cancel: watch::Receiver<bool>,
 ) -> DownloadOutcome {
-    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel, None, None).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2443,6 +2476,7 @@ fn spawn_job<S>(
     place: Place,
     permit: Option<OwnedSemaphorePermit>,
     renew: Option<SourceFn>,
+    attempt: Option<Arc<Attempt>>,
 ) where
     S: Future<Output = Result<DownloadSource, String>> + Send + 'static,
 {
@@ -2459,7 +2493,26 @@ fn spawn_job<S>(
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let handle = tokio::spawn(async move {
         let permit = permit;
-        run_job(&pool, &record, source, place, cancel_rx, renew).await;
+        let outcome = run_job(&pool, &record, source, place, cancel_rx.clone(), renew, attempt.as_deref()).await;
+        if let DownloadOutcome::Retrying { after, .. } = outcome {
+            // The wait frees the slot for other episodes; the row stays cancellable meanwhile.
+            drop(permit);
+            QUEUE_WAKE.notify_one();
+            let waited = tokio::select! {
+                _ = tokio::time::sleep(after) => true,
+                _ = cancelled(cancel_rx) => false,
+            };
+            // Out of ACTIVE first: the queue refuses to start a row that is still in it.
+            lock(&ACTIVE).remove(&record.id);
+            if waited {
+                requeue_for_next_try(&pool, &record.id).await;
+            } else {
+                lock(&ROUNDS).remove(&record.id);
+                info!("Download {} was cancelled while waiting for its next try", record.id);
+            }
+            QUEUE_WAKE.notify_one();
+            return;
+        }
         lock(&ACTIVE).remove(&record.id);
         drop(permit);
         // A free slot may let the next queued download start.
@@ -2494,15 +2547,17 @@ pub fn take_queued_source(id: &str) -> Option<DownloadSource> {
     lock(&PLAYER_SOURCES).remove(id).filter(|(_, at)| at.elapsed() < PLAYER_SOURCE_MAX_AGE).map(|(source, _)| source)
 }
 
-/// Forgets the source of a row that could not be created.
+/// Forgets the source of a row that could not be created, or was deleted, and what its
+/// earlier tries used up.
 pub fn forget_queued_source(id: &str) {
     lock(&PLAYER_SOURCES).remove(id);
+    lock(&ROUNDS).remove(id);
 }
 
 /// `start_download_in` runs a job into `dir` instead of the download folder, for tests.
 #[doc(hidden)]
 pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
-    spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None, None);
+    spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None, None, None);
 }
 
 /// Puts a `FAILED` download back in the queue (Downloads › Try again). Any other row, or one
@@ -2517,6 +2572,8 @@ pub async fn retry_download(pool: &SqlitePool, id: &str) -> Result<bool, String>
     }
     let queued = db::requeue_failed_download(pool, id).await.map_err(|e| e.to_string())?;
     if queued {
+        // A fresh round of tries, which may use every stream again.
+        lock(&ROUNDS).remove(id);
         notify_queue();
     }
     Ok(queued)
@@ -2597,12 +2654,24 @@ async fn queue_loop(app: tauri::AppHandle) {
         warn!("Could not reconcile downloads from the previous run: {}", e);
     }
 
+    let lookup: LookupFn = Arc::new(move |record, ask| {
+        let app = app.clone();
+        Box::pin(async move { ask_extensions(&app, &record, &ask).await })
+    });
+    run_queue(pool, lookup, Place::Default, allowed_by_settings).await;
+}
+
+/// Settings › Downloads: how many may run at once. Reads a file, so it runs on a blocking thread.
+fn allowed_by_settings() -> usize {
+    engine::parallel_downloads(&read_settings().unwrap_or_default())
+}
+
+/// Downloads the `QUEUED` rows of `pool`, `allowed()` at a time, finding their streams with `lookup`.
+async fn run_queue(pool: SqlitePool, lookup: LookupFn, place: Place, allowed: fn() -> usize) {
     let slots = Arc::new(Semaphore::new(MAX_QUEUE_DOWNLOADS));
     loop {
-        // Settings › Downloads: how many may run at once (the semaphore only holds the most).
-        let allowed = tokio::task::spawn_blocking(|| engine::parallel_downloads(&read_settings().unwrap_or_default()))
-            .await
-            .unwrap_or(1);
+        // The semaphore only holds the most that may ever run at once.
+        let allowed = tokio::task::spawn_blocking(allowed).await.unwrap_or(1);
         if MAX_QUEUE_DOWNLOADS - slots.available_permits() >= allowed {
             let _ = tokio::time::timeout(QUEUE_POLL_INTERVAL, QUEUE_WAKE.notified()).await;
             continue;
@@ -2612,19 +2681,7 @@ async fn queue_loop(app: tauri::AppHandle) {
         };
 
         match db::claim_next_queued_download(&pool).await {
-            Ok(Some(record)) => {
-                let (resolver_app, resolver_record) = (app.clone(), record.clone());
-                let resolve: SourceFn = Arc::new(move || {
-                    let (app, record) = (resolver_app.clone(), resolver_record.clone());
-                    Box::pin(async move { resolve_queued_source(&app, &record).await })
-                });
-                // A stream the player picked is used as it is; the extension is asked only to renew it.
-                let first: Pin<Box<dyn Future<Output = Result<DownloadSource, String>> + Send>> = match take_queued_source(&record.id) {
-                    Some(source) => Box::pin(async move { Ok(source) }),
-                    None => resolve(),
-                };
-                spawn_job(pool.clone(), record, first, Place::Default, Some(permit), Some(resolve));
-            }
+            Ok(Some(record)) => start_try(pool.clone(), record, &lookup, place.clone(), permit),
             Ok(None) => {
                 drop(permit);
                 let _ = tokio::time::timeout(QUEUE_POLL_INTERVAL, QUEUE_WAKE.notified()).await;
@@ -2638,25 +2695,304 @@ async fn queue_loop(app: tauri::AppHandle) {
     }
 }
 
-/// The one call into the provider manager. `preferred_provider` is `None` to try every
-/// provider, or a provider key to use only that one.
-async fn fetch_episode_sources(
+/// Runs the queue for the rows of `pool`, saving under `root` and asking `lookup` for streams,
+/// for tests. It stops with the runtime.
+#[doc(hidden)]
+pub fn spawn_queue_under(pool: SqlitePool, lookup: LookupFn, root: PathBuf) {
+    tokio::spawn(run_queue(pool, lookup, Place::Under(root), || MAX_QUEUE_DOWNLOADS));
+}
+
+/// Starts the next try of a claimed row: the stream the player picked on a first try, else one
+/// this round has not tried yet ([`find_source`]).
+fn start_try(pool: SqlitePool, record: DownloadRecord, lookup: &LookupFn, place: Place, permit: OwnedSemaphorePermit) {
+    let round = lock(&ROUNDS).remove(&record.id).unwrap_or_default();
+    // A stream the player picked is used as it is; the extension is asked only to renew it.
+    let player = take_queued_source(&record.id).filter(|_| round.tries == 0);
+    let attempt = Arc::new(Attempt { round: Mutex::new(round.clone()), picked: Mutex::new(None) });
+    let renew: SourceFn = {
+        let (lookup, record) = (lookup.clone(), record.clone());
+        Arc::new(move || {
+            let (lookup, record, mut round) = (lookup.clone(), record.clone(), round.clone());
+            Box::pin(async move { find_source(&lookup, &record, &mut round).await.map(|(source, _)| source) })
+        })
+    };
+    let first = {
+        let (lookup, record, attempt) = (lookup.clone(), record.clone(), attempt.clone());
+        async move {
+            let (source, extension) = match player {
+                Some(source) => (source, None),
+                None => {
+                    let mut round = lock(&attempt.round).clone();
+                    let found = find_source(&lookup, &record, &mut round).await;
+                    // Extensions found to have nothing left stay excluded for the next try.
+                    *lock(&attempt.round) = round;
+                    found?
+                }
+            };
+            *lock(&attempt.picked) = Some((stream_key(&source.url), extension));
+            Ok(source)
+        }
+    };
+    spawn_job(pool, record, first, place, Some(permit), Some(renew), Some(attempt));
+}
+
+/// Puts a row whose wait is over back in the queue with its note, unless it was deleted or
+/// changed meanwhile.
+async fn requeue_for_next_try(pool: &SqlitePool, id: &str) {
+    match db::get_download_by_id(pool, id).await {
+        Ok(Some(row)) if row.status == db::STATUS_DOWNLOADING => {
+            if let Err(e) =
+                db::update_download_status(pool, id, db::STATUS_QUEUED, Some(0.0), None, None, None, row.error_msg.as_deref()).await
+            {
+                warn!("Could not queue download {} for its next try: {}", id, e);
+            }
+        }
+        Ok(_) => {
+            lock(&ROUNDS).remove(id);
+        }
+        Err(e) => warn!("Could not read download {} for its next try: {}", id, e),
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Trying again with another stream
+// ---------------------------------------------------------------------------------------
+
+/// Tries a queued download gets before it is marked failed, the first one included.
+pub const DOWNLOAD_TRIES: u32 = 3;
+/// The wait before the second try: a slow site often answers again soon.
+const SECOND_TRY_AFTER: Duration = Duration::from_secs(30);
+/// The wait before the third try.
+const THIRD_TRY_AFTER: Duration = Duration::from_secs(2 * 60);
+
+static RETRY_WAIT_FOR_TESTS: Lazy<Mutex<Option<Duration>>> = Lazy::new(|| Mutex::new(None));
+
+/// Makes every wait between tries `wait`, so tests need not wait minutes.
+#[doc(hidden)]
+pub fn set_retry_wait_for_tests(wait: Duration) {
+    *lock(&RETRY_WAIT_FOR_TESTS) = Some(wait);
+}
+
+/// The wait after `tries` failed tries.
+fn retry_wait(tries: u32) -> Duration {
+    lock(&RETRY_WAIT_FOR_TESTS).unwrap_or(if tries <= 1 { SECOND_TRY_AFTER } else { THIRD_TRY_AFTER })
+}
+
+/// Whether a queued download that failed with `error` is tried again with another stream. Not
+/// when the cause is on this computer (the folder cannot be made or written, the disk is full
+/// or read-only, ffmpeg is missing) or no stream can be had at all (no extension, none in the
+/// wanted languages, every one tried already): another stream cannot fix those. A cancel never
+/// gets here.
+///
+/// shortcut: matches the English failure messages of this module and the provider manager,
+/// like `keeps_partial_files_after`; a reworded local failure is tried again, which only costs time.
+pub fn worth_another_try(error: &str) -> bool {
+    const LOCAL: [&str; 13] = [
+        "Could not create",
+        "Could not write",
+        "Could not move the download",
+        "The downloaded file is missing",
+        "Too many files named",
+        "Anix cannot save downloads in",
+        "No space left on device",
+        "Read-only file system",
+        "Disk quota exceeded",
+        "Permission denied",
+        "ffmpeg is not installed",
+        "ffmpeg could not be started",
+        "The app state is not available",
+    ];
+    if LOCAL.iter().any(|m| error.contains(m)) || error == NO_PLUGIN_MESSAGE || error == NO_OTHER_PROVIDER_MESSAGE {
+        return false;
+    }
+    // "No enabled plugin offers …" is written in the interface language; its ending is fixed.
+    !crate::i18n::LANGUAGES.iter().any(|lang| {
+        let template = crate::i18n::text(lang, "play_no_language");
+        template.rsplit('}').next().is_some_and(|tail| !tail.trim().is_empty() && error.ends_with(tail))
+    })
+}
+
+/// What the tries of one round of a queued download have used up, kept between its tries.
+#[derive(Debug, Clone, Default)]
+struct Round {
+    /// Tries made so far.
+    tries: u32,
+    /// Streams that failed, by [`stream_key`].
+    failed_streams: Vec<String>,
+    /// Extensions with no stream left to try, or whose lookup failed.
+    failed_extensions: Vec<String>,
+    /// The extension of the last stream tried: its other streams come next.
+    last_extension: Option<String>,
+    /// The last stream downloaded from; what it saved is of no use to another stream.
+    last_stream: Option<String>,
+    /// Why the last try failed.
+    last_error: Option<String>,
+}
+
+/// The rounds of rows waiting for their next try, by download id. A restart forgets them, and
+/// the row (back to `QUEUED`) starts a fresh round.
+static ROUNDS: Lazy<Mutex<HashMap<String, Round>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// A stream link without its query, which often holds a per-lookup token: the same server
+/// asked again is the same stream.
+fn stream_key(url: &str) -> String {
+    url.split(['?', '#']).next().unwrap_or(url).to_string()
+}
+
+/// One try of a queued download: its round so far, and the stream (by [`stream_key`]) and
+/// extension it picked.
+struct Attempt {
+    round: Mutex<Round>,
+    picked: Mutex<Option<(String, Option<String>)>>,
+}
+
+impl Attempt {
+    /// Whether `url` takes over from the stream an earlier try of the round downloaded from.
+    fn switches_stream(&self, url: &str) -> bool {
+        lock(&self.round).last_stream.as_ref().is_some_and(|last| *last != stream_key(url))
+    }
+
+    /// Notes that this try of row `id` failed with `error`. Returns the number of the next try
+    /// and the wait before it, or `None` when the round is over.
+    fn plan_next(&self, id: &str, error: &str) -> Option<(u32, Duration)> {
+        let mut round = lock(&self.round).clone();
+        if let Some((stream, extension)) = lock(&self.picked).take() {
+            round.failed_streams.push(stream.clone());
+            round.last_stream = Some(stream);
+            round.last_extension = extension;
+        }
+        round.tries += 1;
+        if error != NO_OTHER_PROVIDER_MESSAGE {
+            round.last_error = Some(error.to_string());
+        }
+        if !worth_another_try(error) || round.tries >= DOWNLOAD_TRIES {
+            lock(&ROUNDS).remove(id);
+            return None;
+        }
+        let next = (round.tries + 1, retry_wait(round.tries));
+        lock(&ROUNDS).insert(id.to_string(), round);
+        Some(next)
+    }
+
+    /// The message the row fails with: "every plugin was tried" says less than why the
+    /// previous try failed.
+    fn reason(&self, error: String) -> String {
+        if error == NO_OTHER_PROVIDER_MESSAGE {
+            lock(&self.round).last_error.clone().unwrap_or(error)
+        } else {
+            error
+        }
+    }
+}
+
+/// One question to the extensions about a row's episode: only `only` when set, otherwise every
+/// one but `excluded`. The row's category and the user's language order always apply.
+#[derive(Debug, Clone, Default)]
+pub struct Ask {
+    pub only: Option<String>,
+    pub excluded: Vec<String>,
+}
+
+/// Asks the extensions for the streams of a row's episode.
+pub type LookupFn =
+    Arc<dyn Fn(DownloadRecord, Ask) -> Pin<Box<dyn Future<Output = Result<SourcesResult, String>> + Send>> + Send + Sync>;
+
+/// Asks `manager` about the row's episode. A name it does not know (an extension removed since,
+/// a display name saved by an older version) asks every extension.
+async fn ask_manager(
     manager: &ProviderManager,
     record: &DownloadRecord,
     mal_id: Option<i64>,
-    title_romaji: Option<String>,
-    preferred_provider: Option<&str>,
-) -> Result<SourcesResult, AppError> {
+    title: Option<String>,
+    ask: &Ask,
+) -> Result<SourcesResult, String> {
+    let known = manager.provider_names();
+    let only = ask.only.as_deref().and_then(|wanted| preferred_provider(wanted, &known));
     manager
-        .get_sources_for_episode(
-            record.anilist_id,
-            mal_id,
-            record.episode_num,
-            &record.category,
-            title_romaji,
-            preferred_provider,
-        )
+        .get_sources_for_episode_excluding(record.anilist_id, mal_id, record.episode_num, &record.category, title, only, &ask.excluded)
         .await
+        .map_err(|e| e.to_string())
+}
+
+/// A lookup over `manager` that searches by the row's title, for tests.
+#[doc(hidden)]
+pub fn lookup_with(manager: Arc<ProviderManager>) -> LookupFn {
+    Arc::new(move |record, ask| {
+        let manager = manager.clone();
+        Box::pin(async move {
+            let title = Some(record.series_title.clone());
+            ask_manager(&manager, &record, None, title, &ask).await
+        })
+    })
+}
+
+/// Asks the app's extensions about a row's episode, the way the player does.
+async fn ask_extensions(app: &tauri::AppHandle, record: &DownloadRecord, ask: &Ask) -> Result<SourcesResult, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "The app state is not available".to_string())?;
+    let (mal_id, romaji) = lookup_search_keys(&state, record.anilist_id).await;
+    let title = romaji.or_else(|| Some(record.series_title.clone()).filter(|t| !t.trim().is_empty()));
+    ask_manager(&state.provider_manager, record, mal_id, title, ask).await
+}
+
+/// The extension the user picked for the row, if any.
+fn picked_extension(record: &DownloadRecord) -> Option<String> {
+    Some(record.provider.trim()).filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("auto")).map(str::to_string)
+}
+
+/// The stream of `found` this round has not tried, chosen like [`pick_stream`].
+async fn untried_source(found: &SourcesResult, record: &DownloadRecord, round: &Round) -> Result<Option<DownloadSource>, String> {
+    let left: Vec<StreamItem> =
+        found.streams.iter().filter(|s| !round.failed_streams.contains(&stream_key(&s.url))).cloned().collect();
+    let Some(stream) = pick_stream(&left, &record.quality) else {
+        return Ok(None);
+    };
+    let mut source = DownloadSource::from_stream(stream, found.subtitles.clone());
+    source.language = found.language.clone();
+    source.subtitle_languages = tokio::task::spawn_blocking(subtitle_languages_from_saved_settings)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(source))
+}
+
+/// Finds a stream for a try of a row that its round has not tried: from the extension of the
+/// last try (or the one the user picked) first, then from the others in their usual order.
+/// Extensions with nothing left are added to `round`. Returns the source and its extension.
+async fn find_source(
+    lookup: &LookupFn,
+    record: &DownloadRecord,
+    round: &mut Round,
+) -> Result<(DownloadSource, Option<String>), String> {
+    let mut stay_error = None;
+    let stay = round.last_extension.clone().or_else(|| picked_extension(record));
+    if let Some(name) = stay.filter(|name| !round.failed_extensions.contains(name)) {
+        match lookup(record.clone(), Ask { only: Some(name.clone()), excluded: Vec::new() }).await {
+            Ok(found) => {
+                if let Some(source) = untried_source(&found, record, round).await? {
+                    return Ok((source, found.provider.or(Some(name))));
+                }
+            }
+            Err(e) => stay_error = Some(e),
+        }
+        round.failed_extensions.push(name);
+    }
+    loop {
+        let found = match lookup(record.clone(), Ask { only: None, excluded: round.failed_extensions.clone() }).await {
+            Ok(found) => found,
+            // Nothing left to ask: why the last extension failed says more.
+            Err(e) if e == NO_OTHER_PROVIDER_MESSAGE => return Err(stay_error.unwrap_or(e)),
+            Err(e) => return Err(e),
+        };
+        if let Some(source) = untried_source(&found, record, round).await? {
+            return Ok((source, found.provider));
+        }
+        // Every new name narrows the next question, so this ends.
+        match found.provider {
+            Some(name) if !round.failed_extensions.contains(&name) => round.failed_extensions.push(name),
+            _ => return Err("No playable stream was found for this episode.".to_string()),
+        }
+    }
 }
 
 /// Per AniList id: the MAL id and the title used for file names.
@@ -2715,29 +3051,4 @@ pub fn preferred_provider<'a>(wanted: &str, known: &[&'a str]) -> Option<&'a str
         .find(|name| **name == wanted)
         .or_else(|| known.iter().find(|name| name.eq_ignore_ascii_case(wanted)))
         .copied()
-}
-
-/// Finds a stream for a queued row the same way the player does.
-async fn resolve_queued_source(app: &tauri::AppHandle, record: &DownloadRecord) -> Result<DownloadSource, String> {
-    let state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| "The app state is not available".to_string())?;
-
-    let (mal_id, romaji) = lookup_search_keys(&state, record.anilist_id).await;
-    let title = romaji.or_else(|| Some(record.series_title.clone()).filter(|t| !t.trim().is_empty()));
-    let known = state.provider_manager.provider_names();
-    let preferred = preferred_provider(&record.provider, &known);
-
-    let sources = fetch_episode_sources(&state.provider_manager, record, mal_id, title, preferred)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let stream = pick_stream(&sources.streams, &record.quality)
-        .ok_or_else(|| "No playable stream was found for this episode.".to_string())?;
-    let mut source = DownloadSource::from_stream(stream, sources.subtitles.clone());
-    source.language = sources.language.clone();
-    source.subtitle_languages = tokio::task::spawn_blocking(subtitle_languages_from_saved_settings)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(source)
 }

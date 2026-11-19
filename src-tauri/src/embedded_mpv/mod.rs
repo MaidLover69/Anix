@@ -380,17 +380,36 @@ fn emit_status_changed() {
     }
 }
 
-/// Path to load libmpv from. Debug builds take the system library for local testing; release
-/// builds load the LGPL build bundled with the AppImage (`scripts/build-libmpv-lgpl.sh`) and
-/// otherwise the system's (RPM/DEB), which must pass the same LGPL check.
-fn library_path() -> Result<String, String> {
+/// Path to load libmpv from, and whether it is the LGPL build bundled with the AppImage
+/// (`scripts/build-libmpv-lgpl.sh`). Debug builds and system packages (RPM/DEB/AUR) take the
+/// system library.
+fn library_path() -> Result<(String, bool), String> {
     if cfg!(debug_assertions) {
-        return Ok("libmpv.so.2".to_string());
+        return Ok(("libmpv.so.2".to_string(), false));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("The app folder is unknown")?;
     let bundled = dir.join("../lib/anix/libmpv.so.2");
-    Ok(if bundled.exists() { bundled.to_string_lossy().into_owned() } else { "libmpv.so.2".to_string() })
+    Ok(if bundled.exists() {
+        (bundled.to_string_lossy().into_owned(), true)
+    } else {
+        ("libmpv.so.2".to_string(), false)
+    })
+}
+
+/// Why a libmpv may not be used, or `None`. Only the bundled build must be LGPL (Anix ships
+/// it); a system library is the user's own and is used under its own licence.
+pub fn license_refusal(license: &str, bundled: bool) -> Option<String> {
+    (bundled && is_gpl_license(license)).then(|| {
+        format!("The FFmpeg libmpv uses is not an LGPL build ({}). Using the web player.", license)
+    })
+}
+
+/// The web-player reason shown when no libmpv can be loaded.
+pub fn no_libmpv_message() -> String {
+    "The embedded player needs the AppImage, or mpv's library (libmpv) installed on this system. \
+     Using the web player instead. \"Open in mpv\" still works with the system mpv."
+        .to_string()
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -408,8 +427,8 @@ fn engine_setting(settings: &Value) -> String {
     settings.get(SETTING_KEY).and_then(Value::as_str).unwrap_or(default_engine()).to_string()
 }
 
-/// Release RPM/DEB builds have no LGPL libmpv of their own (only the AppImage bundles one), so
-/// they start on the web player instead of announcing a fallback on every run.
+/// Release RPM/DEB builds start on the web player (only the AppImage bundles a libmpv), so
+/// there is no fallback notice on every run; the user can pick embedded mpv in Settings.
 fn default_engine() -> &'static str {
     if cfg!(debug_assertions) || std::env::var_os("APPIMAGE").is_some() {
         "mpv"
@@ -465,19 +484,24 @@ fn cache_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// libmpv, loaded once and refused when its FFmpeg is not LGPL (release builds).
+/// libmpv, loaded once and refused when it is the bundled one and its FFmpeg is not LGPL
+/// (release builds).
 fn load_lib() -> Result<&'static ffi::Lib, String> {
     static LIB: OnceCell<&'static ffi::Lib> = OnceCell::new();
     LIB.get_or_try_init(|| {
-        let lib: &'static ffi::Lib = Box::leak(Box::new(ffi::Lib::load(&library_path()?)?));
+        let (path, bundled) = library_path()?;
+        let lib = ffi::Lib::load(&path).map_err(|e| {
+            tracing::warn!("{}", e);
+            if bundled { e } else { no_libmpv_message() }
+        })?;
+        let lib: &'static ffi::Lib = Box::leak(Box::new(lib));
         match lib.license() {
-            Some(license) if is_gpl_license(&license) => {
-                if !cfg!(debug_assertions) {
-                    return Err(format!("The FFmpeg libmpv uses is not an LGPL build ({})", license));
+            Some(license) => {
+                if let Some(refusal) = license_refusal(&license, bundled) {
+                    return Err(refusal);
                 }
-                tracing::warn!("libmpv uses a GPL FFmpeg ({}); fine for local testing only", license);
+                tracing::info!("libmpv FFmpeg licence: {}", license);
             }
-            Some(license) => tracing::info!("libmpv FFmpeg licence: {}", license),
             None => tracing::warn!("The FFmpeg licence of libmpv could not be read"),
         }
         Ok(lib)

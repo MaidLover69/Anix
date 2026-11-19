@@ -69,7 +69,8 @@
           "(gstreamer1-plugins-good or gstreamer-plugins-good)",
           "(gstreamer1-plugins-bad-free or gstreamer-plugins-bad)",
           "xdg-utils"
-        ]
+        ],
+        "recommends": ["(mpv-libs or libmpv2)"]
       },
       "deb": {
         "desktopTemplate": "anix.desktop",
@@ -84,7 +85,8 @@
           "gstreamer1.0-plugins-bad",
           "gstreamer1.0-libav",
           "xdg-utils"
-        ]
+        ],
+        "recommends": ["libmpv2"]
       },
       "appimage": {
         "bundleMediaFramework": true

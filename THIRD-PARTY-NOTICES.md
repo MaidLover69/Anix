@@ -12,7 +12,7 @@ Anix uses open-source components. Components under licences that ask for a notic
 
 - Used for: the embedded video player (Settings › Playback › Player engine), loaded at run time.
 - Licence: GNU Lesser General Public License 2.1 or later (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). Built with `-Dgpl=false`, so only its LGPL parts are included.
-- Used unmodified and dynamically linked (`lib/anix/libmpv.so.2` in the AppImage; the system's `libmpv.so.2` in the RPM and DEB packages). You may replace it with your own build of the same interface. Source code: https://github.com/mpv-player/mpv (version 0.41.0); build script: `scripts/build-libmpv-lgpl.sh`.
+- Used unmodified and dynamically linked (`lib/anix/libmpv.so.2` in the AppImage; the system's `libmpv.so.2` in the RPM and DEB packages). The RPM, DEB and AUR packages carry no libmpv: if the user installs one, Anix loads it at run time under that library's own licence, which Anix does not change. You may replace it with your own build of the same interface. Source code: https://github.com/mpv-player/mpv (version 0.41.0); build script: `scripts/build-libmpv-lgpl.sh`.
 
 ## FFmpeg
 

@@ -5,6 +5,7 @@ import { Spinner } from '../ui/Spinner';
 import { errorMessage } from '../ui/ErrorState';
 import { Row, Section } from './SettingsLayout';
 import { CustomSelect } from '../CustomSelect';
+import { Switch } from '../ui/Switch';
 import { useSaveSettings, useSettings } from '../../hooks/useSettings';
 import { DOWNLOAD_QUALITY_VALUES } from '../../lib/resolution';
 import { useDownloadDirectory, useDownloadFolder } from '../../hooks/useDownloads';
@@ -92,6 +93,16 @@ export const DownloadSettings: React.FC = () => {
               value,
               label: value === 'best' ? t('bulkDownloadDialog.best') : value,
             }))}
+          />
+        )}
+      </Row>
+      <Row label={t('settings.downloadAllSubtitles')} hint={t('settings.downloadAllSubtitlesHint')}>
+        {({ labelId, hintId }) => (
+          <Switch
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            checked={settings?.download_all_subtitles === true}
+            onChange={(checked) => save.mutate({ download_all_subtitles: checked })}
           />
         )}
       </Row>

@@ -24,6 +24,7 @@ import { watchPath } from '../hooks/watchProgress';
 import { useStreamProxyBase } from '../lib/streamProxy';
 import { describeStream, sourceLabel } from '../lib/languages';
 import { splitPlayFailure } from '../lib/playFailure';
+import { episodeLookupsEnabled, playsFromFile } from '../lib/playSource';
 import { episodeExists, parseAnimeId } from '../lib/routes';
 import { useRememberedSource } from '../hooks/useRememberedSource';
 import { useDesktopStatus } from '../hooks/useSystem';
@@ -210,11 +211,21 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     unpaused(knownProvider(settings.preferred_provider));
   const requestedProvider = explicitProvider ?? preferredProvider;
   // "Your files": the episode plays from a file linked to the title, through the proxy.
-  const localRequested = searchParams.get('prov') === LOCAL_PROVIDER;
+  const localMedia = useLocalMedia(anilistId);
+  const localEpisodes = localMedia.episodes;
+  // A downloaded or linked episode plays from its file unless the URL names another server.
+  const localChosen = searchParams.get('prov') === LOCAL_PROVIDER;
+  const localRequested =
+    localChosen ||
+    playsFromFile({
+      hasLocalFile: localMedia.hasEpisode(episodeNumber),
+      explicitProvider: searchParams.get('prov'),
+      rememberedProvider: remembered?.provider,
+      preferredProvider: settings.preferred_provider,
+    });
   const localQuery = useLocalEpisodeSource(anilistId, episodeNumber, localRequested);
-  const localEpisodes = useLocalMedia(anilistId).episodes;
   // What the URL keeps when only the audio or the episode changes.
-  const routeProvider = localRequested ? LOCAL_PROVIDER : explicitProvider;
+  const routeProvider = localChosen ? LOCAL_PROVIDER : explicitProvider;
 
   const catalogQuery = useAnimeCatalogEpisodes(
     anilistId,
@@ -249,7 +260,10 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
   // The all-providers listing is otherwise only fetched for the server dialog. Whatever is
   // already cached (the detail page loads it) is used right away.
   const episodesQuery = useEpisodes(anilistId, malId, titleRomaji, {
-    enabled: !!details && (serversOpen || checkExtensionLists),
+    enabled:
+      !!details &&
+      (serversOpen || checkExtensionLists) &&
+      episodeLookupsEnabled({ fromFile: localRequested, playbackStarted: localQuery.isSuccess }),
   });
   const episodesData = episodesQuery.data;
 
@@ -273,7 +287,15 @@ const WatchSession: React.FC<WatchSessionProps> = ({ anilistId, episodeNumber })
     fallbackToAny: explicitProvider === null && preferredProvider !== null,
     // Which provider to ask is not known before the plugin list is, and with no usable
     // plugin there is nobody to ask.
-    enabled: !!details && settingsReady && providers.settled && !noPlugins && !localRequested && !episodeMissing,
+    // The files are looked up first: a downloaded episode must not wake the extensions.
+    enabled:
+      !!details &&
+      settingsReady &&
+      providers.settled &&
+      !localMedia.isPending &&
+      !noPlugins &&
+      !localRequested &&
+      !episodeMissing,
   });
   const sources = localRequested ? localQuery.data?.sources : sourcesQuery.data;
   // Which extensions are still being asked, from the backend's progress events. Listening

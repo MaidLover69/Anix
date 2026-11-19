@@ -471,6 +471,8 @@ export interface AppSettings {
   /** Every episode starts at this speed (0.5 to 4). */
   default_playback_speed: number;
   download_dir: string;
+  /** Downloads save every subtitle language the source offers, not only the preferred ones. */
+  download_all_subtitles: boolean;
   /** A built-in theme id (see `theme/themes.ts`). */
   theme: ThemeId;
   /** Closing the window hides it in the tray instead of quitting. */

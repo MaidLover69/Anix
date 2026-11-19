@@ -1575,6 +1575,8 @@
   "settings.couldNotTurnOn": "Impossibile attivare {name}",
   "settings.dohAutomatic": "Automatico",
   "settings.dohHint": "Risolve i domini dei provider tramite un resolver cifrato invece del DNS del tuo operatore. Automatico usa il DNS normale finché un sito non sembra bloccato, poi il resolver per quel sito.",
+  "settings.downloadAllSubtitles": "Scarica i sottotitoli in tutte le lingue",
+  "settings.downloadAllSubtitlesHint": "Disattivato: un download conserva solo le tue lingue dei sottotitoli (quella predefinita della fonte se nessuna corrisponde). Attivato: vengono salvate tutte le lingue offerte dalla fonte.",
   "settings.downloadingRepo": "Download del repository e delle sue estensioni…",
   "settings.externalPlayer": "Lettore esterno",
   "settings.externalPlayerHint": "Apre i file locali, i download completati e “Apri nel lettore esterno”. Deve essere installato.",

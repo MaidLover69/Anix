@@ -60,7 +60,10 @@ pub async fn delete_download(
             .filter(|r| r.status.eq_ignore_ascii_case("COMPLETED"))
             .and_then(|r| r.file_path.clone())
         {
-            tokio::task::spawn_blocking(move || downloads::delete_finished_files(Path::new(&path)))
+            tokio::task::spawn_blocking(move || {
+                let root = downloads::get_download_dir().map_err(|e| e.to_string())?;
+                downloads::delete_download_files(Path::new(&path), &root)
+            })
                 .await
                 .map_err(|e| e.to_string())??;
         }
@@ -138,6 +141,9 @@ pub async fn start_episode_download(
     headers: Option<HashMap<String, String>>,
     stream_type: Option<String>,
 ) -> Result<String, String> {
+    let subtitle_languages = tokio::task::spawn_blocking(downloads::subtitle_languages_from_saved_settings)
+        .await
+        .map_err(|e| e.to_string())?;
     let source = DownloadSource {
         url: downloads::validate_stream_url(&stream_url)?,
         stream_type,
@@ -146,6 +152,7 @@ pub async fn start_episode_download(
         headers: headers.unwrap_or_default(),
         subtitles,
         language: None,
+        subtitle_languages,
     };
 
     // Inserted as DOWNLOADING so the queue worker does not start it a second time.

@@ -1461,6 +1461,8 @@
   "settings.couldNotTurnOn": "无法开启 {name}",
   "settings.dohAutomatic": "自动",
   "settings.dohHint": "通过加密解析器解析片源站域名，而不使用运营商的 DNS。“自动”会先使用你平常的 DNS，当某个网站疑似被屏蔽时，再对该网站改用解析器。",
+  "settings.downloadAllSubtitles": "下载所有字幕语言",
+  "settings.downloadAllSubtitlesHint": "关闭:下载只保留你设置的字幕语言(都不匹配时使用来源的默认字幕)。开启:保存来源提供的所有语言。",
   "settings.downloadingRepo": "正在下载仓库及其插件…",
   "settings.externalPlayer": "外部播放器",
   "settings.externalPlayerHint": "用于打开本地文件、已完成的下载以及“在外部播放器中打开”。必须已安装。",

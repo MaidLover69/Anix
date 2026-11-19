@@ -136,17 +136,59 @@ pub fn configured_download_dir(settings: &serde_json::Value, home: Option<&Path>
     path.is_absolute().then_some(path)
 }
 
-fn read_download_dir_setting() -> Option<PathBuf> {
+fn read_settings() -> Option<serde_json::Value> {
     let settings_path = db::get_config_dir().ok()?.join("settings.json");
     let text = std::fs::read_to_string(settings_path).ok()?;
     let settings: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            warn!("settings.json could not be parsed, using the default download folder: {}", e);
+            warn!("settings.json could not be parsed, using the defaults for downloads: {}", e);
             return None;
         }
     };
-    configured_download_dir(&settings, dirs::home_dir().as_deref())
+    Some(settings)
+}
+
+fn read_download_dir_setting() -> Option<PathBuf> {
+    configured_download_dir(&read_settings()?, dirs::home_dir().as_deref())
+}
+
+/// The subtitle languages a download fetches: `None` (every track) when "Download all
+/// subtitle languages" is on, else the user's subtitle languages in order.
+pub fn subtitle_languages_for_download(settings: &serde_json::Value) -> Option<Vec<String>> {
+    if settings.get("download_all_subtitles").and_then(|v| v.as_bool()) == Some(true) {
+        return None;
+    }
+    Some(crate::providers::languages::LanguagePrefs::from_settings(settings).sub)
+}
+
+/// [`subtitle_languages_for_download`] for the saved settings. Reads a file, so async code
+/// calls it through `spawn_blocking`.
+pub fn subtitle_languages_from_saved_settings() -> Option<Vec<String>> {
+    let settings = read_settings().unwrap_or_else(|| serde_json::json!({}));
+    subtitle_languages_for_download(&settings)
+}
+
+/// The tracks a download fetches: for each wanted language (in order, matched by language
+/// not spelling) one track, the default-flagged one first. With no match, or no wanted
+/// language, the source's default (else first) track. `None` keeps every track, the default
+/// first. The first track is the one embedded in the video.
+pub fn select_subtitles(tracks: &[SubtitleItem], wanted: Option<&[String]>) -> Vec<SubtitleItem> {
+    let mut by_default: Vec<&SubtitleItem> = tracks.iter().collect();
+    by_default.sort_by_key(|t| t.is_default != Some(true));
+    let Some(wanted) = wanted else { return by_default.into_iter().cloned().collect() };
+
+    let mut chosen: Vec<&SubtitleItem> = Vec::new();
+    for code in wanted {
+        let found = by_default
+            .iter()
+            .find(|t| crate::providers::languages::normalize_language(&t.language).as_deref() == Some(code.as_str()));
+        chosen.extend(found.copied());
+    }
+    if chosen.is_empty() {
+        chosen.extend(by_default.first());
+    }
+    chosen.into_iter().cloned().collect()
 }
 
 /// The folder downloads are saved in: the `download_dir` setting, or `downloads` inside the
@@ -289,6 +331,20 @@ pub fn output_base_name(series_title: &str, episode_num: f64, category: &str, qu
     format!("{}{}", title, suffix)
 }
 
+/// `Episode 03`, the folder of one episode inside its title folder.
+pub fn episode_dir_name(episode_num: f64) -> String {
+    format!("Episode {:02}", episode_num)
+}
+
+/// `<root>/<title>/Episode NN`: where a new download is saved. The title goes through the
+/// same sanitising and length limit as file names, so it is always one folder inside `root`.
+pub fn output_dir(root: &Path, series_title: &str, episode_num: f64) -> PathBuf {
+    let title = sanitize_filename(series_title);
+    let title = if title.is_empty() { "Untitled" } else { &title };
+    let title = truncate_to_bytes(title, MAX_BASE_NAME_BYTES).trim_end();
+    root.join(title).join(episode_dir_name(episode_num))
+}
+
 /// A short stable tag derived from the download id; it keeps the working files of two
 /// downloads of the same episode apart. SHA-256, so every Anix build computes the same tag
 /// and an update does not orphan the resumable files of queued downloads.
@@ -315,9 +371,11 @@ fn is_resume_file(path: &Path) -> bool {
 /// Only these exact `*.anix-part` names are touched, never a finished video. Returns how many
 /// entries were removed. Call it only while the download is not running.
 pub fn remove_resume_files(dir: &Path, record: &DownloadRecord) -> usize {
-    RESUME_ROLES
+    // The episode folder of the current layout, and the folder itself for older downloads.
+    let folders = [output_dir(dir, &record.series_title, record.episode_num), dir.to_path_buf()];
+    folders
         .iter()
-        .map(|role| work_file_path(dir, record, role))
+        .flat_map(|folder| RESUME_ROLES.iter().map(move |role| work_file_path(folder, record, role)))
         .filter(|path| match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path).is_ok(),
             Ok(_) => std::fs::remove_file(path).is_ok(),
@@ -364,6 +422,13 @@ pub fn work_file_path(dir: &Path, record: &DownloadRecord, role: &str) -> PathBu
 /// downloads tagged `keep` (see [`work_tag`]). The HLS segment folder is the only directory
 /// removed. Returns how many entries were removed. Only call it while no download is running.
 pub fn remove_stale_part_files(dir: &Path, keep: &[String]) -> usize {
+    stale_part_files(dir, keep, 0)
+}
+
+/// How many folders below the download folder hold working files: `<title>/Episode NN`.
+const WORK_DEPTH: u32 = 2;
+
+fn stale_part_files(dir: &Path, keep: &[String], depth: u32) -> usize {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return 0,
@@ -381,6 +446,11 @@ pub fn remove_stale_part_files(dir: &Path, keep: &[String]) -> usize {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let is_part = name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX);
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if !is_part && is_dir && depth < WORK_DEPTH {
+            removed += stale_part_files(&entry.path(), keep, depth + 1);
+            continue;
+        }
         if !is_part || kept(&name) {
             continue;
         }
@@ -460,6 +530,8 @@ pub struct DownloadSource {
     /// ISO 639-1 code the provider gave the result: the subtitle language of a sub, the audio
     /// language of a dub.
     pub language: Option<String>,
+    /// Subtitle languages to fetch, as codes in order; `None` fetches every track.
+    pub subtitle_languages: Option<Vec<String>>,
 }
 
 /// The audio and subtitle language codes stored on a download row. A sub is Japanese audio
@@ -491,6 +563,7 @@ impl DownloadSource {
             headers: stream.headers.clone().unwrap_or_default(),
             subtitles,
             language: None,
+            subtitle_languages: None,
         }
     }
 }
@@ -1119,18 +1192,15 @@ fn container_extension(url: &str) -> &'static str {
 
 /// Fetches the subtitle files with the stream's headers. A subtitle that cannot be
 /// fetched, is not a 2xx response, or is not a subtitle file is skipped with a log line;
-/// it never fails the download. The default subtitle comes first.
+/// it never fails the download. `subtitles` is already chosen and ordered ([`select_subtitles`]).
 async fn fetch_subtitles(
     job: &Job<'_>,
     client: &reqwest::Client,
     headers: &RequestHeaders,
     subtitles: &[SubtitleItem],
 ) -> Vec<SubtitleInput> {
-    let mut ordered: Vec<&SubtitleItem> = subtitles.iter().collect();
-    ordered.sort_by_key(|s| s.is_default != Some(true));
-
     let mut fetched = Vec::new();
-    for (idx, sub) in ordered.into_iter().enumerate() {
+    for (idx, sub) in subtitles.iter().enumerate() {
         let body = async {
             let url = guarded_stream_url(&sub.url)?;
             let res = apply_headers(client.get(&url), headers)
@@ -1708,6 +1778,22 @@ pub fn delete_finished_files(video: &Path) -> Result<usize, String> {
     Ok(removed)
 }
 
+/// [`delete_finished_files`], then removes the episode folder and the title folder when they
+/// are empty. Only folders strictly inside `root` are removed, so a download made before the
+/// folder was changed, or a flat one, leaves its folder alone.
+pub fn delete_download_files(video: &Path, root: &Path) -> Result<usize, String> {
+    let removed = delete_finished_files(video)?;
+    if video.components().all(|c| c != std::path::Component::ParentDir) {
+        let episode = video.parent();
+        for dir in [episode, episode.and_then(Path::parent)].into_iter().flatten() {
+            if dir == root || !dir.starts_with(root) || std::fs::remove_dir(dir).is_err() {
+                break;
+            }
+        }
+    }
+    Ok(removed)
+}
+
 async fn download_stream_with_ffmpeg(
     job: &Job<'_>,
     url: &str,
@@ -1901,7 +1987,7 @@ async fn transfer<S>(
     pool: &SqlitePool,
     record: &DownloadRecord,
     source: S,
-    dir: Option<PathBuf>,
+    place: Place,
     work: &WorkFiles,
 ) -> Result<Finished, String>
 where
@@ -1910,14 +1996,16 @@ where
     let source = source.await?;
     let url = guarded_stream_url(&source.url)?;
 
-    let (audio, sub) = download_languages(&record.category, source.language.as_deref(), &source.subtitles);
+    let chosen = select_subtitles(&source.subtitles, source.subtitle_languages.as_deref());
+    let (audio, sub) = download_languages(&record.category, source.language.as_deref(), &chosen);
     if let Err(e) = db::set_download_languages(pool, &record.id, audio.as_deref(), sub.as_deref()).await {
         warn!("Could not save the languages of download {}: {}", record.id, e);
     }
 
-    let dir = match dir {
-        Some(dir) => dir,
-        None => tokio::task::spawn_blocking(|| {
+    let (root, nested) = match place {
+        Place::Flat(dir) => (dir, false),
+        Place::Under(root) => (root, true),
+        Place::Default => (tokio::task::spawn_blocking(|| {
             let dir = get_download_dir()?;
             // So startup can clean this folder up after the user has chosen another one.
             if let Ok(app) = db::get_app_dir() {
@@ -1927,8 +2015,9 @@ where
         })
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string())?, true),
     };
+    let dir = if nested { output_dir(&root, &record.series_title, record.episode_num) } else { root };
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Could not create the download folder {}: {}", dir.display(), e))?;
@@ -1948,7 +2037,7 @@ where
 
     let client = stream_client()?;
     let headers = request_headers(&source);
-    let subtitles = fetch_subtitles(&job, &client, &headers, &source.subtitles).await;
+    let subtitles = fetch_subtitles(&job, &client, &headers, &chosen).await;
 
     match classify_stream(&url, source.stream_type.as_deref()) {
         StreamKind::File => download_file(&job, &client, &url, &headers, &subtitles).await,
@@ -1968,13 +2057,21 @@ async fn cancelled(mut cancel: watch::Receiver<bool>) {
     }
 }
 
+/// Where a job saves: straight into a folder (old layout, tests), under a download folder in
+/// `<title>/Episode NN`, or under the configured download folder.
+enum Place {
+    Flat(PathBuf),
+    Under(PathBuf),
+    Default,
+}
+
 /// Runs one download from source resolution to the final row update. When `cancel` turns
 /// true the work is dropped (which kills ffmpeg) and the working files are removed.
 async fn run_job<S>(
     pool: &SqlitePool,
     record: &DownloadRecord,
     source: S,
-    dir: Option<PathBuf>,
+    place: Place,
     cancel: watch::Receiver<bool>,
 ) -> DownloadOutcome
 where
@@ -1992,7 +2089,7 @@ where
 
     let work = WorkFiles::default();
     let result = tokio::select! {
-        result = transfer(pool, record, source, dir, &work) => Some(result),
+        result = transfer(pool, record, source, place, &work) => Some(result),
         _ = cancelled(cancel) => None,
     };
     // Nothing of the transfer is running any more, so its leftovers can go. A network failure
@@ -2066,7 +2163,18 @@ pub async fn download_into(
     dir: &Path,
 ) -> DownloadOutcome {
     let (_keep_open, cancel) = watch::channel(false);
-    run_job(pool, record, async move { Ok(source) }, Some(dir.to_path_buf()), cancel).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel).await
+}
+
+/// Like [`download_into`], saving in `<root>/<title>/Episode NN` as new downloads do.
+pub async fn download_under(
+    pool: &SqlitePool,
+    record: &DownloadRecord,
+    source: DownloadSource,
+    root: &Path,
+) -> DownloadOutcome {
+    let (_keep_open, cancel) = watch::channel(false);
+    run_job(pool, record, async move { Ok(source) }, Place::Under(root.to_path_buf()), cancel).await
 }
 
 /// Like [`download_into`], stopping as soon as `cancel` holds `true`.
@@ -2077,7 +2185,7 @@ pub async fn download_into_cancellable(
     dir: &Path,
     cancel: watch::Receiver<bool>,
 ) -> DownloadOutcome {
-    run_job(pool, record, async move { Ok(source) }, Some(dir.to_path_buf()), cancel).await
+    run_job(pool, record, async move { Ok(source) }, Place::Flat(dir.to_path_buf()), cancel).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2098,7 +2206,7 @@ fn spawn_job<S>(
     pool: SqlitePool,
     record: DownloadRecord,
     source: S,
-    dir: Option<PathBuf>,
+    place: Place,
     permit: Option<OwnedSemaphorePermit>,
 ) where
     S: Future<Output = Result<DownloadSource, String>> + Send + 'static,
@@ -2116,7 +2224,7 @@ fn spawn_job<S>(
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let handle = tokio::spawn(async move {
         let _permit = permit;
-        run_job(&pool, &record, source, dir, cancel_rx).await;
+        run_job(&pool, &record, source, place, cancel_rx).await;
         lock(&ACTIVE).remove(&record.id);
     });
     active.insert(id, ActiveDownload { cancel: cancel_tx, handle });
@@ -2125,13 +2233,13 @@ fn spawn_job<S>(
 /// Starts downloading `source` for `record` in the background. The row of `record` must
 /// already exist with status `DOWNLOADING`.
 pub fn start_download(pool: SqlitePool, record: DownloadRecord, source: DownloadSource) {
-    spawn_job(pool, record, async move { Ok(source) }, None, None);
+    spawn_job(pool, record, async move { Ok(source) }, Place::Default, None);
 }
 
 /// [`start_download`] into `dir` instead of the download folder, for tests.
 #[doc(hidden)]
 pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
-    spawn_job(pool, record, async move { Ok(source) }, Some(dir), None);
+    spawn_job(pool, record, async move { Ok(source) }, Place::Flat(dir), None);
 }
 
 /// Puts a `FAILED` download back in the queue (Downloads › Try again). Any other row, or one
@@ -2240,7 +2348,7 @@ async fn queue_loop(app: tauri::AppHandle) {
                     pool.clone(),
                     record,
                     async move { resolve_queued_source(&resolver_app, &resolver_record).await },
-                    None,
+                    Place::Default,
                     Some(permit),
                 );
             }
@@ -2355,5 +2463,8 @@ async fn resolve_queued_source(app: &tauri::AppHandle, record: &DownloadRecord) 
         .ok_or_else(|| "No playable stream was found for this episode.".to_string())?;
     let mut source = DownloadSource::from_stream(stream, sources.subtitles.clone());
     source.language = sources.language.clone();
+    source.subtitle_languages = tokio::task::spawn_blocking(subtitle_languages_from_saved_settings)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(source)
 }

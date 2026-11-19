@@ -15,6 +15,7 @@ import { useUIStore } from '../stores/uiStore';
 import { errorMessage } from './ui/ErrorState';
 import { useFillerEpisodes } from '../hooks/useProviders';
 import { AUTO_PROVIDER, useSettings } from '../hooks/useSettings';
+import { playsFromFile } from '../lib/playSource';
 import { usePlugins, useStreamingProviders } from '../hooks/usePlugins';
 import { useLanguagePrefs } from '../hooks/useLanguagePrefs';
 import { groupByLanguage, pluginLanguages } from '../lib/languages';
@@ -504,8 +505,12 @@ export const EpisodeBrowser: React.FC<EpisodeBrowserProps> = ({
                 onSelectEpisode(
                   selectedEp,
                   category,
-                  // A file of the user's plays unless a streaming plugin was picked.
-                  isLocalEpisode(selectedEp.number) && (localActive || activeProvider === AUTO_PROVIDER || noPlugins)
+                  // A file plays unless the user picked another server in this list.
+                  playsFromFile({
+                    hasLocalFile: isLocalEpisode(selectedEp.number),
+                    explicitProvider: chosenProvider,
+                    rememberedProvider: defaultProvider,
+                  })
                     ? LOCAL_PROVIDER
                     : activeProvider
                 )

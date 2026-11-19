@@ -204,6 +204,7 @@ fn source(referer: Option<&str>, origin: Option<&str>, headers: &[(&str, &str)])
         headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>(),
         subtitles: Vec::new(),
         language: None,
+        subtitle_languages: None,
     }
 }
 

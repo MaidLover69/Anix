@@ -1518,6 +1518,8 @@
   "settings.couldNotTurnOn": "Could not turn {name} on",
   "settings.dohAutomatic": "Automatic",
   "settings.dohHint": "Resolve provider domains through an encrypted resolver instead of your ISP's DNS. Automatic uses your normal DNS until a site looks blocked, then the resolver for that site.",
+  "settings.downloadAllSubtitles": "Download all subtitle languages",
+  "settings.downloadAllSubtitlesHint": "Off: a download keeps only your subtitle languages (the source's default if none match). On: every language the source offers is saved.",
   "settings.downloadingRepo": "Downloading the repository and its plugins…",
   "settings.externalPlayer": "External player",
   "settings.externalPlayerHint": "Opens local files, finished downloads and “Open in external player”. It must be installed.",

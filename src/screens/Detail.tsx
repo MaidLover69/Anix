@@ -45,6 +45,7 @@ import { parseAnimeId } from '../lib/routes';
 import { detailScores } from '../lib/scores';
 import type { AnimeDetails, EpisodeItem as EpisodeItemType, FuzzyDate, Media } from '../types';
 import { formatNumber, locale, t, type TKey } from '../i18n';
+import { playsFromFile } from '../lib/playSource';
 
 function sentenceCase(value: string): string {
   const lower = value.replace(/_/g, ' ').toLowerCase();
@@ -433,10 +434,13 @@ const DetailContent: React.FC<{ id: string | undefined }> = ({ id }) => {
   const handlePlay = () => {
     const episode = continueTarget?.episode ?? firstEpisode;
     const provider = continueTarget ? historyProvider ?? AUTO_PROVIDER : defaultProvider;
-    // An episode with a file of the user's plays from it unless a streaming plugin was chosen.
-    const fromFile =
-      local.hasEpisode(episode) &&
-      (provider === AUTO_PROVIDER || continueTarget?.provider === LOCAL_PROVIDER || providers.none);
+    // An episode with a file plays from it; Continue and a remembered or preferred server too.
+    const fromFile = playsFromFile({
+      hasLocalFile: local.hasEpisode(episode),
+      explicitProvider: null,
+      rememberedProvider: provider,
+      preferredProvider: settings?.preferred_provider,
+    });
     navigate(
       watchPath(
         anilistId,

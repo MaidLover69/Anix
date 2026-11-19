@@ -1575,6 +1575,8 @@
   "settings.couldNotTurnOn": "Não foi possível ativar {name}",
   "settings.dohAutomatic": "Automático",
   "settings.dohHint": "Resolve os domínios dos provedores por um resolvedor criptografado em vez do DNS da sua operadora. O Automático usa seu DNS normal até um site parecer bloqueado e, então, o resolvedor para esse site.",
+  "settings.downloadAllSubtitles": "Baixar legendas de todos os idiomas",
+  "settings.downloadAllSubtitlesHint": "Desligado: um download mantém apenas os seus idiomas de legenda (a faixa padrão da fonte se nenhum coincidir). Ligado: todos os idiomas oferecidos pela fonte são salvos.",
   "settings.downloadingRepo": "Baixando o repositório e seus plugins…",
   "settings.externalPlayer": "Player externo",
   "settings.externalPlayerHint": "Abre arquivos locais, downloads concluídos e “Abrir no player externo”. Precisa estar instalado.",

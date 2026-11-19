@@ -6,7 +6,8 @@
 #
 # Unlike the AppImage, these packages bundle neither libmpv nor GStreamer: they use the
 # system's WebKitGTK and GStreamer (see "depends" in src-tauri/tauri.conf.json) and start with
-# the web player. A distribution's own mpv is usually built with GPL parts, which Anix refuses.
+# the web player. The system's libmpv is only recommended ("recommends"): with it, embedded mpv
+# can be picked in Settings, under the library's own licence, GPL or not.
 # Releases are built on Ubuntu 22.04 by .github/workflows/release.yml, so the packages run on
 # Ubuntu 22.04, Debian 12, Fedora 36 and newer. The files are copied to ../release/.
 set -euo pipefail

@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   streaming_resolution: 'auto',
   default_playback_speed: 1,
   download_dir: '',
+  download_all_subtitles: false,
   theme: DEFAULT_THEME,
   minimize_to_tray: false,
   start_with_desktop: false,

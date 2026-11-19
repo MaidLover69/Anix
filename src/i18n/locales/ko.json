@@ -1461,6 +1461,8 @@
   "settings.couldNotTurnOn": "{name}을(를) 켜지 못했어요",
   "settings.dohAutomatic": "자동",
   "settings.dohHint": "인터넷 제공업체의 DNS 대신 암호화된 리졸버로 제공처 도메인을 확인해요. 자동은 평소엔 일반 DNS를 쓰다가 사이트가 차단된 것 같으면 그 사이트만 리졸버를 써요.",
+  "settings.downloadAllSubtitles": "모든 자막 언어 다운로드",
+  "settings.downloadAllSubtitlesHint": "끔: 다운로드에는 설정한 자막 언어만 남깁니다(일치하는 것이 없으면 소스의 기본 자막). 켬: 소스가 제공하는 모든 언어를 저장합니다.",
   "settings.downloadingRepo": "저장소와 플러그인을 다운로드하는 중…",
   "settings.externalPlayer": "외부 플레이어",
   "settings.externalPlayerHint": "로컬 파일, 다 받은 다운로드, “외부 플레이어에서 열기”를 열어요. 설치돼 있어야 해요.",

@@ -1575,6 +1575,8 @@
   "settings.couldNotTurnOn": "Impossible d’activer {name}",
   "settings.dohAutomatic": "Automatique",
   "settings.dohHint": "Résoudre les domaines des fournisseurs via un résolveur chiffré plutôt que le DNS de votre FAI. Automatique utilise votre DNS habituel jusqu’à ce qu’un site semble bloqué, puis le résolveur pour ce site.",
+  "settings.downloadAllSubtitles": "Télécharger les sous-titres de toutes les langues",
+  "settings.downloadAllSubtitlesHint": "Désactivé : un téléchargement ne garde que vos langues de sous-titres (la piste par défaut de la source si aucune ne correspond). Activé : toutes les langues proposées par la source sont enregistrées.",
   "settings.downloadingRepo": "Téléchargement du dépôt et de ses plugins…",
   "settings.externalPlayer": "Lecteur externe",
   "settings.externalPlayerHint": "Ouvre les fichiers locaux, les téléchargements terminés et « Ouvrir dans le lecteur externe ». Il doit être installé.",

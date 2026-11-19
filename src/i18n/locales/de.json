@@ -1518,6 +1518,8 @@
   "settings.couldNotTurnOn": "{name} konnte nicht eingeschaltet werden",
   "settings.dohAutomatic": "Automatisch",
   "settings.dohHint": "Anbieter-Domains über einen verschlüsselten Resolver auflösen statt über das DNS deines Internetanbieters. „Automatisch“ nutzt dein normales DNS, bis eine Seite blockiert wirkt, und dann den Resolver für diese Seite.",
+  "settings.downloadAllSubtitles": "Alle Untertitelsprachen herunterladen",
+  "settings.downloadAllSubtitlesHint": "Aus: Ein Download behält nur deine Untertitelsprachen (die Standardspur der Quelle, wenn keine passt). An: Alle Sprachen der Quelle werden gespeichert.",
   "settings.downloadingRepo": "Repository und seine Plugins werden heruntergeladen…",
   "settings.externalPlayer": "Externer Player",
   "settings.externalPlayerHint": "Öffnet lokale Dateien, fertige Downloads und „In externem Player öffnen“. Er muss installiert sein.",

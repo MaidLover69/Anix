@@ -597,6 +597,7 @@ async fn hls_stream_is_muxed_with_headers_and_survives_a_bad_subtitle() {
             subtitle("/subs/es.srt", "Spanish", false),
         ],
         language: None,
+        subtitle_languages: None,
     };
 
     let outcome = downloads::download_into(&pool, &rec, src, tmp.path()).await;

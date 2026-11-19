@@ -2,7 +2,7 @@
 #
 # Repackages the release DEB built by .github/workflows/release.yml. Like the DEB and RPM it uses
 # the system's WebKitGTK and GStreamer and starts with the web player; the embedded mpv player
-# needs the AppImage, whose libmpv is an LGPL build. Data lives in the same folders as every
+# can be picked in Settings when the system's libmpv (optdepends) is installed. Data lives in the same folders as every
 # other Anix build (~/.config/anix, ~/.local/share/anix), so switching to it moves nothing.
 #
 # At each release: set pkgver, reset pkgrel to 1, run `updpkgsums` and
@@ -26,7 +26,7 @@ depends=(
   'xdg-utils'
 )
 optdepends=(
-  'mpv: open episodes in mpv'
+  'mpv: open episodes in mpv, and libmpv for the embedded player'
   'vlc: open episodes in VLC'
   'ffmpeg: download episodes that are streamed in parts (HLS)'
 )

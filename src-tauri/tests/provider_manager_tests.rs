@@ -987,3 +987,18 @@ async fn a_lookup_reports_each_extension_while_it_runs() {
     assert_eq!(of("progress-failing"), ["asking", "failed"]);
     assert_eq!(of("progress-working"), ["asking", "found"]);
 }
+
+#[tokio::test]
+async fn the_resolution_order_never_puts_an_unchecked_stream_before_the_verified_one() {
+    english_ui();
+    let host = host_with_good_stream().await;
+    let mut dead = hls(host.url("/dead/master.m3u8"));
+    dead.quality = Some("720p".to_string());
+    let mut good = hls(host.url("/hls/master.m3u8"));
+    good.quality = Some("1080p".to_string());
+    // 720p is wanted and listed first, but it fails its check: the working 1080p must lead.
+    let provider = Arc::new(MockProvider::new("one", Ok(vec![dead, good.clone()])));
+    let manager = manager_of(&[provider]).with_streaming_resolution("720");
+    let found = sources(&manager, 1.0, "sub", None).await.expect("a source");
+    assert_eq!(found.streams[0].url, good.url);
+}

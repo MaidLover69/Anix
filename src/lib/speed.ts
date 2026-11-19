@@ -17,8 +17,10 @@ export function stepSpeed(rate: number, direction: 1 | -1): number {
   const current = Number.isFinite(rate) && rate > 0 ? rate : 1;
   // Snap to the grid first, so 1.1 goes to 1.25 / 1, not 1.35 / 0.85.
   const snapped = direction > 0 ? Math.floor(current / SPEED_STEP + 1e-9) : Math.ceil(current / SPEED_STEP - 1e-9);
+  // A custom speed above 3× is never pulled down by "faster"; "slower" steps down the grid from it.
+  if (direction > 0 && current >= MAX_SPEED) return current;
   const next = (snapped + direction) * SPEED_STEP;
-  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, next));
+  return direction > 0 ? Math.min(MAX_SPEED, next) : Math.max(MIN_SPEED, next);
 }
 
 export function isFixedSpeed(rate: number): boolean {
@@ -37,6 +39,11 @@ export function parseCustomSpeed(input: unknown): number | null {
 /** Every episode starts at the default speed setting, never at the speed of the last one. */
 export function episodeStartRate(defaultSetting: unknown): number {
   return parseCustomSpeed(defaultSetting) ?? 1;
+}
+
+/** A new episode starts at the default; the same episode (a server switch, a reload) keeps its speed. */
+export function startRateFor(episodeKey: string, lastKey: string | null, currentRate: number, defaultSetting: unknown): number {
+  return episodeKey === lastKey && Number.isFinite(currentRate) && currentRate > 0 ? currentRate : episodeStartRate(defaultSetting);
 }
 
 export type SpeedSpot = 'spd05' | 'spd075' | 'spd125' | 'spd15' | 'spd2' | 'spd3' | 'spdCustom';

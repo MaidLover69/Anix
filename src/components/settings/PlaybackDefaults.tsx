@@ -45,12 +45,14 @@ export const PlaybackDefaults: React.FC<{
             max={CUSTOM_SPEED_MAX}
             step={CUSTOM_SPEED_STEP}
             value={typed ?? speed}
-            onChange={(e) => {
-              setTyped(e.target.value);
-              const next = parseCustomSpeed(e.target.value);
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            // Saved on Enter or leaving the field, not on every keystroke.
+            onBlur={() => {
+              const next = typed === null ? null : parseCustomSpeed(typed);
               if (next !== null) onChange('default_playback_speed', next);
+              setTyped(null);
             }}
-            onBlur={() => setTyped(null)}
             className="ui-select h-9 w-28 rounded-md bg-bg-input px-3 text-[13px] tabular-nums text-text-primary aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-red-400"
           />
         )}

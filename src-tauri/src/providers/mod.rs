@@ -74,6 +74,12 @@ pub trait AnimeProvider: Send + Sync {
         false
     }
 
+    /// True when the provider orders its streams by the wanted resolution before it checks
+    /// them, so the manager must not re-order them (an unchecked stream could pass a checked one).
+    fn orders_by_resolution(&self) -> bool {
+        false
+    }
+
     /// Identifies the provider's cached episode lists. A provider whose code can change while
     /// the app runs returns a different key for each version.
     fn cache_key(&self) -> String {

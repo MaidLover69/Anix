@@ -37,7 +37,6 @@ import { sendMpv, useMpvEngine } from '../../hooks/useEmbeddedMpv';
 import { useLanguagePrefs } from '../../hooks/useLanguagePrefs';
 import { useResumePosition } from '../../hooks/useLibrary';
 import { useMediaState } from '../../hooks/useMediaState';
-import { episodeStartRate } from '../../lib/speed';
 import { wantedHeight as wantedHeightOf } from '../../lib/resolution';
 import { supportsPictureInPicture, useMiniPlayer } from '../../hooks/useMiniPlayer';
 import { useMpris } from '../../hooks/useMpris';
@@ -251,7 +250,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onFail: onEngineFail,
   });
   const engine: PlayerEngine = isMpv ? mpvEngine : webEngine;
-  const media = useMediaState(videoRef, episodeStartRate(settings?.default_playback_speed));
+  const media = useMediaState(videoRef, `${anilistId}:${episodeNumber}`, settings?.default_playback_speed);
 
   // Watch together: a guest follows the host, so its play, pause, seek, speed and episode
   // steps are the host's; volume, subtitles and quality stay its own.

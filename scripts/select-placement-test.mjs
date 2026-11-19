@@ -38,4 +38,8 @@ for (let top = 0; top <= 770; top += 35) {
 // Sideways: kept inside the viewport.
 assert.equal(menuPlacement({ ...base, trigger: trigger(100, 130, 1000) }).left, 1100 - 200 - 8);
 assert.equal(menuPlacement({ ...base, trigger: trigger(100, 130, -5) }).left, 8);
+// End-edge alignment: the menu's right edge meets the trigger's (150 wide at 100 -> right edge 250), mirrored for RTL.
+assert.equal(menuPlacement({ ...base, trigger: trigger(100, 130), align: 'right' }).left, 50);
+assert.equal(menuPlacement({ ...base, trigger: trigger(100, 130), align: 'left' }).left, 100);
+assert.equal(menuPlacement({ ...base, trigger: trigger(100, 130, 20), align: 'right' }).left, 8, 'kept inside the viewport');
 console.log('select placement tests passed');

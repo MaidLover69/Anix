@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // #10 §3: fixed and custom speeds, the default speed, and the Meme mode High speed labels.
-// playerLogic.ts imports without extensions, so node cannot load it: the speed rules live in src/lib/speed.ts (playerLogic re-exports MIN_SPEED, MAX_SPEED, SPEED_STEP, stepSpeed from there).
+// playerLogic.ts imports without extensions, so node cannot load it: the speed rules live in src/lib/speed.ts (playerLogic re-exports stepSpeed from there).
 //   node --experimental-strip-types scripts/speed-test.mjs
 import assert from 'node:assert/strict';
 import {
   CUSTOM_SPEED_MAX, CUSTOM_SPEED_MIN, CUSTOM_SPEED_STEP, FIXED_SPEEDS, MAX_SPEED,
-  episodeStartRate, isFixedSpeed, parseCustomSpeed, speedSpot, stepSpeed,
+  episodeStartRate, isFixedSpeed, startRateFor, parseCustomSpeed, speedSpot, stepSpeed,
 } from '../src/lib/speed.ts';
 import { LINES } from '../src/lib/memeCatalogue.ts';
 
@@ -15,6 +15,11 @@ assert.equal(MAX_SPEED, 3);
 assert.equal(stepSpeed(2, 1), 2.25);
 assert.equal(stepSpeed(2.75, 1), 3);
 assert.equal(stepSpeed(3, 1), 3, '[ ] stop at 3');
+assert.equal(stepSpeed(3.5, 1), 3.5, 'faster never lowers a custom speed above 3');
+assert.equal(stepSpeed(3.5, -1), 3.25, 'slower steps down the grid');
+assert.equal(startRateFor('1:2', '1:2', 2.35, 1.5), 2.35, 'same episode keeps its speed');
+assert.equal(startRateFor('1:3', '1:2', 2.35, 1.5), 1.5, 'a new episode starts at the default');
+assert.equal(startRateFor('1:3', null, 2.35, undefined), 1, 'first player: default, 1 without a setting');
 assert.equal(stepSpeed(1, -1), 0.75);
 assert.equal(isFixedSpeed(1.5), true);
 assert.equal(isFixedSpeed(2.35), false);

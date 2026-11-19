@@ -78,7 +78,8 @@ pub enum Action {
     SetSpeed { value: f64 },
     /// `None` turns the track off.
     SetAudioTrack { id: Option<i64> },
-    /// The video track, which for an HLS stream is one of its resolutions.
+    /// The video track, which for an HLS stream is one of its resolutions. `None` is mpv's own
+    /// pick (`auto`), never "off".
     SetVideoTrack { id: Option<i64> },
     SetSubTrack { id: Option<i64> },
     /// The second subtitle, drawn at the top.
@@ -188,7 +189,7 @@ pub fn plan(action: &Action, proxy_base: &str) -> Result<Vec<Op>, String> {
         Action::SetMute { muted } => vec![Set("mute", yes_no(*muted))],
         Action::SetSpeed { value } => vec![Set("speed", format!("{:.3}", finite(*value, "Speed")?.clamp(0.25, 4.0)))],
         Action::SetAudioTrack { id } => vec![Set("aid", track(*id)?)],
-        Action::SetVideoTrack { id } => vec![Set("vid", track(*id)?)],
+        Action::SetVideoTrack { id } => vec![Set("vid", id.map_or_else(|| Ok("auto".to_string()), |id| track(Some(id)))?)],
         Action::SetSubTrack { id } => vec![Set("sid", track(*id)?)],
         Action::SetSecondarySubTrack { id } => vec![Set("secondary-sid", track(*id)?)],
         Action::SetSubDelay { seconds } => {

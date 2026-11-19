@@ -709,6 +709,9 @@ fn no_language_error(prefs: &LanguagePrefs, category: &Category) -> AppError {
 pub const NO_PLUGIN_MESSAGE: &str =
     "No streaming plugin is installed or enabled. Add or enable one in Settings → Plugins.";
 
+/// What a lookup that excludes providers fails with when it leaves none to ask.
+pub const NO_OTHER_PROVIDER_MESSAGE: &str = "Every plugin that could serve this episode has already been tried.";
+
 struct Inner {
     source: ProviderSource,
     /// `get_episodes` results per (provider cache key, AniList id).
@@ -1265,6 +1268,24 @@ impl ProviderManager {
         title_romaji: Option<String>,
         preferred_provider: Option<&str>,
     ) -> Result<SourcesResult, AppError> {
+        self.get_sources_for_episode_excluding(anilist_id, mal_id, episode_number, category_str, title_romaji, preferred_provider, &[])
+            .await
+    }
+
+    /// [`Self::get_sources_for_episode`] without the providers named in `excluded` (a download's
+    /// next try skips the ones that already failed it). The language tiers and the category stay
+    /// as they are; when nothing is left to ask, the error is [`NO_OTHER_PROVIDER_MESSAGE`].
+    #[allow(clippy::too_many_arguments)] // the lookup's own arguments plus the exclusions
+    pub async fn get_sources_for_episode_excluding(
+        &self,
+        anilist_id: i64,
+        mal_id: Option<i64>,
+        episode_number: f64,
+        category_str: &str,
+        title_romaji: Option<String>,
+        preferred_provider: Option<&str>,
+        excluded: &[String],
+    ) -> Result<SourcesResult, AppError> {
         note_lookup();
         let inner = &self.inner;
         let lineup = inner.lineup();
@@ -1310,6 +1331,17 @@ impl ProviderManager {
             }
         };
         let left_out = tiers.iter().map(|t| t.members.len()).sum::<usize>() < lineup.len();
+        let tiers: Vec<Tier> = tiers
+            .into_iter()
+            .map(|t| Tier {
+                language: t.language,
+                members: t.members.into_iter().filter(|&i| !excluded.iter().any(|e| e == lineup[i].name())).collect(),
+            })
+            .filter(|t| !t.members.is_empty())
+            .collect();
+        if tiers.is_empty() {
+            return Err(AppError::SourcesUnavailable(NO_OTHER_PROVIDER_MESSAGE.to_string()));
+        }
         let tiers = match preferred {
             Some(_) => tiers,
             None => skip_paused(tiers, &lineup),

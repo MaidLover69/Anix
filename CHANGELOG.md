@@ -9,6 +9,7 @@ Faster, sturdier downloads, more player and download settings, and more ways to 
 - An expired stream link is renewed from the extension and the download carries on with the pieces it already has. Every piece is checked before the episode is put together, so an error page or a cut-off file is fetched again instead of ending up in the video.
 - Large single files download in parts and resume where they stopped, also after a restart.
 - The download list shows the speed and the time left. New in Settings › Downloads: **Downloads at once** (1 to 3, 1 by default) and a **Speed limit** for all downloads together.
+- A queued download that fails is tried again by itself, up to three times in all (after half a minute, then after two minutes), each time with another stream: first the other servers of the same extension, then the next extension, always in the same sub or dub and your language order. While it waits it shows "Trying another stream (2 of 3)" and frees its place for other episodes. A full disk or a folder that cannot be written is not tried again.
 - The player's Download button now queues the episode like every other download.
 - A host that cannot be reached is looked up through DNS over HTTPS when that is on Automatic.
 

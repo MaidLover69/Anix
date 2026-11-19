@@ -6,7 +6,7 @@ name: Release AppImage, DEB and RPM
 # WebKitGTK 2.52 instead of 2.50). The in-app updater picks between them (version.json appimage_modern).
 # The files are kept as workflow artifacts for 30 days. Pushing a version tag (v1.3.2) also publishes
 # them as a GitHub release, with that version's CHANGELOG.md section as the notes, plus the Flatpak
-# preview when it installed and started.
+# preview when it installed and started. A tag with a dash (v1.4.2-rc1) publishes a pre-release for testing.
 on:
   push:
     branches: [main]
@@ -463,8 +463,10 @@ jobs:
       - name: Write the release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '$0 == "## " v {f=1; next} /^## /{if (f) exit} f' CHANGELOG.md > notes.md
-          [ -s notes.md ] || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
+          # A test tag (v1.4.2-rc1) is a pre-release with the notes of the version it tests.
+          release="${version%%-*}"
+          awk -v v="$release" '$0 == "## " v {f=1; next} /^## /{if (f) exit} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no '## $release' section"; exit 1; }
           cat dist-modern/SHA256SUMS dist/SHA256SUMS-packages >> dist/SHA256SUMS && rm dist/SHA256SUMS-packages
           if [ -f dist-flatpak/anix.flatpak ]; then
             mv dist-flatpak/anix.flatpak "dist/Anix_${version}_x86_64.flatpak"
@@ -477,6 +479,7 @@ jobs:
         with:
           name: Anix ${{ github.ref_name }}
           body_path: notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.AppImage
             dist-modern/*.AppImage

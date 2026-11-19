@@ -1,12 +1,33 @@
 # Changelog
 
-## 1.4.2 (unreleased)
+## 1.4.2
+
+Faster, sturdier downloads, more player and download settings, and more ways to build collections.
+
+### Downloads
+- Episodes download several pieces at a time, and a piece that fails is tried again by itself (waiting as long as the host asks), so a season downloads with no manual Try again. A host that refuses too many connections gets fewer, and Anix remembers that.
+- An expired stream link is renewed from the extension and the download carries on with the pieces it already has. Every piece is checked before the episode is put together, so an error page or a cut-off file is fetched again instead of ending up in the video.
+- Large single files download in parts and resume where they stopped, also after a restart.
+- The download list shows the speed and the time left. New in Settings › Downloads: **Downloads at once** (1 to 3, 1 by default) and a **Speed limit** for all downloads together.
+- The player's Download button now queues the episode like every other download.
+- A host that cannot be reached is looked up through DNS over HTTPS when that is on Automatic.
 
 ### Downloads and playing
 - Downloads are saved in a folder per title with a folder per episode (`Title/Episode 03`), and an empty folder left by a cancelled or failed download is tidied away. Downloads that were already queued or finished keep working where they are.
 - Subtitles: a download keeps the subtitle languages you prefer (Settings › Language) instead of every language, in your order, each as a file next to the video; a new switch in Settings › Downloads brings back "all languages".
 - Downloaded episodes play from their file, also from Continue, History and the Home banners; a server only wins when you pick it yourself.
 - RPM and DEB: the embedded mpv player now uses the system's mpv library (libmpv) when there is one, whatever its licence, and quietly uses the web player when there is none. The AppImage still carries its own.
+
+### Player and settings
+- **Streaming resolution** (Settings › Playback) and **Download resolution** (Settings › Downloads): Auto, 1080p, 720p, 480p or 360p. A source that lacks the size you picked uses the closest lower one, then the closest higher one.
+- **Default playback speed** (Settings › Playback): every episode starts at it. The speed menu keeps its steps from 0.5× to 3×, and **Custom** sets any speed from 0.5× to 4×. A speed changed while watching applies to that episode only, in both players and in the external mpv.
+- Drop-down menus open above the control when there is no room below, and no longer get cut off inside the sticky bar or dialogs.
+
+### Collections
+- Discover has a **Studio** filter, and **Save as collection** keeps it. It also works while AniList is down.
+- A franchise can be saved as a collection in watch order.
+- Collections show a collage of their covers.
+- When no catalogue can be reached, smart collections show their last result, library entries keep their title, cover and episode count, and saved pages say where and how long ago they came from. Covers and banners are kept on disk for this, up to a limit you set in Settings › System (200 MB by default, the oldest dropped first). List changes made offline are counted and sent when you are back online.
 
 ## 1.4.1
 

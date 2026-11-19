@@ -1,6 +1,6 @@
 [package]
 name = "anix"
-version = "1.4.1"
+version = "1.4.2"
 description = "Anix - anime catalogue, tracker, library and player for Linux"
 authors = ["Anix"]
 license = "MIT"

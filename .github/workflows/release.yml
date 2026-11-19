@@ -242,11 +242,15 @@ jobs:
 
       - name: Start it
         run: |
-          apt-get install -y -qq --no-install-recommends xvfb dbus-x11 libgl1-mesa-dri
-          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          apt-get install -y -qq --no-install-recommends xvfb dbus-x11 libgl1-mesa-dri procps
+          # Starts and keeps running on a bare X server: a missing library or a crash at start shows here.
+          # With a system libmpv installed, the first start uses embedded mpv and asks Keep / Switch
+          # back; unanswered, Anix switches to the web player and restarts itself after 15 s. So an
+          # anix process (not necessarily the first pid) must run after 40 s, with no panic logged.
           home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
-          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
-            || { cat "$home/out.log"; exit 1; }
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & sleep 40; pgrep -x anix >/dev/null; ok=$?; pkill -x anix; exit $ok' \
+            || { cat "$home/out.log"; cat "$home/.local/share/anix/anix.log"; exit 1; }
+          ! grep -n panic "$home/.local/share/anix/anix.log"
 
   rpm-check:
     name: Install the RPM on Fedora
@@ -271,11 +275,15 @@ jobs:
 
       - name: Start it
         run: |
-          dnf install -y -q xorg-x11-server-Xvfb dbus-daemon mesa-dri-drivers
-          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          dnf install -y -q xorg-x11-server-Xvfb dbus-daemon mesa-dri-drivers procps-ng
+          # Starts and keeps running on a bare X server: a missing library or a crash at start shows here.
+          # With a system libmpv installed, the first start uses embedded mpv and asks Keep / Switch
+          # back; unanswered, Anix switches to the web player and restarts itself after 15 s. So an
+          # anix process (not necessarily the first pid) must run after 40 s, with no panic logged.
           home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
-          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
-            || { cat "$home/out.log"; exit 1; }
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & sleep 40; pgrep -x anix >/dev/null; ok=$?; pkill -x anix; exit $ok' \
+            || { cat "$home/out.log"; cat "$home/.local/share/anix/anix.log"; exit 1; }
+          ! grep -n panic "$home/.local/share/anix/anix.log"
 
   # The RPM lists Fedora's and openSUSE's package names as alternatives ("(a or b)"). Reported, not
   # required: openSUSE is not a target the release waits for.
@@ -318,7 +326,7 @@ jobs:
 
       - name: Build and install it
         run: |
-          pacman -Syu --noconfirm --quiet base-devel xorg-server-xvfb dbus mesa
+          pacman -Syu --noconfirm --quiet base-devel xorg-server-xvfb dbus mesa procps-ng
           version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' package.json | head -1)"
           useradd -m builder
           work=/home/builder/pkg && mkdir -p "$work"
@@ -337,10 +345,14 @@ jobs:
 
       - name: Start it
         run: |
-          # Starts and keeps running for 20 s on a bare X server: a missing library or a crash at start shows here.
+          # Starts and keeps running on a bare X server: a missing library or a crash at start shows here.
+          # With a system libmpv installed, the first start uses embedded mpv and asks Keep / Switch
+          # back; unanswered, Anix switches to the web player and restarts itself after 15 s. So an
+          # anix process (not necessarily the first pid) must run after 40 s, with no panic logged.
           home="$(mktemp -d)"; Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & sleep 2
-          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & pid=$!; sleep 20; kill -0 $pid; ok=$?; kill $pid; exit $ok' \
-            || { cat "$home/out.log"; exit 1; }
+          DISPLAY=:99 HOME="$home" dbus-run-session -- sh -c 'anix >"$HOME/out.log" 2>&1 & sleep 40; pgrep -x anix >/dev/null; ok=$?; pkill -x anix; exit $ok' \
+            || { cat "$home/out.log"; cat "$home/.local/share/anix/anix.log"; exit 1; }
+          ! grep -n panic "$home/.local/share/anix/anix.log"
 
   # Preview: the DEB repackaged on the GNOME runtime (packaging/flatpak), installed and started.
   flatpak:

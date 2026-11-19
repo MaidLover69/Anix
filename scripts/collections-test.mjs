@@ -173,6 +173,8 @@ const KEYS = [
 const dir = new URL('../src/i18n/locales/', import.meta.url);
 for (const name of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
   const strings = JSON.parse(readFileSync(new URL(name, dir), 'utf8'));
-  for (const key of KEYS) assert.ok(typeof strings[key] === 'string' && strings[key].trim(), `${name} lacks ${key}`);
+  // A text, or the plural forms of one (the age and count texts are plural keys).
+  const filled = (v) => (typeof v === 'string' ? v : Object.values(v ?? {}).join('')).trim() !== '';
+  for (const key of KEYS) assert.ok(filled(strings[key]), `${name} lacks ${key}`);
 }
 console.log('collections tests passed');

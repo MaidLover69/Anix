@@ -2207,5 +2207,36 @@
   "downloadSettings.speedLimitHint": "Limita a velocidade combinada de todos os downloads.",
   "downloadSettings.speedLimitOff": "Desligado",
   "downloads.speed": "{speed}/s",
-  "downloads.speedLeft": "{speed}/s · faltam {time}"
+  "downloads.speedLeft": "{speed}/s · faltam {time}",
+  "discover.studio": "Estúdio",
+  "discover.studioPlaceholder": "ex.: MAPPA",
+  "smartCollection.studio": "Estúdio: {name}",
+  "smartCollection.franchise": "Franquia na ordem de exibição",
+  "franchise.partial": "Algumas entradas desta franquia ainda não são conhecidas. A ordem se completa quando um catálogo estiver acessível.",
+  "franchise.unavailable": "A ordem de exibição não pode ser lida enquanto nenhum catálogo estiver acessível.",
+  "offline.savedPage": "Página salva de {source}, {age}",
+  "offline.savedPageNoSource": "Página salva, {age}",
+  "offline.ageNow": "agora mesmo",
+  "offline.ageMinutes": {
+    "one": "há {count} minuto",
+    "many": "há {count} minutos",
+    "other": "há {count} minutos"
+  },
+  "offline.ageHours": {
+    "one": "há {count} hora",
+    "many": "há {count} horas",
+    "other": "há {count} horas"
+  },
+  "offline.ageDays": {
+    "one": "há {count} dia",
+    "many": "há {count} dias",
+    "other": "há {count} dias"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} alteração da lista será enviada quando você estiver online",
+    "many": "{count} alterações da lista serão enviadas quando você estiver online",
+    "other": "{count} alterações da lista serão enviadas quando você estiver online"
+  },
+  "settings.imageCacheLimit": "Capas e banners salvos",
+  "settings.imageCacheLimitHint": "Quanto espaço em disco as imagens podem usar para continuar visíveis offline. As mais antigas são removidas primeiro. Em uso:"
 }

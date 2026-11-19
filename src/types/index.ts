@@ -522,6 +522,8 @@ export interface AppSettings {
   /** Embedded mpv keeps its cache on disk (in the app's cache folder), up to `player_disk_cache_mb`. */
   player_disk_cache: boolean;
   player_disk_cache_mb: number;
+  /** Covers and banners saved on disk for offline use, up to this many MB (oldest dropped first). */
+  image_cache_mb: number;
   /** Home row ids in the order chosen in Settings › Appearance; rows missing here follow. */
   home_row_order?: string[];
   /** Home rows (built-in or added) that are kept but not shown. */

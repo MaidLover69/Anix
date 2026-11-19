@@ -2207,5 +2207,36 @@
   "downloadSettings.speedLimitHint": "Limita la velocidad combinada de todas las descargas.",
   "downloadSettings.speedLimitOff": "Desactivado",
   "downloads.speed": "{speed}/s",
-  "downloads.speedLeft": "{speed}/s · quedan {time}"
+  "downloads.speedLeft": "{speed}/s · quedan {time}",
+  "discover.studio": "Estudio",
+  "discover.studioPlaceholder": "p. ej. MAPPA",
+  "smartCollection.studio": "Estudio: {name}",
+  "smartCollection.franchise": "Franquicia en orden de visionado",
+  "franchise.partial": "Aún no se conocen algunas entradas de esta franquicia. El orden se completa cuando se pueda acceder a un catálogo.",
+  "franchise.unavailable": "No se puede leer el orden de visionado mientras no haya acceso a ningún catálogo.",
+  "offline.savedPage": "Página guardada de {source}, {age}",
+  "offline.savedPageNoSource": "Página guardada, {age}",
+  "offline.ageNow": "ahora mismo",
+  "offline.ageMinutes": {
+    "one": "hace {count} minuto",
+    "many": "hace {count} minutos",
+    "other": "hace {count} minutos"
+  },
+  "offline.ageHours": {
+    "one": "hace {count} hora",
+    "many": "hace {count} horas",
+    "other": "hace {count} horas"
+  },
+  "offline.ageDays": {
+    "one": "hace {count} día",
+    "many": "hace {count} días",
+    "other": "hace {count} días"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} cambio de la lista se enviará cuando estés en línea",
+    "many": "{count} cambios de la lista se enviarán cuando estés en línea",
+    "other": "{count} cambios de la lista se enviarán cuando estés en línea"
+  },
+  "settings.imageCacheLimit": "Portadas y banners guardados",
+  "settings.imageCacheLimitHint": "Espacio en disco que pueden usar las imágenes para verse sin conexión. Se borran primero las más antiguas. En uso:"
 }

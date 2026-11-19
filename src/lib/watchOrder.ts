@@ -87,3 +87,22 @@ export function watchOrder(
   entries.forEach((entry, i) => (entry.number = i + 1));
   return { entries, missing };
 }
+
+export type OrderState = 'complete' | 'partial' | 'unavailable';
+
+/**
+ * [`watchOrder`] with how much of it is known. `unavailable`: nothing is known about the anime
+ * (its details could not be read). `partial`: the relations are unknown (a catalogue that does
+ * not give them) or the chain still has ends that are not fetched. `complete`: relations read
+ * and nothing missing, which includes an anime with no franchise at all.
+ */
+export function franchiseOrder(
+  currentId: number,
+  details: Map<number, OrderDetails>
+): { state: OrderState; entries: OrderEntry[]; missing: number[] } {
+  const current = details.get(currentId);
+  if (!current) return { state: 'unavailable', entries: [], missing: [currentId] };
+  const { entries, missing } = watchOrder(currentId, details);
+  const relationsKnown = current.relations != null;
+  return { state: relationsKnown && missing.length === 0 ? 'complete' : 'partial', entries, missing };
+}

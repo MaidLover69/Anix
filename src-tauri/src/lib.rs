@@ -11,6 +11,7 @@ pub mod downloads;
 pub mod embedded_mpv;
 pub mod error;
 pub mod i18n;
+pub mod image_cache;
 pub mod local_library;
 pub mod local_media;
 pub mod migration;
@@ -235,6 +236,12 @@ pub fn run() {
             commands::get_watch_history,
             commands::update_watch_progress,
             commands::add_to_watchlist,
+            commands::saved_page_note,
+            commands::waiting_list_changes,
+            commands::save_image,
+            commands::saved_image,
+            commands::image_cache_size,
+            commands::trim_image_cache,
             commands::remove_from_watchlist,
             commands::get_watchlist,
             commands::set_episodes_watched,

@@ -2459,5 +2459,48 @@
   "downloadSettings.speedLimitHint": "يحدّ من السرعة المجمّعة لكل التنزيلات.",
   "downloadSettings.speedLimitOff": "إيقاف",
   "downloads.speed": "{speed}/ث",
-  "downloads.speedLeft": "{speed}/ث · متبقي {time}"
+  "downloads.speedLeft": "{speed}/ث · متبقي {time}",
+  "discover.studio": "الاستوديو",
+  "discover.studioPlaceholder": "مثل MAPPA",
+  "smartCollection.studio": "الاستوديو: {name}",
+  "smartCollection.franchise": "السلسلة بترتيب المشاهدة",
+  "franchise.partial": "بعض أجزاء هذه السلسلة غير معروفة بعد. يكتمل الترتيب عند توفر الوصول إلى فهرس.",
+  "franchise.unavailable": "لا يمكن قراءة ترتيب المشاهدة ما دام لا يمكن الوصول إلى أي فهرس.",
+  "offline.savedPage": "صفحة محفوظة من {source}، {age}",
+  "offline.savedPageNoSource": "صفحة محفوظة، {age}",
+  "offline.ageNow": "الآن",
+  "offline.ageMinutes": {
+    "zero": "منذ {count} دقيقة",
+    "one": "منذ {count} دقيقة",
+    "two": "منذ دقيقتين",
+    "few": "منذ {count} دقائق",
+    "many": "منذ {count} دقيقة",
+    "other": "منذ {count} دقيقة"
+  },
+  "offline.ageHours": {
+    "zero": "منذ {count} ساعة",
+    "one": "منذ {count} ساعة",
+    "two": "منذ ساعتين",
+    "few": "منذ {count} ساعات",
+    "many": "منذ {count} ساعة",
+    "other": "منذ {count} ساعة"
+  },
+  "offline.ageDays": {
+    "zero": "منذ {count} يوم",
+    "one": "منذ {count} يوم",
+    "two": "منذ يومين",
+    "few": "منذ {count} أيام",
+    "many": "منذ {count} يومًا",
+    "other": "منذ {count} يوم"
+  },
+  "offline.changesWaiting": {
+    "zero": "{count} تغيير في القائمة سيُرسل عند الاتصال",
+    "one": "تغيير واحد في القائمة ({count}) سيُرسل عند الاتصال",
+    "two": "{count} تغييران في القائمة سيُرسلان عند الاتصال",
+    "few": "{count} تغييرات في القائمة ستُرسل عند الاتصال",
+    "many": "{count} تغييرًا في القائمة سيُرسل عند الاتصال",
+    "other": "{count} تغيير في القائمة سيُرسل عند الاتصال"
+  },
+  "settings.imageCacheLimit": "الأغلفة واللافتات المحفوظة",
+  "settings.imageCacheLimitHint": "مقدار مساحة القرص التي يمكن للصور استخدامها لتبقى ظاهرة دون اتصال. تُحذف الأقدم أولًا. المستخدم الآن:"
 }

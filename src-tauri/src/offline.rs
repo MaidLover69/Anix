@@ -38,10 +38,13 @@ pub enum Kind {
     Details,
     Search,
     Schedule,
+    /// A smart collection's last result, keyed by the collection's id. Never aged out: it is
+    /// the collection's only copy while every catalogue is down.
+    Collection,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::Home, Kind::Details, Kind::Search, Kind::Schedule];
+    pub const ALL: [Kind; 5] = [Kind::Home, Kind::Details, Kind::Search, Kind::Schedule, Kind::Collection];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -49,6 +52,7 @@ impl Kind {
             Kind::Details => "details",
             Kind::Search => "search",
             Kind::Schedule => "schedule",
+            Kind::Collection => "collection",
         }
     }
 
@@ -59,33 +63,57 @@ impl Kind {
             Kind::Details => 400,
             Kind::Search => 40,
             Kind::Schedule => 21,
+            Kind::Collection => 500,
         }
     }
 }
 
-/// Creates the table; called from `db::run_migrations`.
+/// Creates the table and adds the `source` column of 1.4.2 to an older one; called from
+/// `db::run_migrations`.
 pub async fn create_tables(conn: &mut SqliteConnection) -> Result<(), AppError> {
-    sqlx::query(SCHEMA).execute(conn).await?;
+    sqlx::query(SCHEMA).execute(&mut *conn).await?;
+    let has_source = sqlx::query("PRAGMA table_info(anilist_cache)")
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .any(|r| r.get::<String, _>("name") == "source");
+    if !has_source {
+        sqlx::query("ALTER TABLE anilist_cache ADD COLUMN source TEXT").execute(&mut *conn).await?;
+    }
     Ok(())
 }
 
 /// Saves `data` under `(kind, key)` at `now` and prunes that kind.
 pub async fn store_at(pool: &SqlitePool, kind: Kind, key: &str, data: &Value, now: i64) -> Result<(), AppError> {
+    store_from_at(pool, kind, key, data, None, now).await
+}
+
+/// Like [`store_at`], and notes which catalogue the answer came from.
+pub async fn store_from_at(
+    pool: &SqlitePool,
+    kind: Kind,
+    key: &str,
+    data: &Value,
+    source: Option<&str>,
+    now: i64,
+) -> Result<(), AppError> {
     let text = serde_json::to_string(data)?;
     let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
-        INSERT INTO anilist_cache (kind, key, data, cached_at)
-        VALUES (?1, ?2, ?3, ?4)
+        INSERT INTO anilist_cache (kind, key, data, cached_at, source)
+        VALUES (?1, ?2, ?3, ?4, ?5)
         ON CONFLICT(kind, key) DO UPDATE SET
             data = excluded.data,
-            cached_at = excluded.cached_at
+            cached_at = excluded.cached_at,
+            source = excluded.source
         "#,
     )
     .bind(kind.as_str())
     .bind(key)
     .bind(text)
     .bind(now)
+    .bind(source)
     .execute(&mut *tx)
     .await?;
     prune_kind(&mut tx, kind, now).await?;
@@ -95,6 +123,33 @@ pub async fn store_at(pool: &SqlitePool, kind: Kind, key: &str, data: &Value, no
 
 pub async fn store(pool: &SqlitePool, kind: Kind, key: &str, data: &Value) -> Result<(), AppError> {
     store_at(pool, kind, key, data, current_unix_timestamp()).await
+}
+
+pub async fn store_from(pool: &SqlitePool, kind: Kind, key: &str, data: &Value, source: Option<&str>) -> Result<(), AppError> {
+    store_from_at(pool, kind, key, data, source, current_unix_timestamp()).await
+}
+
+/// A saved copy with where it came from and how old it is, for the "saved page" note.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedPage {
+    pub value: Value,
+    pub saved_at: i64,
+    pub source: Option<String>,
+    /// Seconds since it was saved; never negative.
+    pub age_s: i64,
+}
+
+pub async fn load_saved(pool: &SqlitePool, kind: Kind, key: &str, now: i64) -> Result<Option<SavedPage>, AppError> {
+    let row = sqlx::query("SELECT data, cached_at, source FROM anilist_cache WHERE kind = ?1 AND key = ?2")
+        .bind(kind.as_str())
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| {
+        let saved_at: i64 = r.get("cached_at");
+        let value = serde_json::from_str::<Value>(&r.get::<String, _>("data")).ok()?;
+        Some(SavedPage { value, saved_at, source: r.get("source"), age_s: (now - saved_at).max(0) })
+    }))
 }
 
 /// The saved copy and when it was saved (Unix seconds).
@@ -128,11 +183,13 @@ pub async fn load_all(pool: &SqlitePool, kind: Kind) -> Result<Vec<(String, Valu
 }
 
 async fn prune_kind(conn: &mut SqliteConnection, kind: Kind, now: i64) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM anilist_cache WHERE kind = ?1 AND cached_at < ?2")
-        .bind(kind.as_str())
-        .bind(now - MAX_AGE_S)
-        .execute(&mut *conn)
-        .await?;
+    if kind != Kind::Collection {
+        sqlx::query("DELETE FROM anilist_cache WHERE kind = ?1 AND cached_at < ?2")
+            .bind(kind.as_str())
+            .bind(now - MAX_AGE_S)
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query(
         r#"
         DELETE FROM anilist_cache WHERE kind = ?1 AND key NOT IN (
@@ -153,7 +210,7 @@ pub async fn prune(pool: &SqlitePool, now: i64) -> Result<(), AppError> {
     for kind in Kind::ALL {
         prune_kind(&mut tx, kind, now).await?;
     }
-    sqlx::query("DELETE FROM anilist_cache WHERE kind NOT IN ('home', 'details', 'search', 'schedule')")
+    sqlx::query("DELETE FROM anilist_cache WHERE kind NOT IN ('home', 'details', 'search', 'schedule', 'collection')")
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -206,6 +263,20 @@ pub fn search_key(
         hide_adult
     ])
     .to_string()
+}
+
+/// The cache key of a search request: [`search_key`], plus the newer filters when the request
+/// has any, so rows saved by 1.4.x for plain searches still match.
+pub fn query_key(q: &crate::catalogue::model::SearchQuery) -> String {
+    let mut key = search_key(q.query.as_deref(), &q.genres, q.format.as_deref(), q.status.as_deref(), q.sort.as_deref(), q.page, q.per_page, q.hide_adult);
+    let studio = q.studio().map(str::to_lowercase);
+    if !q.exclude_genres.is_empty() || q.min_score.is_some() || q.year.is_some() || q.season.is_some() || studio.is_some() {
+        key.push_str(&serde_json::json!([q.exclude_genres, q.min_score, q.year, q.season]).to_string());
+        if let Some(studio) = studio {
+            key.push_str(&serde_json::json!([studio]).to_string());
+        }
+    }
+    key
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]

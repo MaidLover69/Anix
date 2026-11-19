@@ -2123,5 +2123,32 @@
   "downloadSettings.speedLimitHint": "Caps the combined speed of all downloads.",
   "downloadSettings.speedLimitOff": "Off",
   "downloads.speed": "{speed}/s",
-  "downloads.speedLeft": "{speed}/s · {time} left"
+  "downloads.speedLeft": "{speed}/s · {time} left",
+  "discover.studio": "Studio",
+  "discover.studioPlaceholder": "e.g. MAPPA",
+  "smartCollection.studio": "Studio: {name}",
+  "smartCollection.franchise": "Franchise in watch order",
+  "franchise.partial": "Some entries of this franchise are not known yet. The order fills in when a catalogue can be reached.",
+  "franchise.unavailable": "The watch order cannot be read while no catalogue can be reached.",
+  "offline.savedPage": "Saved page from {source}, {age}",
+  "offline.savedPageNoSource": "Saved page, {age}",
+  "offline.ageNow": "just now",
+  "offline.ageMinutes": {
+    "one": "{count} minute ago",
+    "other": "{count} minutes ago"
+  },
+  "offline.ageHours": {
+    "one": "{count} hour ago",
+    "other": "{count} hours ago"
+  },
+  "offline.ageDays": {
+    "one": "{count} day ago",
+    "other": "{count} days ago"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} list change will be sent when you are online",
+    "other": "{count} list changes will be sent when you are online"
+  },
+  "settings.imageCacheLimit": "Saved covers and banners",
+  "settings.imageCacheLimitHint": "How much disk space pictures may use so they still show offline. The oldest are removed first. Used now:"
 }

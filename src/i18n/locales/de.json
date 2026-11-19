@@ -2123,5 +2123,32 @@
   "downloadSettings.speedLimitHint": "Begrenzt die gemeinsame Geschwindigkeit aller Downloads.",
   "downloadSettings.speedLimitOff": "Aus",
   "downloads.speed": "{speed}/s",
-  "downloads.speedLeft": "{speed}/s · noch {time}"
+  "downloads.speedLeft": "{speed}/s · noch {time}",
+  "discover.studio": "Studio",
+  "discover.studioPlaceholder": "z. B. MAPPA",
+  "smartCollection.studio": "Studio: {name}",
+  "smartCollection.franchise": "Franchise in Anschaureihenfolge",
+  "franchise.partial": "Einige Einträge dieser Franchise sind noch nicht bekannt. Die Reihenfolge wird ergänzt, sobald ein Katalog erreichbar ist.",
+  "franchise.unavailable": "Die Anschaureihenfolge kann nicht gelesen werden, solange kein Katalog erreichbar ist.",
+  "offline.savedPage": "Gespeicherte Seite von {source}, {age}",
+  "offline.savedPageNoSource": "Gespeicherte Seite, {age}",
+  "offline.ageNow": "gerade eben",
+  "offline.ageMinutes": {
+    "one": "vor {count} Minute",
+    "other": "vor {count} Minuten"
+  },
+  "offline.ageHours": {
+    "one": "vor {count} Stunde",
+    "other": "vor {count} Stunden"
+  },
+  "offline.ageDays": {
+    "one": "vor {count} Tag",
+    "other": "vor {count} Tagen"
+  },
+  "offline.changesWaiting": {
+    "one": "{count} Listenänderung wird gesendet, sobald du online bist",
+    "other": "{count} Listenänderungen werden gesendet, sobald du online bist"
+  },
+  "settings.imageCacheLimit": "Gespeicherte Cover und Banner",
+  "settings.imageCacheLimitHint": "Wie viel Speicherplatz Bilder belegen dürfen, damit sie offline sichtbar bleiben. Die ältesten werden zuerst entfernt. Aktuell belegt:"
 }

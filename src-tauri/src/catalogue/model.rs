@@ -44,9 +44,16 @@ pub struct SearchQuery {
     /// Season year and AniList season (`WINTER`, `SPRING`, `SUMMER`, `FALL`).
     pub year: Option<i32>,
     pub season: Option<String>,
+    /// Studio name; only AniList and Shikimori can filter by it.
+    pub studio: Option<String>,
 }
 
 impl SearchQuery {
+    /// The studio filter, trimmed; blank is none.
+    pub fn studio(&self) -> Option<&str> {
+        self.studio.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    }
+
     /// A plain list, as the home screen asks for.
     pub fn list(sort: &str, per_page: i32, hide_adult: bool) -> Self {
         SearchQuery {

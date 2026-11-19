@@ -322,7 +322,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = ({ playlist, onBack
       </header>
 
       {smart && playlist.rule ? (
-        <SmartCollectionResults rule={playlist.rule} />
+        <SmartCollectionResults rule={playlist.rule} playlistId={playlist.id} />
       ) : (
       <>
       <div className="flex flex-wrap items-center gap-2">

@@ -1429,8 +1429,9 @@ async fn studio_search_falls_back_to_shikimori_and_maps_ids_through_the_id_table
         _ => down(500),
     });
     let catalogue = catalogue(&server, CatalogueSource::Auto).await;
-    // Only "Sousou no Frieren" (MAL 52991) of the two answers has the "Award Winning" genre.
-    let q = SearchQuery { studio: Some("mappa".into()), genres: vec!["Award Winning".into()], page: 1, per_page: 24, hide_adult: true, ..Default::default() };
+    // Only "Sousou no Frieren" (MAL 52991) of the two answers is from 2023. (The filter is a year
+    // because "Award Winning" is not an AniList genre, so the genre mapping drops it.)
+    let q = SearchQuery { studio: Some("mappa".into()), year: Some(2023), page: 1, per_page: 24, hide_adult: true, ..Default::default() };
     let served = catalogue.search(&q).await.unwrap();
     assert_eq!(served.source, Source::Shikimori);
     assert!(served.fallback, "AniList was asked first");

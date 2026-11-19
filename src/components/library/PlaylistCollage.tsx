@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ListVideo } from 'lucide-react';
+import { collageCovers } from '../../lib/collage';
 
 interface PlaylistCollageProps {
   covers: string[] | null | undefined;
@@ -14,9 +15,8 @@ interface PlaylistCollageProps {
 export const PlaylistCollage: React.FC<PlaylistCollageProps> = ({ covers, className = '' }) => {
   const [failed, setFailed] = useState<string[]>([]);
 
-  const usable = Array.from(new Set(covers ?? []))
-    .filter((cover) => cover && !failed.includes(cover))
-    .slice(0, 4);
+  // Covers that failed are dropped before the first four are taken, so a bad one makes room.
+  const usable = collageCovers((covers ?? []).filter((cover) => !failed.includes(cover)));
 
   if (usable.length === 0) {
     return (

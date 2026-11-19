@@ -425,7 +425,36 @@ impl AniListClient {
         Ok(Some(parse_media_list_context(media)))
     }
 
+    /// A studio's titles in one request; the other filters are applied here with `keeps`
+    /// (`Studio.media` has no filters of its own). An unknown studio is an empty list.
+    async fn search_studio(&self, studio: &str, q: &crate::catalogue::model::SearchQuery) -> Result<Vec<Media>, AppError> {
+                let gql_query = format!(
+            r#"
+            query ($studio: String, $page: Int, $perPage: Int, $sort: [MediaSort]) {{
+                Studio(search: $studio) {{
+                    media(page: $page, perPage: $perPage, sort: $sort) {{
+                        nodes {{
+                            {}
+                        }}
+                    }}
+                }}
+            }}
+            "#,
+            MEDIA_FRAGMENT
+        );
+        let body = json!({
+            "query": gql_query,
+            "variables": { "studio": studio, "page": q.page.max(1), "perPage": q.per_page.clamp(1, 50), "sort": [q.sort()] }
+        });
+        let data = self.graphql(&body, None).await?;
+        let nodes = data["Studio"]["media"]["nodes"].as_array().cloned().unwrap_or_default();
+        Ok(nodes.iter().filter_map(|n| parse_media_json(n).ok()).filter(|m| q.keeps(m)).collect())
+    }
+
     pub async fn search(&self, q: &crate::catalogue::model::SearchQuery) -> Result<Vec<Media>, AppError> {
+        if let Some(studio) = q.studio() {
+            return self.search_studio(studio, q).await;
+        }
         let gql_query = format!(
             r#"
             query ($page: Int, $perPage: Int, $search: String, $genre_in: [String], $genre_not_in: [String], $format: MediaFormat, $status: MediaStatus, $sort: [MediaSort], $isAdult: Boolean, $averageScore_greater: Int, $seasonYear: Int, $season: MediaSeason) {{

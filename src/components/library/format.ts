@@ -29,6 +29,7 @@ export function formatBytes(bytes: number | null | undefined): string {
   const gb = bytes / (1024 * 1024 * 1024);
   const oneDecimal = { minimumFractionDigits: 1, maximumFractionDigits: 1 };
   if (gb >= 1) return t('libraryFormat.gigabytes', { size: formatNumber(gb, oneDecimal) });
+  if (bytes < 1024 * 1024) return t('libraryFormat.kilobytes', { size: formatNumber(bytes / 1024, { maximumFractionDigits: 0 }) });
   return t('libraryFormat.megabytes', { size: formatNumber(bytes / (1024 * 1024), oneDecimal) });
 }
 

@@ -482,7 +482,7 @@ export interface AppSettings {
   download_all_subtitles: boolean;
   /** Episodes that download at once (1 to 3). */
   max_parallel_downloads: number;
-  /** Combined speed limit of all downloads in KB/s; 0 is off. */
+  /** Combined speed limit of all downloads in KiB/s (1024 bytes, despite the key's name); 0 is off. */
   download_speed_limit_kbps: number;
   /** A built-in theme id (see `theme/themes.ts`). */
   theme: ThemeId;

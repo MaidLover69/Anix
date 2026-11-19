@@ -949,6 +949,7 @@
   "libraryFormat.formatTvShort": "تلفزيوني قصير",
   "libraryFormat.gigabytes": "{size} غيغابايت",
   "libraryFormat.megabytes": "{size} ميغابايت",
+  "libraryFormat.kilobytes": "{size} كيلوبايت",
   "localFilesTab.all": "الكل",
   "localFilesTab.changeMatch": "غيّر المطابقة",
   "localFilesTab.chooseAnother": "اختر مجلدًا آخر",

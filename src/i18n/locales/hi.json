@@ -861,6 +861,7 @@
   "libraryFormat.formatTvShort": "टीवी शॉर्ट",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "सभी",
   "localFilesTab.changeMatch": "मिलान बदलें",
   "localFilesTab.chooseAnother": "दूसरा फ़ोल्डर चुनें",

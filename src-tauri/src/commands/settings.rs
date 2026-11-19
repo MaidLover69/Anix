@@ -122,6 +122,8 @@ pub async fn save_settings(app: tauri::AppHandle, mut settings: Value) -> Result
         write_settings_file(&path, &settings)?;
         stored.get("app_language") != settings.get("app_language")
     };
+    // Downloads already running pick up a changed speed limit.
+    crate::downloads::engine::LIMITER.set_limit(crate::downloads::engine::speed_limit_bps(&settings));
     // The release-notifications switch lives in settings; apply it right away.
     crate::notifier::replan();
     crate::system::apply(&app, crate::system::SystemSettings::from_json(&settings));

@@ -861,6 +861,7 @@
   "libraryFormat.formatTvShort": "TV-Kurzserie",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "Alle",
   "localFilesTab.changeMatch": "Zuordnung ändern",
   "localFilesTab.chooseAnother": "Anderen Ordner wählen",

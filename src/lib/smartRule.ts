@@ -88,16 +88,17 @@ export function discoverLink(rule: string): string {
 /** The largest id a franchise rule may name (AniList ids and stand-ins are far below it). */
 const MAX_ID = 1e12;
 
-/** The rule of a franchise collection: the watch order of the franchise this anime belongs to. */
+/** The rule of a franchise collection: the watch order of the franchise this anime belongs to (empty for an id that cannot be real). */
 export function ruleForFranchise(id: number): string {
-  if (!Number.isInteger(id) || id <= 0 || id > MAX_ID) throw new Error('A franchise rule needs a positive anime id');
+  // Not an error to throw: this runs while rendering. Stand-in ids of other catalogues are negative.
+  if (!Number.isInteger(id) || id === 0 || Math.abs(id) > MAX_ID) return '';
   return `franchise=${id}`;
 }
 
 /** The anime a franchise rule names, or null for any other rule (or an id that cannot be real). */
 export function franchiseFromRule(rule: string): number | null {
   const value = new URLSearchParams(rule).get('franchise');
-  if (!value || !/^\d+$/.test(value)) return null;
+  if (!value || !/^-?\d+$/.test(value)) return null;
   const id = Number(value);
-  return id > 0 && id <= MAX_ID ? id : null;
+  return id !== 0 && Math.abs(id) <= MAX_ID ? id : null;
 }

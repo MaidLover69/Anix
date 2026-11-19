@@ -17,6 +17,37 @@ pub const SETTING_KEY: &str = "image_cache_mb";
 pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
 
+/// The picture at `url`, or none when it is not a picture, the answer is not a success, or it is
+/// larger than `max` bytes (judged by `Content-Length`, then by what actually arrives).
+pub async fn fetch_bytes(client: &reqwest::Client, url: &str, max: usize) -> Result<Option<Vec<u8>>, String> {
+    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let is_image = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("image/"));
+    if !response.status().is_success() || !is_image || response.content_length().is_some_and(|n| n > max as u64) {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
+}
+
+/// `fetch_bytes` for an address from the catalogues or an extension: public hosts only, also
+/// across redirects.
+pub async fn fetch_public(url: &str, max: usize) -> Result<Option<Vec<u8>>, String> {
+    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+    crate::clients::net_guard::check_public_url(&parsed)?;
+    let client = crate::clients::net_guard::public_http_client().map_err(|e| e.to_string())?;
+    fetch_bytes(&client, url, max).await
+}
+
 /// The limit in bytes from the settings object: the default when the key is missing or not a
 /// number, and always within the allowed range.
 pub fn limit_bytes(settings: &Value) -> u64 {

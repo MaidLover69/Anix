@@ -112,6 +112,7 @@ export const WatchlistTab: React.FC<WatchlistTabProps> = ({ query }) => {
                 cover: item.cover,
                 format: item.format,
                 averageScore: item.average_score,
+                episodes: item.episodes,
               })}
             />
           ))}

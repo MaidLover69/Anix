@@ -160,6 +160,8 @@ export const Discover: React.FC = () => {
   const status = oneOf(searchParams.get('status'), statuses, '');
   const sort = oneOf(searchParams.get('sort'), sorts, DEFAULT_SORT);
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
+  const [studioText, setStudioText] = useState(studio);
+  useEffect(() => setStudioText(studio), [studio]); // the URL changed (back button, reset)
   const rareFilterSet = !!(format || status || season || year || minScore || studio);
   const [moreOpen, setMoreOpen] = useState(rareFilterSet);
   // A link or the palette can set one while the screen is open: unfold so no active filter is hidden.
@@ -342,7 +344,8 @@ export const Discover: React.FC = () => {
       {t('discover.anilistOnly')}
     </span>
   ) : null;
-  const mayHaveNext = animeList.length >= PER_PAGE || (!!fallback && animeList.length > 0);
+  // shortcut: a studio page is cut down after AniList answers, so a short page may still have a next one.
+  const mayHaveNext = animeList.length >= PER_PAGE || (!!studio && animeList.length > 0) || (!!fallback && animeList.length > 0);
   // Past the first page the pager always shows, so an empty or failed page still has a way back.
   const showPager = page > 1 || (!isError && mayHaveNext);
 
@@ -486,13 +489,13 @@ export const Discover: React.FC = () => {
             {(year || season) && anilistOnly}
             <CustomSelect aria-label={t('discover.minimumScore')} className="min-w-36 max-w-64" value={minScore} onChange={(val) => setParam('score', val)} options={minScores} />
             {minScore && anilistOnly}
-            {/* Committed on Enter or when the box loses focus; `key` resets it when the URL changes. */}
+            {/* Committed on Enter or when the box loses focus. */}
             <input
-              key={studio}
               type="text"
               aria-label={t('discover.studio')}
               placeholder={t('discover.studioPlaceholder')}
-              defaultValue={studio}
+              value={studioText}
+              onChange={(e) => setStudioText(e.target.value)}
               maxLength={80}
               autoComplete="off"
               spellCheck={false}

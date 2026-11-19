@@ -236,6 +236,14 @@ pub async fn saved_page_note(state: State<'_, AppState>, kind: String, key: Stri
 /// How many anime have list changes that wait to be sent to the connected services.
 #[tauri::command]
 pub async fn waiting_list_changes(state: State<'_, AppState>) -> Result<usize, String> {
+    // Nothing waits to be sent when no tracker account is connected.
+    let store = accounts::store::AccountStore::open_default()?;
+    let connected = [accounts::oauth::Service::AniList, accounts::oauth::Service::Mal, accounts::oauth::Service::Comick]
+        .into_iter()
+        .any(|service| store.is_connected(service));
+    if !connected {
+        return Ok(0);
+    }
     accounts::sync::waiting_changes(&state.pool).await.map_err(|e| e.to_string())
 }
 

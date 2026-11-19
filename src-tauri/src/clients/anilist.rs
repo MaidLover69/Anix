@@ -392,6 +392,15 @@ pub struct AniListClient {
     url: String,
 }
 
+/// Whether a title (romaji, English, native) or a synonym of an AniList media node contains the
+/// text, ignoring case.
+fn title_has(node: &Value, text: &str) -> bool {
+    let text = text.to_lowercase();
+    let names = ["romaji", "english", "native"].iter().filter_map(|k| node["title"][*k].as_str());
+    let synonyms = node["synonyms"].as_array().into_iter().flatten().filter_map(Value::as_str);
+    names.chain(synonyms).any(|name| name.to_lowercase().contains(&text))
+}
+
 impl AniListClient {
     pub fn new(client: Client) -> Self {
         Self::with_base_url(client, ANILIST_GRAPHQL_URL)
@@ -435,6 +444,7 @@ impl AniListClient {
                     media(page: $page, perPage: $perPage, sort: $sort) {{
                         nodes {{
                             {}
+                            synonyms
                         }}
                     }}
                 }}
@@ -448,7 +458,12 @@ impl AniListClient {
         });
         let data = self.graphql(&body, None).await?;
         let nodes = data["Studio"]["media"]["nodes"].as_array().cloned().unwrap_or_default();
-        Ok(nodes.iter().filter_map(|n| parse_media_json(n).ok()).filter(|m| q.keeps(m)).collect())
+        Ok(nodes
+            .iter()
+            .filter(|n| q.text().is_none_or(|t| title_has(n, t)))
+            .filter_map(|n| parse_media_json(n).ok())
+            .filter(|m| q.keeps(m))
+            .collect())
     }
 
     pub async fn search(&self, q: &crate::catalogue::model::SearchQuery) -> Result<Vec<Media>, AppError> {

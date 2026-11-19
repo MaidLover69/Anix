@@ -1397,6 +1397,30 @@ async fn studio_search_asks_anilist_for_the_studio_and_applies_the_other_filters
 }
 
 #[tokio::test]
+async fn studio_search_with_text_keeps_only_titles_or_synonyms_that_contain_it() {
+    let server = serve(|method, url, _| match (method, url) {
+        ("POST", "/anilist") => {
+            let mut a = studio_media(1, &["Action"], "TV", 2023);
+            a["title"] = json!({ "romaji": "Jujutsu Kaisen", "english": "Sorcery Fight", "native": "呪術廻戦" });
+            let mut b = studio_media(2, &["Action"], "TV", 2023);
+            b["synonyms"] = json!(["JJK Prequel"]);
+            let c = studio_media(3, &["Action"], "TV", 2023);
+            (200, json!({ "data": { "Studio": { "media": { "nodes": [a, b, c] } } } }).to_string())
+        }
+        _ => down(500),
+    });
+    let catalogue = catalogue(&server, CatalogueSource::Auto).await;
+    let ids = |text: &str| {
+        let q = SearchQuery { studio: Some("MAPPA".into()), query: Some(text.into()), page: 1, per_page: 24, ..Default::default() };
+        let catalogue = &catalogue;
+        async move { catalogue.search(&q).await.unwrap().value.iter().map(|m| m.id).collect::<Vec<_>>() }
+    };
+    assert_eq!(ids("sorcery").await, vec![1], "english title, any case");
+    assert_eq!(ids("jjk").await, vec![2], "synonym");
+    assert_eq!(ids("呪術").await, vec![1], "native title");
+}
+
+#[tokio::test]
 async fn studio_search_of_a_studio_anilist_does_not_know_is_nothing_found_not_an_error() {
     let server = serve(|method, url, _| match (method, url) {
         ("POST", "/anilist") => (200, r#"{"data":{"Studio":null}}"#.to_string()),

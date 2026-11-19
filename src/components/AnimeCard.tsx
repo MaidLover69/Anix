@@ -83,6 +83,7 @@ export const AnimeCard: React.FC<AnimeCardProps> = ({
       cover: coverUrl,
       format: media.format,
       averageScore: media.average_score,
+      episodes: media.episodes,
       inWatchlist,
     });
   };

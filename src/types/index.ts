@@ -279,6 +279,8 @@ export interface WatchlistEntry {
   status: ListStatusValue;
   /** False while a status chosen here waits to be sent to the connected lists. */
   synced: boolean;
+  /** Episode count saved with the entry; null until a source has told it. */
+  episodes: number | null;
 }
 
 /** A watchlist status, in AniList vocabulary. */

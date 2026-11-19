@@ -62,10 +62,14 @@ assert.equal(searchInvokeArgs({}).studio, null, 'no studio sends null, as the ot
 assert.equal(ruleForFranchise(154587), 'franchise=154587');
 assert.equal(franchiseFromRule('franchise=154587'), 154587);
 assert.equal(franchiseFromRule('genre=Action'), null);
-for (const bad of ['franchise=0', 'franchise=-4', 'franchise=abc', 'franchise=1.5', 'franchise=99999999999999', 'franchise=']) {
+for (const bad of ['franchise=0', 'franchise=-0', 'franchise=--4', 'franchise=abc', 'franchise=1.5', 'franchise=99999999999999', 'franchise=']) {
   assert.equal(franchiseFromRule(bad), null, bad);
 }
-assert.throws(() => ruleForFranchise(0), 'only a real id makes a rule');
+assert.equal(ruleForFranchise(0), '', 'no rule for an id that cannot be real, and no throw');
+assert.equal(ruleForFranchise(1.5), '');
+// A stand-in id of another catalogue (MAL 52991) is negative and must round-trip.
+assert.equal(ruleForFranchise(-100052991), 'franchise=-100052991');
+assert.equal(franchiseFromRule(ruleForFranchise(-100052991)), -100052991);
 // A franchise rule is not a Discover filter: it never turns into a search.
 assert.deepEqual(Object.values(searchFromRule('franchise=1')).filter((v) => v !== undefined), []);
 

@@ -144,6 +144,14 @@ async fn every_list_change_made_while_offline_is_counted_as_waiting_to_sync() {
     // ... and a second change to anime 1 counts once, per anime.
     sync::queue_watched_episode(&pool, 1, 5.0).await.unwrap();
     assert_eq!(sync::waiting_changes(&pool).await.unwrap(), 2);
+    // A stand-in id that was merged into its real anime is not a change of its own.
+    sync::set_status(&pool, -100000007, "Seven", None, None, None, "PLANNING").await.unwrap();
+    assert_eq!(sync::waiting_changes(&pool).await.unwrap(), 3);
+    sqlx::query("INSERT INTO catalogue_merged_ids (stand_in, anilist_id, merged_at) VALUES (-100000007, 7, 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sync::waiting_changes(&pool).await.unwrap(), 2);
 }
 
 // ------------------------------------------------------------------ covers and banners on disk
@@ -305,4 +313,35 @@ async fn the_new_migrations_only_add_to_a_real_1_4_database() {
         assert!(now.is_some_and(|now| now >= *n), "{} lost rows: {} -> {:?}", table, n, now);
     }
     let _ = fs::remove_dir_all(dir);
+}
+
+// ------------------------------------------------------------------ pictures are fetched safely
+
+fn serve_once(content_type: &'static str, body: Vec<u8>) -> String {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().to_ip().unwrap().port();
+    std::thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let header = tiny_http::Header::from_bytes("Content-Type", content_type).unwrap();
+            let _ = request.respond(tiny_http::Response::from_data(body.clone()).with_header(header));
+        }
+    });
+    format!("http://127.0.0.1:{port}/cover.jpg")
+}
+
+#[tokio::test]
+async fn a_private_or_loopback_picture_address_is_refused_before_any_request() {
+    let url = serve_once("image/jpeg", vec![1, 2, 3]);
+    assert!(image_cache::fetch_public(&url, 1024).await.is_err());
+    assert!(image_cache::fetch_public("http://192.168.1.10/a.jpg", 1024).await.is_err());
+}
+
+#[tokio::test]
+async fn an_oversized_or_non_picture_answer_is_not_kept() {
+    let client = reqwest::Client::new();
+    let ok = serve_once("image/jpeg", vec![7; 100]);
+    assert_eq!(image_cache::fetch_bytes(&client, &ok, 1024).await.unwrap().map(|b| b.len()), Some(100));
+    assert_eq!(image_cache::fetch_bytes(&client, &ok, 50).await.unwrap(), None, "over the limit");
+    let html = serve_once("text/html", vec![7; 10]);
+    assert_eq!(image_cache::fetch_bytes(&client, &html, 1024).await.unwrap(), None, "not a picture");
 }

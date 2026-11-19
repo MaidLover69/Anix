@@ -883,6 +883,7 @@
   "libraryFormat.formatTvShort": "TV breve",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "Tutti",
   "localFilesTab.changeMatch": "Cambia abbinamento",
   "localFilesTab.chooseAnother": "Scegli un’altra cartella",

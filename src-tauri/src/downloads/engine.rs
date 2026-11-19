@@ -13,7 +13,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinSet;
 
@@ -21,6 +21,8 @@ use tokio::task::JoinSet;
 pub const MAX_SEGMENT_CONNECTIONS: usize = 8;
 /// Successes in a row that earn a host one more connection.
 pub const SUCCESSES_PER_STEP: u32 = 8;
+/// Steps of `SUCCESSES_PER_STEP` successes at a host's ceiling that raise the ceiling by one.
+const CEILING_RELAX_STEPS: u32 = 32;
 /// Longest a single segment request may take, headers and body together.
 const SEGMENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// A `Retry-After` longer than this is not waited for in full.
@@ -48,6 +50,8 @@ pub enum FetchError {
     Integrity(String),
     /// A local file could not be read or written.
     Io(String),
+    /// The file changed on the server while it was being fetched in parts: start again from byte 0.
+    Changed,
     /// The body is a playlist, so ffmpeg should read the URL itself (`"hls"` or `"dash"`).
     Manifest(&'static str),
 }
@@ -57,6 +61,7 @@ impl std::fmt::Display for FetchError {
         match self {
             FetchError::Connect(e) | FetchError::Integrity(e) | FetchError::Io(e) => f.write_str(e),
             FetchError::Timeout => f.write_str("The stream host did not answer in time."),
+            FetchError::Changed => f.write_str("The file changed on the server while it was downloading."),
             FetchError::Status { code, .. } => write!(f, "HTTP {}", code),
             FetchError::Manifest(kind) => write!(f, "The body is a {} playlist.", kind),
         }
@@ -106,7 +111,7 @@ pub fn backoff_delay(policy: &RetryPolicy, attempt: u32, retry_after: Option<Dur
     doubled.max(retry_after.unwrap_or_default().min(MAX_RETRY_AFTER)) + Duration::from_millis(jitter_ms)
 }
 
-async fn wait_before_retry(policy: &RetryPolicy, attempt: u32, error: &FetchError) {
+pub(super) async fn wait_before_retry(policy: &RetryPolicy, attempt: u32, error: &FetchError) {
     let retry_after = match error {
         FetchError::Status { retry_after, .. } => *retry_after,
         _ => None,
@@ -137,10 +142,16 @@ struct HostState {
     limit: usize,
     successes: u32,
     ceiling: Option<usize>,
+    /// Halved already and not grown since: pushback from requests that started under the old
+    /// limit says nothing new.
+    halved: bool,
+    /// Steps of successes spent at the ceiling.
+    capped_steps: u32,
 }
 
 /// How many requests to run at once per host: starts low, grows after a run of successes, is
-/// halved when the host pushes back, and never climbs back to the level it refused.
+/// halved (once per level) when the host pushes back, and held below the level it refused until
+/// a long run of successes at the ceiling shows the host has relaxed.
 #[derive(Debug)]
 pub struct HostLimits {
     start: usize,
@@ -155,7 +166,7 @@ impl HostLimits {
     }
 
     fn state(&self, host: &str) -> HostState {
-        lock(&self.hosts).get(host).copied().unwrap_or(HostState { limit: self.start, successes: 0, ceiling: None })
+        lock(&self.hosts).get(host).copied().unwrap_or(HostState { limit: self.start, successes: 0, ceiling: None, halved: false, capped_steps: 0 })
     }
 
     pub fn limit(&self, host: &str) -> usize {
@@ -171,17 +182,31 @@ impl HostLimits {
         state.successes += 1;
         if state.successes >= SUCCESSES_PER_STEP {
             state.successes = 0;
-            state.limit = (state.limit + 1).min(self.max).min(state.ceiling.unwrap_or(self.max));
+            if state.limit < state.ceiling.unwrap_or(self.max).min(self.max) {
+                state.limit += 1;
+                state.halved = false;
+            } else if let Some(ceiling) = state.ceiling {
+                state.capped_steps += 1;
+                if state.capped_steps >= CEILING_RELAX_STEPS {
+                    state.capped_steps = 0;
+                    state.ceiling = (ceiling + 1 < self.max).then_some(ceiling + 1);
+                }
+            }
         }
         lock(&self.hosts).insert(host.to_string(), state);
     }
 
     pub fn record_pressure(&self, host: &str) {
         let mut state = self.state(host);
+        if state.halved {
+            return;
+        }
         let refused = state.limit.saturating_sub(1).max(1);
         state.ceiling = Some(state.ceiling.map_or(refused, |c| c.min(refused)));
         state.limit = (state.limit / 2).max(1);
+        state.halved = true;
         state.successes = 0;
+        state.capped_steps = 0;
         lock(&self.hosts).insert(host.to_string(), state);
     }
 }
@@ -213,18 +238,12 @@ fn has_ts_sync(body: &[u8]) -> bool {
 /// Ok for the body of one media segment: not empty, as long as announced, not a web page or
 /// JSON error, and starting like MPEG-TS or an fMP4 box.
 pub fn check_segment(body: &[u8], content_length: Option<u64>, content_type: Option<&str>) -> Result<(), String> {
-    if body.is_empty() {
-        return Err("A segment of the stream is empty.".to_string());
-    }
-    if let Some(expected) = content_length.filter(|len| *len != body.len() as u64) {
-        return Err(format!("A segment of the stream is incomplete: received {} of {} bytes.", body.len(), expected));
-    }
-    let kind = content_type.map(str::to_ascii_lowercase).unwrap_or_default();
+    check_encrypted_segment(body, content_length, content_type)?;
     let head = String::from_utf8_lossy(&body[..body.len().min(64)]).trim_start().to_ascii_lowercase();
-    if kind.contains("text/html") || head.starts_with("<!doctype") || head.starts_with("<html") {
+    if head.starts_with("<!doctype") || head.starts_with("<html") {
         return Err("The stream host returned a web page instead of a video.".to_string());
     }
-    if kind.contains("json") || head.starts_with('{') || head.starts_with('[') {
+    if head.starts_with('{') || head.starts_with('[') {
         return Err("The stream host returned an error message instead of a video.".to_string());
     }
     let fmp4 = body.len() >= 8 && matches!(&body[4..8], b"ftyp" | b"styp" | b"moof");
@@ -233,6 +252,25 @@ pub fn check_segment(body: &[u8], content_length: Option<u64>, content_type: Opt
     } else {
         Err("A segment of the stream is not video data.".to_string())
     }
+}
+
+/// Ok for the body of an AES-128 encrypted segment: ciphertext has no recognisable bytes, so
+/// only its size and content type are checked.
+pub fn check_encrypted_segment(body: &[u8], content_length: Option<u64>, content_type: Option<&str>) -> Result<(), String> {
+    if body.is_empty() {
+        return Err("A segment of the stream is empty.".to_string());
+    }
+    if let Some(expected) = content_length.filter(|len| *len != body.len() as u64) {
+        return Err(format!("A segment of the stream is incomplete: received {} of {} bytes.", body.len(), expected));
+    }
+    let kind = content_type.map(str::to_ascii_lowercase).unwrap_or_default();
+    if kind.contains("text/html") {
+        return Err("The stream host returned a web page instead of a video.".to_string());
+    }
+    if kind.contains("json") {
+        return Err("The stream host returned an error message instead of a video.".to_string());
+    }
+    Ok(())
 }
 
 /// Ok for an AES-128 key: exactly 16 bytes.
@@ -249,27 +287,35 @@ fn is_key_file(path: &Path) -> bool {
     path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("key"))
 }
 
-fn check_file(path: &Path, body: &[u8], len: Option<u64>, kind: Option<&str>) -> Result<(), String> {
+fn check_file(path: &Path, encrypted: bool, body: &[u8], len: Option<u64>, kind: Option<&str>) -> Result<(), String> {
     if is_key_file(path) {
         check_aes_key(body)
+    } else if encrypted {
+        check_encrypted_segment(body, len, kind)
     } else {
         check_segment(body, len, kind)
     }
 }
 
 /// Whether the file left by an earlier run is a complete, plausible segment.
-fn saved_file_ok(path: &Path) -> bool {
+fn saved_file_ok(path: &Path, encrypted: bool) -> bool {
     use std::io::Read;
     let Ok(mut file) = std::fs::File::open(path) else { return false };
     let mut head = Vec::new();
     if file.by_ref().take(4096).read_to_end(&mut head).is_err() {
         return false;
     }
-    check_file(path, &head, None, None).is_ok()
+    check_file(path, encrypted, &head, None, None).is_ok()
 }
 
 /// Ok when every file exists and passes the segment check; the message names the first bad one.
 pub fn verify_segments_before_mux(paths: &[PathBuf]) -> Result<(), String> {
+    verify_files_before_mux(paths, &[])
+}
+
+/// `verify_segments_before_mux` where `encrypted[i]` says path `i` is AES-128 ciphertext (a
+/// missing entry means it is not).
+pub fn verify_files_before_mux(paths: &[PathBuf], encrypted: &[bool]) -> Result<(), String> {
     for (index, path) in paths.iter().enumerate() {
         let head = std::fs::File::open(path).and_then(|file| {
             use std::io::Read;
@@ -279,7 +325,7 @@ pub fn verify_segments_before_mux(paths: &[PathBuf]) -> Result<(), String> {
         match head {
             Err(e) => return Err(format!("A segment of the stream is missing: segment {} ({}).", index, e)),
             Ok(head) => {
-                if let Err(reason) = check_file(path, &head, None, None) {
+                if let Err(reason) = check_file(path, encrypted.get(index).copied().unwrap_or(false), &head, None, None) {
                     return Err(format!("A segment of the stream is incomplete: segment {}. {}", index, reason));
                 }
             }
@@ -422,7 +468,8 @@ pub fn parallel_downloads(settings: &serde_json::Value) -> usize {
         .map_or(1, |n| (n as usize).clamp(1, PARALLEL_DOWNLOADS_MAX))
 }
 
-/// `download_speed_limit_kbps` in bytes per second; `None` (off) when unset, 0 or negative.
+/// `download_speed_limit_kbps` in bytes per second. The key's value is in KiB/s (1024 bytes),
+/// whatever its name says; `None` (off) when unset, 0 or negative.
 pub fn speed_limit_bps(settings: &serde_json::Value) -> Option<u64> {
     settings.get("download_speed_limit_kbps").and_then(|v| v.as_u64()).filter(|k| *k > 0).map(|k| k.saturating_mul(1024))
 }
@@ -459,8 +506,37 @@ fn with_headers(mut request: RequestBuilder, headers: &[(String, String)]) -> Re
     request
 }
 
-fn retry_after_of(res: &Response) -> Option<Duration> {
-    res.headers().get(RETRY_AFTER)?.to_str().ok()?.trim().parse::<u64>().ok().map(Duration::from_secs)
+pub(super) fn retry_after_of(res: &Response) -> Option<Duration> {
+    parse_retry_after(res.headers().get(RETRY_AFTER)?.to_str().ok()?, SystemTime::now())
+}
+
+/// Seconds since 1970 of an HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
+fn http_date_secs(value: &str) -> Option<u64> {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let mut parts = value.split_once(',')?.1.split_whitespace();
+    let day: u64 = parts.next()?.parse().ok()?;
+    let name = parts.next()?;
+    let month = MONTHS.iter().position(|m| m.eq_ignore_ascii_case(name))? as u64 + 1;
+    let year: i64 = parts.next()?.parse().ok()?;
+    let mut clock = parts.next()?.split(':').map(|p| p.parse::<u64>().ok());
+    let (h, m, s) = (clock.next()??, clock.next()??, clock.next()??);
+    // Days since 1970 from the civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400) as u64);
+    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let days = era * 146097 + (yoe * 365 + yoe / 4 - yoe / 100 + doy) as i64 - 719468;
+    Some(u64::try_from(days).ok()? * 86400 + h * 3600 + m * 60 + s)
+}
+
+/// A `Retry-After` value: whole seconds, or an HTTP date (the wait until then, none if past).
+/// `backoff_delay` caps how long is waited.
+pub fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = UNIX_EPOCH + Duration::from_secs(http_date_secs(value)?);
+    Some(at.duration_since(now).unwrap_or_default())
 }
 
 fn header_text(res: &Response, name: reqwest::header::HeaderName) -> Option<String> {
@@ -468,7 +544,7 @@ fn header_text(res: &Response, name: reqwest::header::HeaderName) -> Option<Stri
 }
 
 /// One request for a whole small file, checked by `path`'s kind.
-async fn attempt_file(client: &Client, url: &str, headers: &[(String, String)], path: &Path) -> Result<Vec<u8>, FetchError> {
+async fn attempt_file(client: &Client, url: &str, headers: &[(String, String)], path: &Path, encrypted: bool) -> Result<Vec<u8>, FetchError> {
     let request = async {
         let res = with_headers(client.get(url), headers).send().await.map_err(map_reqwest)?;
         if !res.status().is_success() {
@@ -476,7 +552,7 @@ async fn attempt_file(client: &Client, url: &str, headers: &[(String, String)], 
         }
         let (len, kind) = (res.content_length(), header_text(&res, CONTENT_TYPE));
         let body = res.bytes().await.map_err(map_reqwest)?;
-        check_file(path, &body, len, kind.as_deref()).map_err(FetchError::Integrity)?;
+        check_file(path, encrypted, &body, len, kind.as_deref()).map_err(FetchError::Integrity)?;
         Ok(body.to_vec())
     };
     tokio::time::timeout(SEGMENT_TIMEOUT, request).await.unwrap_or(Err(FetchError::Timeout))
@@ -489,12 +565,13 @@ async fn fetch_with_retry(
     headers: &[(String, String)],
     policy: &RetryPolicy,
     path: &Path,
+    encrypted: bool,
     limits: Option<&HostLimits>,
 ) -> Result<Vec<u8>, FetchError> {
     let host = host_key(url).unwrap_or_default();
     let mut attempt = 0;
     loop {
-        let error = match attempt_file(client, url, headers, path).await {
+        let error = match attempt_file(client, url, headers, path, encrypted).await {
             Ok(body) => return Ok(body),
             Err(e) => e,
         };
@@ -512,7 +589,7 @@ async fn fetch_with_retry(
 
 /// One segment, with retry and backoff; 403 and 404 come back at once (the link expired).
 pub async fn fetch_segment(client: &Client, url: &str, headers: &[(String, String)], policy: &RetryPolicy) -> Result<Vec<u8>, FetchError> {
-    fetch_with_retry(client, url, headers, policy, Path::new("segment"), None).await
+    fetch_with_retry(client, url, headers, policy, Path::new("segment"), false, None).await
 }
 
 async fn save_file(path: &Path, body: &[u8]) -> Result<(), FetchError> {
@@ -528,10 +605,12 @@ async fn fetch_pass(
     client: &Client,
     urls: &[String],
     paths: &[PathBuf],
+    encrypted: &[bool],
     options: &SegmentOptions,
     meter: Option<&SpeedMeter>,
 ) -> Result<(), FetchError> {
-    let mut pending: VecDeque<usize> = (0..urls.len()).filter(|i| !saved_file_ok(&paths[*i])).collect();
+    let is_encrypted = |i: usize| encrypted.get(i).copied().unwrap_or(false);
+    let mut pending: VecDeque<usize> = (0..urls.len()).filter(|i| !saved_file_ok(&paths[*i], is_encrypted(*i))).collect();
     if let Some(meter) = meter {
         meter.set_items(urls.len() - pending.len(), urls.len());
     }
@@ -544,8 +623,9 @@ async fn fetch_pass(
             let Some(i) = pending.pop_front() else { break };
             let (client, url, path, options, meter, host) =
                 (client.clone(), urls[i].clone(), paths[i].clone(), options.clone(), meter.cloned(), host.clone());
+            let encrypted = is_encrypted(i);
             running.spawn(async move {
-                let body = fetch_with_retry(&client, &url, &options.headers, &options.retry, &path, Some(&options.limits)).await?;
+                let body = fetch_with_retry(&client, &url, &options.headers, &options.retry, &path, encrypted, Some(&options.limits)).await?;
                 LIMITER.throttle(body.len() as u64).await;
                 save_file(&path, &body).await?;
                 options.limits.record_success(&host);
@@ -570,13 +650,14 @@ pub(super) async fn fetch_files(
     client: &Client,
     urls: &[String],
     paths: &[PathBuf],
+    encrypted: &[bool],
     options: &SegmentOptions,
     meter: Option<&SpeedMeter>,
 ) -> Result<SegmentReport, FetchError> {
     let mut urls = urls.to_vec();
     let mut renewals = 0;
     loop {
-        match fetch_pass(client, &urls, paths, options, meter).await {
+        match fetch_pass(client, &urls, paths, encrypted, options, meter).await {
             Ok(()) => return Ok(SegmentReport { fetched: urls.len(), renewals }),
             Err(FetchError::Status { code: 403, .. }) if renewals < MAX_RENEWALS && options.renew.is_some() => {
                 renewals += 1;
@@ -596,7 +677,7 @@ pub(super) async fn fetch_files(
 /// renews the links once a 403 shows they expired.
 pub async fn fetch_segments(client: &Client, urls: &[String], dir: &Path, options: &SegmentOptions) -> Result<SegmentReport, FetchError> {
     let paths: Vec<PathBuf> = (0..urls.len()).map(|i| segment_path(dir, i)).collect();
-    fetch_files(client, urls, &paths, options, None).await
+    fetch_files(client, urls, &paths, &[], options, None).await
 }
 
 // ---- Direct files ------------------------------------------------------------------------
@@ -721,20 +802,35 @@ fn status_error(res: &Response) -> FetchError {
     FetchError::Status { code: res.status().as_u16(), retry_after: retry_after_of(res) }
 }
 
-/// Writes the body of `res` to `file`, with the speed limit and the meter. `sniff` looks at the
-/// first bytes for a playlist or web page.
-async fn stream_body(res: &mut Response, file: &mut tokio::io::BufWriter<tokio::fs::File>, path: &Path, sniff: bool, meter: Option<&SpeedMeter>) -> Result<u64, FetchError> {
+/// Writes the body of `res` to `path` (appending, or starting it over), with the speed limit and
+/// the meter. The file is not opened until the first bytes have been looked at, so a body that
+/// turns out to be a playlist or web page leaves an earlier partial copy alone. `sniff` looks at
+/// the first bytes for that; `note` is written just before the file is opened.
+async fn stream_body(
+    res: &mut Response,
+    path: &Path,
+    append: bool,
+    sniff: bool,
+    meter: Option<&SpeedMeter>,
+    note: Option<(&Path, Note)>,
+) -> Result<u64, FetchError> {
+    let mut file: Option<tokio::io::BufWriter<tokio::fs::File>> = None;
+    let mut note = note;
     let mut written = 0u64;
     loop {
         let chunk = match tokio::time::timeout(STALL_TIMEOUT, res.chunk()).await {
             Ok(Ok(Some(chunk))) => chunk,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {
-                let _ = file.flush().await;
+                if let Some(file) = file.as_mut() {
+                    let _ = file.flush().await;
+                }
                 return Err(map_reqwest(e));
             }
             Err(_) => {
-                let _ = file.flush().await;
+                if let Some(file) = file.as_mut() {
+                    let _ = file.flush().await;
+                }
                 return Err(FetchError::Timeout);
             }
         };
@@ -746,6 +842,13 @@ async fn stream_body(res: &mut Response, file: &mut tokio::io::BufWriter<tokio::
                 None => {}
             }
         }
+        if file.is_none() {
+            if let Some((note_path, note)) = note.take() {
+                write_note(note_path, &note).map_err(|e| io_error(note_path, e))?;
+            }
+            file = Some(open_partial(path, append).await?);
+        }
+        let file = file.as_mut().expect("opened above");
         file.write_all(&chunk).await.map_err(|e| io_error(path, e))?;
         written += chunk.len() as u64;
         if let Some(meter) = meter {
@@ -753,6 +856,15 @@ async fn stream_body(res: &mut Response, file: &mut tokio::io::BufWriter<tokio::
         }
         LIMITER.throttle(chunk.len() as u64).await;
     }
+    let mut file = match file {
+        Some(file) => file,
+        None => {
+            if let Some((note_path, note)) = note.take() {
+                write_note(note_path, &note).map_err(|e| io_error(note_path, e))?;
+            }
+            open_partial(path, append).await?
+        }
+    };
     file.flush().await.map_err(|e| io_error(path, e))?;
     Ok(written)
 }
@@ -772,13 +884,12 @@ async fn open_partial(path: &Path, append: bool) -> Result<tokio::io::BufWriter<
 /// Streams `res` to a new partial file and notes its size and validator beside it.
 async fn stream_from_start(mut res: Response, partial: &Path, note: &Path, total: Option<u64>, meter: Option<&SpeedMeter>) -> Result<(), FetchError> {
     let total = total.or_else(|| res.content_length().filter(|len| *len > 0));
-    let mut file = open_partial(partial, false).await?;
-    write_note(note, &Note { total, validator: Validator::of(&res) }).map_err(|e| io_error(note, e))?;
     if let Some(meter) = meter {
         meter.set_bytes(0);
         meter.set_expected(total);
     }
-    let written = stream_body(&mut res, &mut file, partial, true, meter).await?;
+    let note = Some((note, Note { total, validator: Validator::of(&res) }));
+    let written = stream_body(&mut res, partial, false, true, meter, note).await?;
     finish_check(written, total)
 }
 
@@ -827,12 +938,13 @@ async fn fetch_part(client: Client, url: String, options: DirectOptions, if_rang
         let result = async {
             let mut res = send(request).await?;
             match res.status().as_u16() {
-                206 => {}
-                200 => return Err(FetchError::Integrity("The file changed on the server while it was downloading.".to_string())),
+                206 if content_range(&res).is_some_and(|(first, _)| first == start + have) => {}
+                206 => return Err(FetchError::Integrity("The stream host sent a different part of the file than the one asked for.".to_string())),
+                // The server sent the whole file: the file changed since the parts were planned.
+                200 => return Err(FetchError::Changed),
                 _ => return Err(status_error(&res)),
             }
-            let mut file = open_partial(&part, true).await?;
-            stream_body(&mut res, &mut file, &part, false, meter.as_ref()).await.map(drop)
+            stream_body(&mut res, &part, true, false, meter.as_ref(), None).await.map(drop)
         }
         .await;
         let Err(error) = result else { continue };
@@ -900,8 +1012,7 @@ async fn direct_pass(client: &Client, url: &str, partial: &Path, note: &Path, op
                     meter.set_bytes(have);
                     meter.set_expected(Some(total));
                 }
-                let mut file = open_partial(partial, true).await?;
-                let written = stream_body(&mut res, &mut file, partial, false, meter).await?;
+                let written = stream_body(&mut res, partial, true, false, meter, None).await?;
                 finish_check(written + have, Some(total)).map(|_| Pass::Done)
             }
             // The server sent the whole file: it ignored the range, or the file changed.
@@ -931,7 +1042,10 @@ async fn direct_pass(client: &Client, url: &str, partial: &Path, note: &Path, op
                     }
                     let validator = Validator::of(&res);
                     report.connections = count as usize;
-                    download_in_parts(client, url, partial, total, count, &validator, options, meter).await?;
+                    match download_in_parts(client, url, partial, total, count, &validator, options, meter).await {
+                        Err(FetchError::Changed) => return Ok(Pass::Restart),
+                        other => other?,
+                    }
                     finish_check(file_len(partial), Some(total)).map(|_| Pass::Done)
                 }
                 // Ranges work but the file is small: one plain request.

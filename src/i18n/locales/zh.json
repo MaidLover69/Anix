@@ -839,6 +839,7 @@
   "libraryFormat.formatTvShort": "TV 短篇",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "全部",
   "localFilesTab.changeMatch": "更改匹配",
   "localFilesTab.chooseAnother": "选择其他文件夹",

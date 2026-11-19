@@ -403,15 +403,16 @@ pub fn download_folder(root: &Path, record: &DownloadRecord) -> PathBuf {
     }
 }
 
-/// Whether a download that failed with `error` keeps its resumable files for Try again. Only
-/// failures a later try can get past do: the network dropped, stalled or timed out, or the host
-/// answered 408, 429 or 5xx. Anything else (a refusal, a web page, a full disk, ffmpeg) starts
-/// over, so a bad or unwanted partial never lingers.
+/// Whether a download that failed with `error` keeps its resumable files for Try again. The
+/// network dropping, stalling or timing out does, and so does the host refusing a request (an
+/// expired link, a 403 or 404, a link that could not be renewed): the saved segments are still
+/// good, and a later try can renew the link. Anything else (a web page, a full disk, ffmpeg)
+/// starts over, so a bad or unwanted partial never lingers.
 ///
 /// shortcut: matches the English failure messages written in this module, so a reworded message
 /// falls back to starting over; switch to a typed error if more callers need the reason.
 pub fn keeps_partial_files_after(error: &str) -> bool {
-    const NETWORK: [&str; 8] = [
+    const KEPT: [&str; 12] = [
         "Could not reach the stream host",
         "The stream host did not answer in time",
         "A segment of the stream was interrupted",
@@ -420,14 +421,12 @@ pub fn keeps_partial_files_after(error: &str) -> bool {
         "The download was interrupted after",
         "The download stalled after",
         "The download is incomplete",
+        "A segment of the stream could not be fetched: HTTP ",
+        "The stream host answered HTTP ",
+        "The stream link expired and could not be renewed",
+        "The renewed stream is not the same",
     ];
-    if NETWORK.iter().any(|start| error.starts_with(start)) {
-        return true;
-    }
-    let refused = error.starts_with("A segment of the stream could not be fetched: HTTP ")
-        || error.starts_with("The stream host answered HTTP ");
-    let status = error.split("HTTP ").nth(1).and_then(|rest| rest.get(..3)).and_then(|code| code.parse::<u16>().ok());
-    refused && matches!(status, Some(408 | 429 | 500..=599))
+    KEPT.iter().any(|start| error.starts_with(start))
 }
 
 /// Where a download keeps the working file `role` in `dir`.
@@ -1264,6 +1263,7 @@ fn fetch_failure(error: engine::FetchError, have: Option<u64>) -> String {
         (Connect(e), Some(n)) => format!("The download was interrupted after {} bytes: {}", n, e),
         (Timeout, Some(n)) => format!("The download stalled after {} bytes: no data for {} seconds.", n, STALL_TIMEOUT.as_secs()),
         (Timeout, None) => "The stream host did not answer in time.".to_string(),
+        (Changed, _) => "The file changed on the server while it was downloading.".to_string(),
         (Integrity(e) | Io(e), _) => e,
         (Manifest(kind), _) => format!("The body is a {} playlist.", kind),
     }
@@ -1487,6 +1487,9 @@ pub struct HlsPlan {
     /// Absolute URL and local name of every file, in playlist order: keys, init sections and
     /// media segments.
     pub files: Vec<(String, String)>,
+    /// For each of `files`: whether it is a media segment encrypted with AES-128, whose bytes
+    /// cannot be recognised as video before they are decrypted.
+    pub encrypted: Vec<bool>,
     pub duration_s: f64,
 }
 
@@ -1597,6 +1600,8 @@ pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
 
     let mut playlist: Vec<String> = Vec::new();
     let mut files: Vec<(String, String)> = Vec::new();
+    let mut encrypted: Vec<bool> = Vec::new();
+    let mut encrypting = false;
     let (mut segments, mut keys, mut maps) = (0usize, 0usize, 0usize);
     let mut duration_s = 0.0;
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -1605,8 +1610,12 @@ pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
         }
         let local = if let Some(attrs) = line.strip_prefix("#EXT-X-KEY:") {
             match hls_attribute(attrs, "METHOD")? {
-                "NONE" => None,
+                "NONE" => {
+                    encrypting = false;
+                    None
+                }
                 "AES-128" => {
+                    encrypting = true;
                     keys += 1;
                     Some((hls_attribute(attrs, "URI")?, format!("key{}.key", keys - 1)))
                 }
@@ -1631,18 +1640,32 @@ pub fn plan_hls_download(text: &str, base: &str) -> Option<HlsPlan> {
             segments += 1;
             let name = format!("seg{}.{}", segments - 1, if maps > 0 { "m4s" } else { "ts" });
             files.push((absolute(line)?, name.clone()));
+            encrypted.push(encrypting);
             playlist.push(name);
             continue;
         };
         match local {
             Some((uri, name)) => {
                 files.push((absolute(uri)?, name.clone()));
+                encrypted.push(false);
                 playlist.push(line.replacen(&format!("URI=\"{}\"", uri), &format!("URI=\"{}\"", name), 1));
             }
             None => playlist.push(line.to_string()),
         }
     }
-    (segments > 0).then(|| HlsPlan { playlist: playlist.join("\n") + "\n", files, duration_s })
+    (segments > 0).then(|| HlsPlan { playlist: playlist.join("\n") + "\n", files, encrypted, duration_s })
+}
+
+/// Whether two local playlists describe the same stream: the same number of segments and the same
+/// key and init-section lines (so the same IVs). Only then can a renewed stream take over the
+/// segments already saved.
+pub fn same_hls_shape(saved: &str, fresh: &str) -> bool {
+    let shape = |text: &str| {
+        let segments = text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).count();
+        let keys: Vec<&str> = text.lines().filter(|l| l.starts_with("#EXT-X-KEY") || l.starts_with("#EXT-X-MAP")).collect();
+        (segments, keys.iter().map(|l| l.to_string()).collect::<Vec<_>>())
+    };
+    shape(saved) == shape(fresh)
 }
 
 /// Where every file of `plan` comes from, without query strings (they often carry per-session
@@ -1666,14 +1689,7 @@ async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> R
     let mut height = 0;
     for _ in 0..3 {
         let target = guarded_stream_url(&current)?;
-        let response = match apply_headers(client.get(&target), headers).timeout(Duration::from_secs(30)).send().await {
-            Ok(response) => response,
-            Err(e) if e.is_redirect() => return Err(redirect_refusal(&e)),
-            Err(_) => return Ok(None),
-        };
-        let Ok(response) = response.error_for_status() else { return Ok(None) };
-        let final_url = response.url().to_string();
-        let Ok(text) = response.text().await else { return Ok(None) };
+        let Some((final_url, text)) = get_playlist(&client, &target, headers).await? else { return Ok(None) };
         if text.contains("#EXT-X-STREAM-INF") {
             let Some((variant, picked)) = hls_variant_pick(&text, &final_url, quality_height(quality)) else { return Ok(None) };
             (current, height) = (variant, picked);
@@ -1682,6 +1698,34 @@ async fn fetch_hls_plan(url: &str, headers: &RequestHeaders, quality: &str) -> R
         return Ok(plan_hls_download(&text, &final_url).map(|plan| (plan, height)));
     }
     Ok(None)
+}
+
+/// The playlist at `target` and the URL it ended up at, retried like a segment. `None` when the
+/// host keeps refusing it; a refused redirect is an error.
+async fn get_playlist(client: &reqwest::Client, target: &str, headers: &RequestHeaders) -> Result<Option<(String, String)>, String> {
+    use engine::FetchError;
+    let policy = engine::RetryPolicy::APP;
+    let mut attempt = 0;
+    loop {
+        let error = match apply_headers(client.get(target), headers).timeout(Duration::from_secs(30)).send().await {
+            Ok(response) if response.status().is_success() => {
+                let final_url = response.url().to_string();
+                match response.text().await {
+                    Ok(text) => return Ok(Some((final_url, text))),
+                    Err(e) => FetchError::Connect(e.to_string()),
+                }
+            }
+            Ok(response) => FetchError::Status { code: response.status().as_u16(), retry_after: engine::retry_after_of(&response) },
+            Err(e) if e.is_redirect() => return Err(redirect_refusal(&e)),
+            Err(e) if e.is_timeout() => FetchError::Timeout,
+            Err(e) => FetchError::Connect(e.to_string()),
+        };
+        attempt += 1;
+        if !engine::is_retryable(&error) || attempt >= policy.max_tries {
+            return Ok(None);
+        }
+        engine::wait_before_retry(&policy, attempt - 1, &error).await;
+    }
 }
 
 /// Why a redirect was not followed: the hop's refusal from `check_download_url`, or too many
@@ -1696,15 +1740,20 @@ fn redirect_refusal(e: &reqwest::Error) -> String {
 }
 
 /// Asks the extension for the stream again and returns the new URL of every file of the plan.
-fn renewal(source: SourceFn, quality: String) -> engine::RenewFn {
+/// The new stream must be the one being downloaded (`saved` is its local playlist), or the
+/// segments already saved could not be joined with the new ones.
+fn renewal(source: SourceFn, quality: String, saved: String) -> engine::RenewFn {
     Arc::new(move || {
-        let (source, quality) = (source.clone(), quality.clone());
+        let (source, quality, saved) = (source.clone(), quality.clone(), saved.clone());
         Box::pin(async move {
             let fresh = source().await?;
             let url = guarded_stream_url(&fresh.url)?;
             let (plan, _) = fetch_hls_plan(&url, &request_headers(&fresh), &quality)
                 .await?
                 .ok_or_else(|| "the new stream could not be read".to_string())?;
+            if !same_hls_shape(&saved, &plan.playlist) {
+                return Err("the new stream does not have the same segments or keys".to_string());
+            }
             plan.files.iter().map(|(url, _)| guarded_stream_url(url)).collect()
         })
     })
@@ -1749,7 +1798,7 @@ async fn download_hls_files(
         urls.push(guarded_stream_url(url)?);
     }
     let paths: Vec<PathBuf> = plan.files.iter().map(|(_, name)| folder.join(name)).collect();
-    let renew = job.renew.clone().map(|source| renewal(source, job.record.quality.clone()));
+    let renew = job.renew.clone().map(|source| renewal(source, job.record.quality.clone(), plan.playlist.clone()));
     let options = engine::SegmentOptions {
         headers: header_pairs(headers),
         retry: engine::RetryPolicy::APP,
@@ -1769,15 +1818,22 @@ async fn download_hls_files(
             // The size is not known up front, so it is estimated from the segments so far.
             (done > 0).then(|| (m.bytes() as f64 * (all - done) as f64 / done as f64) as u64)
         },
-        engine::fetch_files(&client, &urls, &paths, &options, Some(&meter)),
+        engine::fetch_files(&client, &urls, &paths, &plan.encrypted, &options, Some(&meter)),
     )
     .await;
     if let Err(e) = fetched {
         return Err(fetch_failure(e, None));
     }
-    let media: Vec<PathBuf> =
-        plan.files.iter().zip(&paths).filter(|((_, name), _)| name.starts_with("seg")).map(|(_, p)| p.clone()).collect();
-    engine::verify_segments_before_mux(&media)?;
+    let media: Vec<(PathBuf, bool)> = plan
+        .files
+        .iter()
+        .zip(&paths)
+        .zip(&plan.encrypted)
+        .filter(|(((_, name), _), _)| name.starts_with("seg"))
+        .map(|((_, p), enc)| (p.clone(), *enc))
+        .collect();
+    let (media, media_encrypted): (Vec<PathBuf>, Vec<bool>) = media.into_iter().unzip();
+    engine::verify_files_before_mux(&media, &media_encrypted)?;
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
     reporter.report(Some(0.90), Some(meter.bytes() as i64)).await;
 
@@ -2010,12 +2066,44 @@ async fn download_stream_with_ffmpeg(
     };
 
     let mut reporter = ProgressReporter::new(job.pool, &job.record.id);
-    let (video, _) =
-        mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, duration_s, (0.05, 0.99))
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut retries = 0;
+    let video = loop {
+        match mux_with_ffmpeg(job, &input, subtitles.first(), &mut reporter, duration_s, (0.05, 0.99)).await {
+            Ok((video, _)) => break video,
+            // ffmpeg reads the stream itself here, so a dropped connection or a 5xx is retried.
+            Err(FfmpegError::Failed { stderr_tail, .. }) if retries < FFMPEG_NETWORK_RETRIES && ffmpeg_network_failure(&stderr_tail) => {
+                warn!("ffmpeg lost the stream of download {} ({}); trying again", job.record.id, stderr_tail);
+                tokio::time::sleep(engine::backoff_delay(&engine::RetryPolicy::APP, retries, None, 0)).await;
+                retries += 1;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
 
     finalize(job, &video, "mkv", subtitles).await
+}
+
+/// Times ffmpeg is started again when it reads a stream itself and the network fails.
+const FFMPEG_NETWORK_RETRIES: u32 = 3;
+
+/// Whether the end of ffmpeg's stderr says the network failed (not that the stream is bad).
+pub fn ffmpeg_network_failure(stderr_tail: &str) -> bool {
+    const SIGNS: [&str; 13] = [
+        "Server returned 5",
+        "Server returned 429",
+        "Server returned 408",
+        "Connection reset",
+        "Connection timed out",
+        "Connection refused",
+        "Connection closed",
+        "Operation timed out",
+        "Network is unreachable",
+        "Input/output error",
+        "I/O error",
+        "Error in the pull function",
+        "End of file",
+    ];
+    SIGNS.iter().any(|sign| stderr_tail.contains(sign))
 }
 
 async fn download_file(
@@ -2356,6 +2444,22 @@ pub fn start_download(pool: SqlitePool, record: DownloadRecord, source: Download
     spawn_job(pool, record, async move { Ok(source) }, Place::Default, None, None);
 }
 
+/// Streams the player already resolved, by download id, for rows waiting in the queue.
+static PLAYER_SOURCES: Lazy<Mutex<HashMap<String, DownloadSource>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Remembers the stream the player picked for the `QUEUED` row `id` (the row must be created by
+/// the caller) and wakes the queue, so the download follows the same limits and renewal as any
+/// other. A restart forgets it, and the row is then resolved like any queued one.
+pub fn queue_with_source(id: &str, source: DownloadSource) {
+    lock(&PLAYER_SOURCES).insert(id.to_string(), source);
+    notify_queue();
+}
+
+/// Forgets the source of a row that could not be created.
+pub fn forget_queued_source(id: &str) {
+    lock(&PLAYER_SOURCES).remove(id);
+}
+
 /// [`start_download`] into `dir` instead of the download folder, for tests.
 #[doc(hidden)]
 pub fn start_download_in(pool: SqlitePool, record: DownloadRecord, source: DownloadSource, dir: PathBuf) {
@@ -2475,7 +2579,12 @@ async fn queue_loop(app: tauri::AppHandle) {
                     let (app, record) = (resolver_app.clone(), resolver_record.clone());
                     Box::pin(async move { resolve_queued_source(&app, &record).await })
                 });
-                spawn_job(pool.clone(), record, resolve(), Place::Default, Some(permit), Some(resolve));
+                // A stream the player picked is used as it is; the extension is asked only to renew it.
+                let first: Pin<Box<dyn Future<Output = Result<DownloadSource, String>> + Send>> = match lock(&PLAYER_SOURCES).remove(&record.id) {
+                    Some(source) => Box::pin(async move { Ok(source) }),
+                    None => resolve(),
+                };
+                spawn_job(pool.clone(), record, first, Place::Default, Some(permit), Some(resolve));
             }
             Ok(None) => {
                 drop(permit);

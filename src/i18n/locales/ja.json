@@ -839,6 +839,7 @@
   "libraryFormat.formatTvShort": "TV ショート",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "すべて",
   "localFilesTab.changeMatch": "照合を変更",
   "localFilesTab.chooseAnother": "別のフォルダーを選ぶ",

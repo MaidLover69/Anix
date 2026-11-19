@@ -861,6 +861,7 @@
   "libraryFormat.formatTvShort": "TV short",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "All",
   "localFilesTab.changeMatch": "Change match",
   "localFilesTab.chooseAnother": "Choose another folder",

@@ -839,6 +839,7 @@
   "libraryFormat.formatTvShort": "TV 단편",
   "libraryFormat.gigabytes": "{size} GB",
   "libraryFormat.megabytes": "{size} MB",
+  "libraryFormat.kilobytes": "{size} KB",
   "localFilesTab.all": "전체",
   "localFilesTab.changeMatch": "매칭 변경",
   "localFilesTab.chooseAnother": "다른 폴더 선택",

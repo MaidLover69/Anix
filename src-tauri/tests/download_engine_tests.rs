@@ -6,7 +6,7 @@ mod engine_support;
 
 use anix_lib::clients::app_settings::DohMode;
 use anix_lib::downloads::engine::{
-    self, backoff_delay, check_aes_key, check_segment, doh_switch_decision, download_direct, fetch_segment,
+    self, backoff_delay, check_aes_key, check_encrypted_segment, check_segment, parse_retry_after, verify_files_before_mux, doh_switch_decision, download_direct, fetch_segment,
     fetch_segments, host_key, is_retryable, parallel_downloads, segment_path, speed_limit_bps,
     verify_segments_before_mux, DirectOptions, FetchError, HostLimits, RateLimiter, RenewFn, RetryPolicy,
     SegmentOptions, SpeedMeter, Validator,
@@ -207,10 +207,45 @@ fn host_limit_halves_on_pressure_and_never_climbs_back_past_the_refusal() {
     assert_eq!(limits.limit("h"), 4);
     // Other hosts are unaffected, and the limit never drops below one connection.
     assert_eq!(limits.limit("other"), 4);
+    // A burst of pushback from requests started under the old limit halves it only once.
     for _ in 0..10 {
         limits.record_pressure("h");
     }
+    assert_eq!(limits.limit("h"), 2);
+    // After it has grown, pushback halves it again, and it never drops below one connection.
+    for _ in 0..engine::SUCCESSES_PER_STEP {
+        limits.record_success("h");
+    }
+    assert_eq!(limits.limit("h"), 3);
+    limits.record_pressure("h");
     assert_eq!(limits.limit("h"), 1);
+}
+
+#[test]
+fn a_ceiling_rises_again_after_a_long_run_of_successes() {
+    let limits = HostLimits::new(4, 8);
+    limits.record_pressure("h");
+    assert_eq!(limits.ceiling("h"), Some(3));
+    for _ in 0..engine::SUCCESSES_PER_STEP * 100 {
+        limits.record_success("h");
+    }
+    assert!(limits.ceiling("h").is_none_or(|c| c > 3), "ceiling {:?}", limits.ceiling("h"));
+    assert!(limits.limit("h") > 3, "limit {}", limits.limit("h"));
+}
+
+#[test]
+fn retry_after_may_be_seconds_or_an_http_date() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = UNIX_EPOCH + Duration::from_secs(1_000);
+    assert_eq!(parse_retry_after("30", now), Some(Duration::from_secs(30)));
+    // 1970-01-01 00:20:00 is 200 s after `now`; Sun, 06 Nov 1994 08:49:37 GMT is 784111777.
+    assert_eq!(parse_retry_after("Thu, 01 Jan 1970 00:20:00 GMT", now), Some(Duration::from_secs(200)));
+    assert_eq!(parse_retry_after("Thu, 01 Jan 1970 00:10:00 GMT", now), Some(Duration::ZERO), "a past date waits no time");
+    assert_eq!(parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", UNIX_EPOCH), Some(Duration::from_secs(784_111_777)));
+    assert_eq!(parse_retry_after("soon", SystemTime::now()), None);
+    // The wait is still capped.
+    let policy = RetryPolicy { max_tries: 2, base: Duration::from_millis(1), jitter: false };
+    assert_eq!(backoff_delay(&policy, 0, Some(Duration::from_secs(100_000)), 0), Duration::from_secs(120));
 }
 
 #[tokio::test]
@@ -223,7 +258,9 @@ async fn a_host_that_answers_429_above_three_connections_ends_at_three_or_fewer(
     });
     let dir = TempDir::new("adaptive");
     let urls = segment_urls(&server, "a", 60);
-    let limits = Arc::new(HostLimits::new(6, 8));
+    // Starts at four, so the first burst of 429s is the host refusing the fourth connection. (More
+    // would open more sockets than this loopback server has threads for.)
+    let limits = Arc::new(HostLimits::new(4, 8));
 
     let report = fetch_segments(&client(), &urls, &dir.0, &options(limits.clone())).await.expect("fetch");
 
@@ -353,6 +390,24 @@ fn an_aes_key_must_be_exactly_sixteen_bytes() {
     assert!(check_aes_key(&[7u8; 32]).is_err());
     assert!(check_aes_key(b"<html>forbidden</html>").is_err());
     assert!(check_aes_key(&[]).is_err());
+}
+
+#[test]
+fn encrypted_segments_are_checked_by_size_and_content_type_only() {
+    // AES-128-CBC ciphertext looks like noise: it may start with `{` or have no sync byte.
+    let ciphertext: Vec<u8> = std::iter::once(b'{').chain((0..4095u32).map(|i| (i * 7 % 251) as u8)).collect();
+    assert!(check_segment(&ciphertext, None, None).is_err());
+    assert!(check_encrypted_segment(&ciphertext, Some(4096), Some("application/octet-stream")).is_ok());
+    assert!(check_encrypted_segment(&ciphertext, Some(5000), None).is_err(), "still must be complete");
+    assert!(check_encrypted_segment(&[], None, None).is_err());
+    assert!(check_encrypted_segment(&ciphertext, None, Some("text/html")).is_err());
+    assert!(check_encrypted_segment(&ciphertext, None, Some("application/json")).is_err());
+
+    let dir = TempDir::new("encrypted-verify");
+    let path = dir.0.join("seg0.ts");
+    std::fs::write(&path, &ciphertext).unwrap();
+    assert!(verify_files_before_mux(&[path.clone()], &[true]).is_ok());
+    assert!(verify_files_before_mux(&[path], &[false]).is_err(), "unencrypted segments still need video bytes");
 }
 
 #[tokio::test]
@@ -510,6 +565,70 @@ async fn a_changed_file_on_the_server_restarts_from_zero_instead_of_gluing_two_v
 
     assert_eq!(std::fs::read(&target).unwrap(), new_data);
     assert_eq!(report.resumed_from, 0);
+}
+
+#[tokio::test]
+async fn a_part_answered_with_the_wrong_range_is_refused_and_never_saved() {
+    let data = big_file(1024 * 1024);
+    let served = data.clone();
+    // Every ranged request gets bytes from the start, whatever it asked for.
+    let server = TestServer::start(move |r| match r.range {
+        None => Reply::ok(served.clone()),
+        Some(_) => Reply {
+            status: 206,
+            headers: vec![("Content-Range".into(), format!("bytes 0-{}/{}", served.len() / 4 - 1, served.len()))],
+            body: served[..served.len() / 4].to_vec(),
+            delay_ms: 0,
+        },
+    });
+    let dir = TempDir::new("wrong-range");
+    let target = dir.0.join("movie.mp4");
+
+    let result = download_direct(&client(), &server.url("/f.mp4"), &target, &small_parts()).await;
+
+    assert!(result.is_err(), "the wrong bytes must not make a finished file");
+    assert!(!target.exists());
+    let kept = std::fs::read(partial_path(&target)).unwrap_or_default();
+    assert!(data.starts_with(&kept), "what is kept is a true prefix of the file");
+}
+
+#[tokio::test]
+async fn a_part_answered_with_200_because_the_file_changed_restarts_the_whole_file() {
+    let old_len = 1024 * 1024;
+    let new_data = big_file(700 * 1024).into_iter().map(|b| b.wrapping_add(3)).collect::<Vec<u8>>();
+    let served = new_data.clone();
+    let server = TestServer::start(move |r| match r.range.as_deref() {
+        // The probe still sees the old file.
+        Some("bytes=0-0") => Reply {
+            status: 206,
+            headers: vec![("Content-Range".into(), format!("bytes 0-0/{}", old_len))],
+            body: vec![0],
+            delay_ms: 0,
+        },
+        // The parts, and a plain request, get the new whole file.
+        _ => Reply::ok(served.clone()),
+    });
+    let dir = TempDir::new("part-200");
+    let target = dir.0.join("movie.mp4");
+
+    download_direct(&client(), &server.url("/f.mp4"), &target, &small_parts()).await.expect("restarts instead of failing");
+
+    assert_eq!(std::fs::read(&target).unwrap(), new_data);
+}
+
+#[tokio::test]
+async fn a_web_page_answering_a_resume_leaves_the_partial_file_alone() {
+    let server = TestServer::start(|_| Reply::ok(b"<!DOCTYPE html><html>Access denied</html>".to_vec()).header("Content-Type", "text/html"));
+    let dir = TempDir::new("resume-html");
+    let target = dir.0.join("ep.mp4");
+    std::fs::write(partial_path(&target), vec![9u8; 100_000]).unwrap();
+    engine::write_validator(&target, &Validator { etag: Some("\"v1\"".into()), last_modified: None }).unwrap();
+
+    let result = download_direct(&client(), &server.url("/ep.mp4"), &target, &small_parts()).await;
+
+    assert!(matches!(result, Err(FetchError::Integrity(_))), "{:?}", result);
+    assert_eq!(std::fs::metadata(partial_path(&target)).unwrap().len(), 100_000, "the saved bytes are still there");
+    assert_eq!(engine::read_validator(&target).unwrap().etag.as_deref(), Some("\"v1\""), "so is the validator they belong to");
 }
 
 #[tokio::test]

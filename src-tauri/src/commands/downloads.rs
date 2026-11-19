@@ -167,18 +167,21 @@ pub async fn start_episode_download(
         subtitle_languages,
     };
 
-    // Inserted as DOWNLOADING so the queue worker does not start it a second time.
-    record.status = db::STATUS_DOWNLOADING.to_string();
+    // Queued, so the worker starts it within the "downloads at once" setting and can renew its link.
+    record.status = db::STATUS_QUEUED.to_string();
     record.progress = 0.0;
     record.file_path = None;
     record.file_size = None;
     record.error_msg = None;
 
-    let download_id = db::create_download(&state.pool, &record)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    downloads::start_download(state.pool.clone(), record, source);
-
-    Ok(download_id)
+    // Remembered before the row exists, so the worker cannot claim it first.
+    let source_key = record.id.clone();
+    downloads::queue_with_source(&source_key, source);
+    match db::create_download(&state.pool, &record).await {
+        Ok(id) => Ok(id),
+        Err(e) => {
+            downloads::forget_queued_source(&source_key);
+            Err(e.to_string())
+        }
+    }
 }

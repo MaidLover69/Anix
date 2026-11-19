@@ -905,6 +905,7 @@
   "libraryFormat.formatTvShort": "ТВ (короткое)",
   "libraryFormat.gigabytes": "{size} ГБ",
   "libraryFormat.megabytes": "{size} МБ",
+  "libraryFormat.kilobytes": "{size} КБ",
   "localFilesTab.all": "Все",
   "localFilesTab.changeMatch": "Изменить сопоставление",
   "localFilesTab.chooseAnother": "Выбрать другую папку",

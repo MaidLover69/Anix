@@ -35,7 +35,7 @@ conflicts=('anix')
 options=('!strip' '!debug')
 source=("https://github.com/MaidLover69/Anix/releases/download/v${pkgver}/Anix_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/MaidLover69/Anix/v${pkgver}/LICENSE")
-sha256sums=('13c9f63c0a367639bad825cc203a05e482cb47f095266b3abc31f4089d2466a0'
+sha256sums=('b0609cc86016559df6f72b7ea78d22a788fe88f6560ee217653abae1a5801442'
             '18b58b87a6862f3651243d210089290c8c329583702b76710d5685c2545edde2')
 
 package() {

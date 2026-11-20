@@ -25,6 +25,7 @@ Faster, sturdier downloads, more player and download settings, and more ways to 
 - **Default playback speed** (Settings › Playback): every episode starts at it. The speed menu keeps its steps from 0.5× to 3×, and **Custom** sets any speed from 0.5× to 4×. A speed changed while watching applies to that episode only, in both players and in the external mpv.
 - Drop-down menus open above the control when there is no room below, and no longer get cut off inside the sticky bar or dialogs.
 - Right-clicking an empty spot no longer opens the web page menu (Back, Reload, Inspect Element); Reload there restarted the app mid-episode. Text fields and selected text keep Cut, Copy and Paste.
+- In safe mode, or with WebKit's compositing turned off (`WEBKIT_DISABLE_COMPOSITING_MODE=1`), opening a title no longer crashes the page.
 
 ### Collections
 - Discover has a **Studio** filter, and **Save as collection** keeps it. It also works while AniList is down.

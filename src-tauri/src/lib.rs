@@ -289,6 +289,7 @@ pub fn run() {
             commands::open_log_folder,
             commands::get_desktop_appearance,
             commands::window_is_fullscreen,
+            commands::webkit_compositing_off,
             // Player
             commands::launch_external_player,
             commands::read_subtitle_file,

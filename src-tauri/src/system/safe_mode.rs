@@ -37,6 +37,17 @@ pub fn apply(app_dir: Option<&Path>) {
     }
 }
 
+/// Whether WebKit's compositing is off this run: safe mode or the user's own variable. WebKitGTK
+/// aborts the page when `document.startViewTransition` runs then, so the page drops that method.
+pub fn compositing_off() -> bool {
+    compositing_off_value(std::env::var_os(COMPOSITING_VAR).as_deref())
+}
+
+/// WebKitGTK's rule for the variable: any value but "0" turns compositing off.
+pub fn compositing_off_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| v != "0")
+}
+
 /// True when this run started in safe mode. False before [`apply`] (tests, the background checker).
 pub fn active() -> bool {
     ACTIVE.get().copied().unwrap_or(false)

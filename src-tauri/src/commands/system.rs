@@ -40,6 +40,12 @@ pub fn window_is_fullscreen(window: tauri::WebviewWindow) -> bool {
         .unwrap_or(true)
 }
 
+/// Whether WebKit's compositing is off this run, so the page skips view transitions.
+#[tauri::command]
+pub fn webkit_compositing_off() -> bool {
+    system::safe_mode::compositing_off()
+}
+
 /// The hardware-acceleration diagnostics. Read-only; runs `vainfo` when it is installed.
 #[tauri::command]
 pub async fn get_hardware_report() -> Result<hwaccel::HardwareReport, String> {

@@ -75,6 +75,17 @@ fn safe_mode_starts_after_two_unclean_exits_in_a_row() {
 }
 
 #[test]
+fn compositing_counts_as_off_for_any_value_of_the_variable_but_zero() {
+    use std::ffi::OsStr;
+    // WebKitGTK's own rule; the page drops view transitions then, which abort the page without it.
+    assert!(!safe_mode::compositing_off_value(None));
+    assert!(!safe_mode::compositing_off_value(Some(OsStr::new("0"))));
+    assert!(safe_mode::compositing_off_value(Some(OsStr::new("1"))));
+    assert!(safe_mode::compositing_off_value(Some(OsStr::new("true"))));
+    assert!(safe_mode::compositing_off_value(Some(OsStr::new(""))));
+}
+
+#[test]
 fn a_marker_from_another_boot_or_login_session_is_no_crash() {
     let dir = scratch("logout");
     // Left by a session that ended with a logout or shutdown, then counted on from there.

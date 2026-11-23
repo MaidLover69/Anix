@@ -311,6 +311,7 @@ fn report_with(vendor: &str, vaapi: hwaccel::VaapiCheck) -> hwaccel::HardwareRep
             libav: Some("/usr/lib64/gstreamer-1.0/libgstlibav.so".into()),
             ..Default::default()
         },
+        dmabuf_safe_mode: false,
         ..Default::default()
     }
 }
@@ -349,6 +350,23 @@ fn tips_name_the_driver_package_for_the_gpu() {
     dmabuf.dmabuf_disabled = true;
     dmabuf.dmabuf_set_by_app = true;
     assert!(hwaccel::tips(&dmabuf).iter().any(|t| t.contains("WEBKIT_DISABLE_DMABUF_RENDERER=0")));
+}
+
+#[test]
+fn tips_blame_safe_mode_not_the_environment_when_safe_mode_turned_dmabuf_off() {
+    // Arrange
+    let mut report = report_with("intel", hwaccel::VaapiCheck::default());
+    report.dmabuf_disabled = true;
+    report.dmabuf_set_by_app = true;
+    report.dmabuf_safe_mode = true;
+
+    // Act
+    let tips = hwaccel::tips(&report);
+
+    // Assert
+    assert!(tips.iter().any(|t| t.contains("safe mode")));
+    assert!(!tips.iter().any(|t| t.contains("your environment")));
+    assert!(!tips.iter().any(|t| t.contains("NVIDIA's driver because")));
 }
 
 #[test]

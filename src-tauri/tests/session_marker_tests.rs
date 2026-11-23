@@ -144,3 +144,46 @@ fn an_ignored_hangup_is_seen_as_ignored() {
     assert!(!anix_lib::system::sighup_ignored());
     unsafe { libc::signal(libc::SIGHUP, before) };
 }
+
+#[test]
+fn compositing_goes_off_only_after_three_unclean_exits_in_a_row() {
+    // Arrange / Act / Assert
+    for n in [0, 1, 2] {
+        assert!(!safe_mode::compositing_needed(n), "{n} crashes keep compositing on");
+    }
+    for n in [3, 4, 9] {
+        assert!(safe_mode::compositing_needed(n), "{n} crashes turn compositing off");
+    }
+    assert_eq!(safe_mode::COMPOSITING_STARTS, 3);
+    assert!(safe_mode::COMPOSITING_STARTS > safe_mode::UNCLEAN_STARTS);
+}
+
+#[test]
+fn the_compositing_switch_only_touches_what_safe_mode_owns() {
+    use safe_mode::{switch_env, Switch};
+    let cases = [
+        (None, None, true, Switch::Set),
+        (None, None, false, Switch::Untouched),
+        (Some("1"), Some("1"), false, Switch::Clear),
+        (Some("1"), Some("1"), true, Switch::Untouched),
+        (Some("1"), None, false, Switch::User),
+        (Some("1"), None, true, Switch::User),
+        (Some("0"), Some("1"), true, Switch::User),
+        (Some(""), None, true, Switch::User),
+        (None, Some("1"), false, Switch::Untouched),
+    ];
+    for (value, mark, wanted, expected) in cases {
+        assert_eq!(switch_env(value, mark, wanted), expected, "{value:?} {mark:?} wanted={wanted}");
+    }
+}
+
+#[test]
+fn a_dmabuf_value_set_by_safe_mode_is_removed_by_a_normal_start_and_is_not_the_users() {
+    use anix_lib::system::hwaccel::{self, DmabufEnv};
+    // Arrange: safe mode reuses hwaccel's own mark for the DMA-BUF switch.
+    let (value, mark) = (Some("1"), Some("1"));
+
+    // Act / Assert
+    assert_eq!(hwaccel::dmabuf_env(value, mark, true), DmabufEnv::Clear);
+    assert!(!hwaccel::dmabuf_off_by_user(value, mark));
+}

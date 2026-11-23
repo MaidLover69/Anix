@@ -65,8 +65,8 @@ pub fn compositing_switch(unclean: u32, value: Option<&str>, mark: Option<&str>)
 pub fn apply(app_dir: Option<&Path>) {
     let unclean = app_dir.map_or(0, super::session_marker::peek);
     let _ = ACTIVE.set(needed(unclean));
-    let value = std::env::var(COMPOSITING_VAR).ok();
-    let mark = std::env::var(MARK_VAR).ok();
+    let value = super::hwaccel::env_lossy(COMPOSITING_VAR);
+    let mark = super::hwaccel::env_lossy(MARK_VAR);
     match compositing_switch(unclean, value.as_deref(), mark.as_deref()) {
         Switch::Set => {
             std::env::set_var(COMPOSITING_VAR, "1");

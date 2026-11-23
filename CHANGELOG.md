@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.3
+
+A milder safe mode after crashes, and a newer SQLite library.
+
+### Safe mode
+- After two starts in a row that did not exit cleanly, safe mode now turns off only WebKit's DMA-BUF renderer (`WEBKIT_DISABLE_DMABUF_RENDERER=1`). Compositing is turned off only after three or more in a row. The web player, the skipped extension refresh at start and the screen that is not reopened work as before.
+- Settings › System says when the DMA-BUF renderer is off because of safe mode.
+- A variable you set yourself is never changed, and a normal start removes only what safe mode set.
+
+### Under the hood
+- The database library is now sqlx 0.9.1 with the SQLite bundled by libsqlite3-sys 0.40 (SQLite 3.54.1), which has the fix for RUSTSEC-2026-0459. Existing data is kept as it is; no migration changed.
+- The unused `rsa` crate is no longer in the lock file (RUSTSEC-2023-0071), so the dependency audit runs without exceptions.
+
 ## 1.4.2
 
 Faster, sturdier downloads, more player and download settings, and more ways to build collections.

@@ -7,7 +7,7 @@
 ### An anime catalogue, tracker, and local library player for Linux
 
 [![Platform](https://img.shields.io/badge/Platform-Linux%20(AppImage%20%7C%20RPM%20%7C%20DEB%20%7C%20Flatpak)-E95420?logo=linux&logoColor=white)](https://anix-linux.vercel.app)
-[![Version](https://img.shields.io/badge/Version-1.4.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.4.3-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <p align="center">
@@ -132,14 +132,14 @@ Packages for Linux are available from the project website: <https://anix-linux.v
 ### AppImage (Universal, any distribution)
 
 Anix provides two official AppImage variants:
-- **Classic (`Anix_1.4.2_amd64.AppImage`)**: Built on Ubuntu 22.04 LTS (glibc 2.35+). Works across almost every Linux distribution including Ubuntu 22.04+, Debian 12+, Linux Mint 21+, Fedora 36+, openSUSE Leap 15.6+, Arch Linux, and CachyOS.
-- **Modern (`Anix_1.4.2_amd64-modern.AppImage`)**: Built on Ubuntu 24.04 LTS (glibc 2.39+) with newer WebKitGTK and runtime libraries for bleeding-edge systems.
+- **Classic (`Anix_1.4.3_amd64.AppImage`)**: Built on Ubuntu 22.04 LTS (glibc 2.35+). Works across almost every Linux distribution including Ubuntu 22.04+, Debian 12+, Linux Mint 21+, Fedora 36+, openSUSE Leap 15.6+, Arch Linux, and CachyOS.
+- **Modern (`Anix_1.4.3_amd64-modern.AppImage`)**: Built on Ubuntu 24.04 LTS (glibc 2.39+) with newer WebKitGTK and runtime libraries for bleeding-edge systems.
 
 The built-in updater automatically detects system compatibility and selects or upgrades to the appropriate AppImage variant.
 
 ```bash
-chmod +x Anix_1.4.2_amd64.AppImage
-./Anix_1.4.2_amd64.AppImage
+chmod +x Anix_1.4.3_amd64.AppImage
+./Anix_1.4.3_amd64.AppImage
 ```
 
 **FUSE 2:** AppImages need FUSE 2 to start. Fedora usually has it; on other distributions install it once if the AppImage does not open:
@@ -152,7 +152,7 @@ chmod +x Anix_1.4.2_amd64.AppImage
 | openSUSE | `sudo zypper install libfuse2` |
 | Fedora (only if missing) | `sudo dnf install fuse-libs` |
 
-Without FUSE, start it with `./Anix_1.4.2_amd64.AppImage --appimage-extract-and-run`.
+Without FUSE, start it with `./Anix_1.4.3_amd64.AppImage --appimage-extract-and-run`.
 
 **Missing thumbnails:** from 1.3.0 on, the AppImage fixes this itself (it sets `G_TLS_GNUTLS_PRIORITY=NORMAL` when your system has no GnuTLS crypto policy), so no command is needed any more. A value you set yourself is kept. Only 1.2.0 still needs the old workaround: `G_TLS_GNUTLS_PRIORITY=NORMAL ./Anix_1.2.0_amd64.AppImage`.
 
@@ -163,7 +163,7 @@ Without FUSE, start it with `./Anix_1.4.2_amd64.AppImage --appimage-extract-and-
 From 1.3.0 on, videos play in an embedded mpv player by default (Settings › Playback › Player engine). The AppImage carries its own mpv; from 1.4.2 on, the DEB and RPM use the system's mpv library (libmpv) when it is installed and the web player otherwise.
 
 - **The window is blank or the video does not show after switching to embedded mpv:** wait 15 seconds. Anix asks whether the player shows correctly and, without an answer, goes back to the web player and restarts by itself. The 15 seconds only count while the Anix window is in front and focused, and a notice in the notification centre says when this happened.
-- **Start once with the web player, whatever the setting says:** run `./Anix_1.4.2_amd64.AppImage --web-player`, or set `ANIX_PLAYER_ENGINE=web` (for example `ANIX_PLAYER_ENGINE=web ./Anix_1.4.2_amd64.AppImage`). Then pick the engine you want in Settings › Playback.
+- **Start once with the web player, whatever the setting says:** run `./Anix_1.4.3_amd64.AppImage --web-player`, or set `ANIX_PLAYER_ENGINE=web` (for example `ANIX_PLAYER_ENGINE=web ./Anix_1.4.3_amd64.AppImage`). Then pick the engine you want in Settings › Playback.
 - **Black picture with sound:** set Settings › Playback › Hardware decoding to *Always copy-back* (or *Off*). *Automatic* already uses copy-back unless a hidden self-test passed on your machine; Settings › System › Hardware video decoding shows its result.
 
 ---

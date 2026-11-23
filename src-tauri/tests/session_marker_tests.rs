@@ -187,3 +187,22 @@ fn a_dmabuf_value_set_by_safe_mode_is_removed_by_a_normal_start_and_is_not_the_u
     assert_eq!(hwaccel::dmabuf_env(value, mark, true), DmabufEnv::Clear);
     assert!(!hwaccel::dmabuf_off_by_user(value, mark));
 }
+
+#[test]
+fn compositing_switch_follows_the_crash_count_and_ownership() {
+    use safe_mode::{compositing_switch as sw, Switch};
+    let cases = [
+        (2, None, None, Switch::Untouched), // step 1: compositing stays on
+        (3, None, None, Switch::Set),
+        (9, None, None, Switch::Set),
+        (2, Some("1"), Some("1"), Switch::Clear), // inherited from a step-2 run
+        (0, Some("1"), Some("1"), Switch::Clear),
+        (3, Some("1"), Some("1"), Switch::Untouched),
+        (0, Some("1"), None, Switch::User),
+        (2, Some("1"), None, Switch::User),
+        (3, Some("0"), None, Switch::User),
+    ];
+    for (n, value, mark, expected) in cases {
+        assert_eq!(sw(n, value, mark), expected, "{n} {value:?} {mark:?}");
+    }
+}

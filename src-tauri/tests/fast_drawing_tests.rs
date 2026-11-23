@@ -81,3 +81,23 @@ fn the_question_is_asked_once_per_webkit_version_and_not_over_embedded_mpv() {
     let declined = answer(FastDrawingState { trial: true, ..on() }, false, "2.50.4");
     assert!(!declined.on && !declined.trial && declined.confirmed.is_none());
 }
+
+#[test]
+fn safe_mode_plan_turns_dmabuf_off_without_forcing_and_blames_itself_only_where_normal_keeps_it_on() {
+    use anix_lib::system::hwaccel::plan;
+    let no_gles = Gpu { gles: false, ..GPU };
+    // Safe mode: off, never forced; "by safe mode" only if a normal start would keep it on.
+    assert_eq!(plan(true, GPU, false, false), (false, false, true));
+    assert_eq!(plan(true, GPU, true, false), (false, false, true));
+    assert_eq!(plan(true, NVIDIA, true, false), (false, false, true));
+    assert_eq!(plan(true, NVIDIA, false, true), (false, false, true));
+    assert_eq!(plan(true, NVIDIA, false, false), (false, false, false));
+    assert_eq!(plan(true, no_gles, false, false), (false, false, false));
+    // Normal start: exactly renderer_plan, never "by safe mode".
+    for gpu in [GPU, NVIDIA, no_gles] {
+        for (mpv, fast) in [(false, false), (false, true), (true, false), (true, true)] {
+            let (keep, force) = renderer_plan(gpu, mpv, fast);
+            assert_eq!(plan(false, gpu, mpv, fast), (keep, force, false));
+        }
+    }
+}

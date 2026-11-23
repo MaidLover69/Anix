@@ -105,6 +105,14 @@ pub fn renderer_plan(gpu: Gpu, wants_mpv: bool, fast_drawing: bool) -> (bool, bo
     (keep_on, gpu.nvidia && keep_on)
 }
 
+/// [`renderer_plan`] plus safe mode: (keep on, force, off only because of safe mode). Safe mode turns
+/// the renderer off as the milder first step (compositing follows from the third crash), and never
+/// forces it. The last value is false where a normal start keeps it off too, so the tip stays true.
+pub fn plan(safe_mode: bool, gpu: Gpu, wants_mpv: bool, fast_drawing: bool) -> (bool, bool, bool) {
+    let normal = renderer_plan(gpu, wants_mpv, fast_drawing);
+    if safe_mode { (false, false, normal.0) } else { (normal.0, normal.1, false) }
+}
+
 /// Whether OpenGL ES loads, the way WebKit loads it.
 fn gles_loadable() -> bool {
     let name = c"libGLESv2.so.2";
@@ -147,9 +155,7 @@ pub fn dmabuf_forced_by_app() -> bool {
 /// renderer; the web player turns it off on NVIDIA's driver (unless the user turned fast drawing
 /// on) and without OpenGL ES (see [`renderer_plan`]).
 pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
-    // Safe mode turns the renderer off whatever the machine (it is the milder first step; compositing follows later).
-    let safe = super::safe_mode::active();
-    let (keep_on, force) = if safe { (false, false) } else { renderer_plan(Gpu::detect(), wants_mpv, fast_drawing) };
+    let (keep_on, force, by_safe_mode) = plan(super::safe_mode::active(), Gpu::detect(), wants_mpv, fast_drawing);
     let value = std::env::var(DMABUF_VAR).ok();
     let mark = std::env::var(DMABUF_MARK).ok();
     let dmabuf = dmabuf_env(value.as_deref(), mark.as_deref(), keep_on);
@@ -175,7 +181,7 @@ pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
             std::env::set_var(DMABUF_VAR, "1");
             std::env::set_var(DMABUF_MARK, "1");
             note_dmabuf_workaround(true);
-            DMABUF_BY_SAFE_MODE.store(safe, Ordering::SeqCst);
+            DMABUF_BY_SAFE_MODE.store(by_safe_mode, Ordering::SeqCst);
         }
         DmabufEnv::Clear => {
             std::env::remove_var(DMABUF_VAR);

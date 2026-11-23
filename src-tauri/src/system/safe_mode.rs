@@ -56,13 +56,18 @@ pub fn switch_env(value: Option<&str>, mark: Option<&str>, wanted: bool) -> Swit
     }
 }
 
+/// What `apply` does with the compositing variable after `unclean` unclean exits in a row.
+pub fn compositing_switch(unclean: u32, value: Option<&str>, mark: Option<&str>) -> Switch {
+    switch_env(value, mark, compositing_needed(unclean))
+}
+
 /// Called once from `main`, before WebKit starts.
 pub fn apply(app_dir: Option<&Path>) {
     let unclean = app_dir.map_or(0, super::session_marker::peek);
     let _ = ACTIVE.set(needed(unclean));
     let value = std::env::var(COMPOSITING_VAR).ok();
     let mark = std::env::var(MARK_VAR).ok();
-    match switch_env(value.as_deref(), mark.as_deref(), compositing_needed(unclean)) {
+    match compositing_switch(unclean, value.as_deref(), mark.as_deref()) {
         Switch::Set => {
             std::env::set_var(COMPOSITING_VAR, "1");
             std::env::set_var(MARK_VAR, "1");

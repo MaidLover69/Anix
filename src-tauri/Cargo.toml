@@ -5,6 +5,7 @@ description = "Anix - anime catalogue, tracker, library and player for Linux"
 authors = ["Anix"]
 license = "MIT"
 edition = "2021"
+rust-version = "1.94"
 
 [lib]
 name = "anix_lib"

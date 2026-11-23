@@ -12,7 +12,8 @@ fn main() {
         // Covers load over TLS outside Fedora too (see system/gnutls.rs).
         anix_lib::system::gnutls::apply();
 
-        // After two crashes in a row: the web player, no compositing (see system/safe_mode.rs).
+        // After two crashes in a row: the web player and no DMA-BUF renderer; after three, no compositing
+        // either (see system/safe_mode.rs).
         anix_lib::system::safe_mode::apply(anix_lib::db::app_dir_path().as_deref());
 
         // WebKit's DMA-BUF renderer blanks the window with some NVIDIA drivers; everywhere else it

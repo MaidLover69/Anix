@@ -11,6 +11,8 @@ const VAINFO_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// 0 = not recorded, 1 = the app set `WEBKIT_DISABLE_DMABUF_RENDERER`, 2 = it was already set.
 static DMABUF_SET_BY: AtomicU8 = AtomicU8::new(0);
+/// Anix set the variable because this run is in safe mode (the report says so in its tip).
+static DMABUF_BY_SAFE_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Called from `main` before the webview starts: whether the app set the variable itself.
 pub fn note_dmabuf_workaround(set_by_app: bool) {
@@ -145,7 +147,9 @@ pub fn dmabuf_forced_by_app() -> bool {
 /// renderer; the web player turns it off on NVIDIA's driver (unless the user turned fast drawing
 /// on) and without OpenGL ES (see [`renderer_plan`]).
 pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
-    let (keep_on, force) = renderer_plan(Gpu::detect(), wants_mpv, fast_drawing);
+    // Safe mode turns the renderer off whatever the machine (it is the milder first step; compositing follows later).
+    let safe = super::safe_mode::active();
+    let (keep_on, force) = if safe { (false, false) } else { renderer_plan(Gpu::detect(), wants_mpv, fast_drawing) };
     let value = std::env::var(DMABUF_VAR).ok();
     let mark = std::env::var(DMABUF_MARK).ok();
     let dmabuf = dmabuf_env(value.as_deref(), mark.as_deref(), keep_on);
@@ -171,6 +175,7 @@ pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
             std::env::set_var(DMABUF_VAR, "1");
             std::env::set_var(DMABUF_MARK, "1");
             note_dmabuf_workaround(true);
+            DMABUF_BY_SAFE_MODE.store(safe, Ordering::SeqCst);
         }
         DmabufEnv::Clear => {
             std::env::remove_var(DMABUF_VAR);
@@ -275,6 +280,8 @@ pub struct HardwareReport {
     pub dmabuf_value: Option<String>,
     /// The app set the workaround itself (rather than the environment it was started from).
     pub dmabuf_set_by_app: bool,
+    /// ...because Anix started in safe mode.
+    pub dmabuf_safe_mode: bool,
     /// `intel`, `amd`, `nvidia`, another PCI vendor id, or none when no render node exists.
     pub gpu_vendor: Option<String>,
     pub render_node: Option<String>,
@@ -526,7 +533,9 @@ pub fn tips(report: &HardwareReport) -> Vec<String> {
         tips.push("GStreamer's libav plugin (software decoders) was not found; some videos may not play. Install gstreamer1-libav or gstreamer1.0-libav.".to_string());
     }
     if report.dmabuf_disabled {
-        tips.push(if report.dmabuf_set_by_app {
+        tips.push(if report.dmabuf_safe_mode {
+            "WebKit's DMA-BUF renderer is off for this start because Anix started in safe mode after it closed unexpectedly. A normal start turns it back on.".to_string()
+        } else if report.dmabuf_set_by_app {
             "WebKit's DMA-BUF renderer is off: Anix turns it off with NVIDIA's driver because it can leave the window blank. Video plays either way; scrolling is slower. To try it on, start Anix with WEBKIT_DISABLE_DMABUF_RENDERER=0.".to_string()
         } else {
             "WebKit's DMA-BUF renderer was turned off by your environment (WEBKIT_DISABLE_DMABUF_RENDERER), so scrolling is slower. Remove that variable unless the window turns blank without it.".to_string()
@@ -557,6 +566,7 @@ pub async fn report() -> HardwareReport {
         dmabuf_disabled: dmabuf_value.as_deref().is_some_and(|v| v != "0"),
         dmabuf_value,
         dmabuf_set_by_app: DMABUF_SET_BY.load(Ordering::SeqCst) == 1,
+        dmabuf_safe_mode: DMABUF_BY_SAFE_MODE.load(Ordering::SeqCst),
         gpu_vendor: render_node.as_deref().and_then(gpu),
         render_node: render_node.as_ref().map(|p| p.to_string_lossy().into_owned()),
         libva_driver_name: env("LIBVA_DRIVER_NAME"),

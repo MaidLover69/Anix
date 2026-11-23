@@ -1,16 +1,19 @@
 //! Safe mode: after two starts in a row that did not exit cleanly, Anix starts with the options
 //! most likely to get it running again instead of crashing in a loop. This start uses the web
-//! player, turns WebKit's compositing off, skips the extension-list refresh and does not reopen
-//! the screen a restart asked for. One clean exit turns it off again.
+//! player, turns WebKit's DMA-BUF renderer off (see `hwaccel::apply_dmabuf_workaround`), skips
+//! the extension-list refresh and does not reopen the screen a restart asked for. From the third
+//! unclean exit in a row WebKit's compositing goes off too. One clean exit turns it all off again.
 //!
-//! Decided in `main` before WebKit starts (the compositing switch is an environment variable
-//! WebKit reads once), from the session marker, which it only reads.
+//! Decided in `main` before WebKit starts (both switches are environment variables WebKit reads
+//! once), from the session marker, which it only reads.
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 /// Unclean exits in a row that start safe mode.
 pub const UNCLEAN_STARTS: u32 = 2;
+/// Unclean exits in a row that also turn compositing off (the heavier step).
+pub const COMPOSITING_STARTS: u32 = 3;
 const COMPOSITING_VAR: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 /// Set next to the variable above when safe mode set it, so a later normal start (a restart
 /// inherits the environment) can take it away again without touching the user's own setting.
@@ -23,17 +26,52 @@ pub fn needed(unclean: u32) -> bool {
     unclean >= UNCLEAN_STARTS
 }
 
+/// Whether `unclean` exits in a row also call for compositing off.
+pub fn compositing_needed(unclean: u32) -> bool {
+    unclean >= COMPOSITING_STARTS
+}
+
+/// What `apply` does with the compositing variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    Set,
+    /// Safe mode set it on an earlier run (a restart inherits the environment) and this run does not want it.
+    Clear,
+    Untouched,
+    /// The user's own value: never changed.
+    User,
+}
+
+/// The rule for the compositing variable, from its value, safe mode's mark and whether it is wanted.
+pub fn switch_env(value: Option<&str>, mark: Option<&str>, wanted: bool) -> Switch {
+    let ours = match value {
+        None => true,
+        Some(v) => v == "1" && mark == Some("1"),
+    };
+    match (ours, wanted, value.is_some()) {
+        (false, _, _) => Switch::User,
+        (true, true, false) => Switch::Set,
+        (true, false, true) => Switch::Clear,
+        _ => Switch::Untouched,
+    }
+}
+
 /// Called once from `main`, before WebKit starts.
 pub fn apply(app_dir: Option<&Path>) {
-    let active = app_dir.is_some_and(|dir| needed(super::session_marker::peek(dir)));
-    let _ = ACTIVE.set(active);
-    let ours = std::env::var_os(MARK_VAR).is_some();
-    if active && std::env::var_os(COMPOSITING_VAR).is_none() {
-        std::env::set_var(COMPOSITING_VAR, "1");
-        std::env::set_var(MARK_VAR, "1");
-    } else if !active && ours {
-        std::env::remove_var(COMPOSITING_VAR);
-        std::env::remove_var(MARK_VAR);
+    let unclean = app_dir.map_or(0, super::session_marker::peek);
+    let _ = ACTIVE.set(needed(unclean));
+    let value = std::env::var(COMPOSITING_VAR).ok();
+    let mark = std::env::var(MARK_VAR).ok();
+    match switch_env(value.as_deref(), mark.as_deref(), compositing_needed(unclean)) {
+        Switch::Set => {
+            std::env::set_var(COMPOSITING_VAR, "1");
+            std::env::set_var(MARK_VAR, "1");
+        }
+        Switch::Clear => {
+            std::env::remove_var(COMPOSITING_VAR);
+            std::env::remove_var(MARK_VAR);
+        }
+        Switch::Untouched | Switch::User => {}
     }
 }
 

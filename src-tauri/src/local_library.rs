@@ -747,7 +747,7 @@ pub async fn load_matches(pool: &SqlitePool, keys: &[String]) -> Result<HashMap<
              FROM local_library_matches WHERE series_key IN ({})",
             placeholders
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
         for key in chunk {
             query = query.bind(key);
         }

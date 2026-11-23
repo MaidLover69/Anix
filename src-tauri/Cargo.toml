@@ -24,7 +24,7 @@ serde_json = "1.0"
 tokio = { version = "1.38", features = ["full"] }
 # The TLS backend comes from this crate's `native-tls` (default) or `rustls` feature.
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "brotli", "charset", "http2", "system-proxy"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 moka = { version = "0.12", features = ["future"] }
 regex = "1.10"
 once_cell = "1.19"

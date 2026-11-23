@@ -431,7 +431,7 @@ pub async fn merge_stand_in_ids(pool: &SqlitePool) -> Result<(), AppError> {
 async fn merge_stand_ins(conn: &mut SqliteConnection) -> Result<(), AppError> {
     // The stand-in formula of `catalogue::ids::synthetic_id`, in SQL. A new or changed mapping
     // gets merged_at = 0, which marks it as not copied yet.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO catalogue_merged_ids (stand_in, anilist_id, merged_at)
         SELECT -((CASE site WHEN 'mal' THEN 1 WHEN 'kitsu' THEN 2 ELSE 3 END) * {span} + ext_id), anilist_id, 0
@@ -441,7 +441,7 @@ async fn merge_stand_ins(conn: &mut SqliteConnection) -> Result<(), AppError> {
         WHERE catalogue_merged_ids.anilist_id <> excluded.anilist_id
         "#,
         span = crate::catalogue::ids::SITE_SPAN
-    ))
+    )))
     .execute(&mut *conn)
     .await?;
 
@@ -467,7 +467,7 @@ async fn merge_stand_ins(conn: &mut SqliteConnection) -> Result<(), AppError> {
     .await?;
 
     for (table, key) in ANIME_KEYED_TABLES {
-        let columns: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table})"))
+        let columns: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
             .fetch_all(&mut *conn)
             .await?
             .iter()
@@ -489,12 +489,12 @@ async fn merge_stand_ins(conn: &mut SqliteConnection) -> Result<(), AppError> {
         } else {
             ""
         };
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT OR IGNORE INTO {table} ({}) SELECT {} FROM {table} AS t \
              JOIN catalogue_merged_ids AS m ON t.{key} = m.stand_in WHERE m.merged_at = 0{link_check}",
             columns.join(", "),
             values.join(", ")
-        ))
+        )))
         .execute(&mut *conn)
         .await?;
     }
@@ -511,7 +511,7 @@ async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppErr
         .await?;
 
     if info_rows.is_empty() {
-        sqlx::query(&watch_history_ddl("watch_history"))
+        sqlx::query(sqlx::AssertSqlSafe(watch_history_ddl("watch_history")))
             .execute(&mut *conn)
             .await?;
         return Ok(());
@@ -537,10 +537,10 @@ async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppErr
         // than guess at their meaning.
         let parked = format!("watch_history_unrecognized_{}", current_unix_millis());
         warn!("watch_history has an unknown layout; keeping it as {}", parked);
-        sqlx::query(&format!("ALTER TABLE watch_history RENAME TO {}", parked))
+        sqlx::query(sqlx::AssertSqlSafe(format!("ALTER TABLE watch_history RENAME TO {}", parked)))
             .execute(&mut *conn)
             .await?;
-        sqlx::query(&watch_history_ddl("watch_history"))
+        sqlx::query(sqlx::AssertSqlSafe(watch_history_ddl("watch_history")))
             .execute(&mut *conn)
             .await?;
         return Ok(());
@@ -586,7 +586,7 @@ async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppErr
     sqlx::query("DROP TABLE IF EXISTS watch_history_migrating")
         .execute(&mut *conn)
         .await?;
-    sqlx::query(&watch_history_ddl("watch_history_migrating"))
+    sqlx::query(sqlx::AssertSqlSafe(watch_history_ddl("watch_history_migrating")))
         .execute(&mut *conn)
         .await?;
 
@@ -614,7 +614,7 @@ async fn migrate_watch_history(conn: &mut SqliteConnection) -> Result<(), AppErr
         cover = or_null("cover"),
         completed = completed,
     );
-    sqlx::query(&copy).execute(&mut *conn).await?;
+    sqlx::query(sqlx::AssertSqlSafe(copy.clone())).execute(&mut *conn).await?;
 
     let new_count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM watch_history_migrating")
         .fetch_one(&mut *conn)
@@ -731,7 +731,7 @@ async fn history_entries(pool: &SqlitePool, limit: i64) -> Result<Vec<HistoryEnt
         t = WATCHED_THRESHOLD_PERCENT
     );
 
-    let rows = sqlx::query(&sql).bind(limit).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).bind(limit).fetch_all(pool).await?;
     Ok(rows.into_iter().map(map_history_row).collect())
 }
 
@@ -1272,7 +1272,7 @@ async fn migrate_download_languages(conn: &mut SqliteConnection) -> Result<(), A
     for column in ["audio_lang", "sub_lang"] {
         if !columns.iter().any(|c| c == column) {
             // The name is one of the two constants above.
-            sqlx::query(&format!("ALTER TABLE downloads ADD COLUMN {} TEXT", column))
+            sqlx::query(sqlx::AssertSqlSafe(format!("ALTER TABLE downloads ADD COLUMN {} TEXT", column)))
                 .execute(&mut *conn)
                 .await?;
         }
@@ -1381,7 +1381,7 @@ pub async fn claim_next_queued_download(
         DOWNLOAD_COLUMNS
     );
 
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
         .bind(current_unix_millis())
         .fetch_optional(pool)
         .await?;
@@ -1436,7 +1436,7 @@ pub async fn get_all_downloads(pool: &SqlitePool) -> Result<Vec<DownloadRecord>,
         "SELECT {} FROM downloads ORDER BY updated_at DESC",
         DOWNLOAD_COLUMNS
     );
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).fetch_all(pool).await?;
 
     Ok(rows.into_iter().map(map_download_row).collect())
 }
@@ -1455,7 +1455,7 @@ pub async fn get_download_by_id(
     id: &str,
 ) -> Result<Option<DownloadRecord>, AppError> {
     let sql = format!("SELECT {} FROM downloads WHERE id = ?1", DOWNLOAD_COLUMNS);
-    let row = sqlx::query(&sql).bind(id).fetch_optional(pool).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql.clone())).bind(id).fetch_optional(pool).await?;
 
     Ok(row.map(map_download_row))
 }

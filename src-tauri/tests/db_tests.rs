@@ -89,7 +89,7 @@ fn history(anilist_id: i32, episode: f64, position_ms: i64, duration_ms: i64, up
 }
 
 async fn primary_key_columns(pool: &SqlitePool, table: &str) -> Vec<String> {
-    let mut key: Vec<(i64, String)> = sqlx::query(&format!("PRAGMA table_info({})", table))
+    let mut key: Vec<(i64, String)> = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table)))
         .fetch_all(pool)
         .await
         .expect("table_info")
@@ -102,7 +102,7 @@ async fn primary_key_columns(pool: &SqlitePool, table: &str) -> Vec<String> {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query(sql).fetch_one(pool).await.expect("count").get::<i64, _>(0)
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_one(pool).await.expect("count").get::<i64, _>(0)
 }
 
 // ---------------------------------------------------------------------------------------

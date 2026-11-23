@@ -70,7 +70,7 @@ pub struct Summary {
 // ---- Writing ------------------------------------------------------------------------------
 
 async fn columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>, AppError> {
-    Ok(sqlx::query(&format!("PRAGMA table_info({})", table))
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table)))
         .fetch_all(pool)
         .await?
         .iter()
@@ -94,7 +94,7 @@ async fn dump_table(pool: &SqlitePool, table: &str) -> Result<Value, AppError> {
         pairs.join(", "),
         table
     );
-    let text: String = sqlx::query_scalar(&sql).fetch_one(pool).await?;
+    let text: String = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.clone())).fetch_one(pool).await?;
     serde_json::from_str(&text).map_err(|e| AppError::Parse(format!("{} rows: {}", table, e)))
 }
 
@@ -220,7 +220,7 @@ pub async fn restore(
             return Err(AppError::Parse(format!("The backup's {} is damaged.", table)));
         }
         // Only columns this database has; a missing value takes the column default.
-        let info = sqlx::query(&format!("PRAGMA table_info({})", table)).fetch_all(&mut *tx).await?;
+        let info = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table))).fetch_all(&mut *tx).await?;
         let cols: Vec<String> = info.iter().map(|r| r.get::<String, _>("name")).collect();
         let keys: Vec<String> =
             info.iter().filter(|r| r.get::<i64, _>("pk") > 0).map(|r| quoted(&r.get::<String, _>("name"))).collect();
@@ -262,7 +262,7 @@ pub async fn restore(
             keys.join(", "),
             action
         );
-        sqlx::query(&sql).bind(rows.to_string()).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.clone())).bind(rows.to_string()).execute(&mut *tx).await?;
     }
     tx.commit().await?;
 

@@ -292,7 +292,7 @@ async fn row_counts(path: &Path) -> Vec<(String, i64)> {
         .collect();
     let mut counts = Vec::new();
     for table in tables {
-        let n: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM \"{}\"", table)).fetch_one(&pool).await.unwrap().get("n");
+        let n: i64 = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) AS n FROM \"{}\"", table))).fetch_one(&pool).await.unwrap().get("n");
         counts.push((table, n));
     }
     pool.close().await;
@@ -324,7 +324,7 @@ async fn the_new_migrations_only_add_to_a_real_1_4_database() {
         let has = |table: &'static str, column: &'static str| {
             let pool = pool.clone();
             async move {
-                sqlx::query(&format!("PRAGMA table_info({})", table))
+                sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({})", table)))
                     .fetch_all(&pool)
                     .await
                     .unwrap()

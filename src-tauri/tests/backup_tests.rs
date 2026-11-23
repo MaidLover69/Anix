@@ -44,7 +44,7 @@ impl Drop for Profile {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", table)).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {}", table))).fetch_one(pool).await.unwrap()
 }
 
 async fn filled() -> Profile {

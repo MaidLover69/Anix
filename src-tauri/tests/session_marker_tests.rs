@@ -206,3 +206,21 @@ fn compositing_switch_follows_the_crash_count_and_ownership() {
         assert_eq!(sw(n, value, mark), expected, "{n} {value:?} {mark:?}");
     }
 }
+
+#[test]
+fn a_non_utf8_user_value_is_read_as_the_users_and_left_alone() {
+    use anix_lib::system::hwaccel::{dmabuf_env, env_text, DmabufEnv};
+    use safe_mode::{switch_env, Switch};
+    use std::os::unix::ffi::OsStrExt;
+    // Arrange
+    let raw = std::ffi::OsStr::from_bytes(b"\xff");
+
+    // Act
+    let text = env_text(Some(raw));
+
+    // Assert
+    assert!(text.as_deref().is_some_and(|t| t != "1"));
+    assert_eq!(switch_env(text.as_deref(), None, true), Switch::User);
+    assert_eq!(dmabuf_env(text.as_deref(), None, false), DmabufEnv::User);
+    assert_eq!(env_text(None), None);
+}

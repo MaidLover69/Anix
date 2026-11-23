@@ -25,6 +25,17 @@ const DMABUF_VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
 /// refused embedded mpv after "Restart now".
 const DMABUF_MARK: &str = "ANIX_DMABUF_SET_BY_APP";
 
+/// An environment value as text. A non-UTF-8 value turns lossy, so it is never "1" and counts as
+/// the user's own (`var().ok()` read it as unset and let Anix overwrite it).
+pub fn env_text(value: Option<&std::ffi::OsStr>) -> Option<String> {
+    value.map(|v| v.to_string_lossy().into_owned())
+}
+
+/// [`env_text`] of the variable `name`.
+pub fn env_lossy(name: &str) -> Option<String> {
+    env_text(std::env::var_os(name).as_deref())
+}
+
 /// What `main` does with `WEBKIT_DISABLE_DMABUF_RENDERER` before WebKit starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmabufEnv {
@@ -56,8 +67,8 @@ pub fn dmabuf_env(value: Option<&str>, mark: Option<&str>, keep_on: bool) -> Dma
 
 /// The user turned WebKit's DMA-BUF renderer off themselves, which embedded mpv cannot run with.
 pub fn dmabuf_turned_off_by_user() -> bool {
-    let value = std::env::var(DMABUF_VAR).ok();
-    let mark = std::env::var(DMABUF_MARK).ok();
+    let value = env_lossy(DMABUF_VAR);
+    let mark = env_lossy(DMABUF_MARK);
     dmabuf_off_by_user(value.as_deref(), mark.as_deref())
 }
 
@@ -156,13 +167,13 @@ pub fn dmabuf_forced_by_app() -> bool {
 /// on) and without OpenGL ES (see [`renderer_plan`]).
 pub fn apply_dmabuf_workaround(wants_mpv: bool, fast_drawing: bool) {
     let (keep_on, force, by_safe_mode) = plan(super::safe_mode::active(), Gpu::detect(), wants_mpv, fast_drawing);
-    let value = std::env::var(DMABUF_VAR).ok();
-    let mark = std::env::var(DMABUF_MARK).ok();
+    let value = env_lossy(DMABUF_VAR);
+    let mark = env_lossy(DMABUF_MARK);
     let dmabuf = dmabuf_env(value.as_deref(), mark.as_deref(), keep_on);
     // A user who set the off switch themselves gets no forcing either.
     let force = force && dmabuf != DmabufEnv::User;
-    let forced = std::env::var(FORCE_VAR).ok();
-    let forced_mark = std::env::var(FORCE_MARK).ok();
+    let forced = env_lossy(FORCE_VAR);
+    let forced_mark = env_lossy(FORCE_MARK);
     match force_env(forced.as_deref(), forced_mark.as_deref(), force) {
         ForceEnv::Set => {
             std::env::set_var(FORCE_VAR, "1");
@@ -560,7 +571,7 @@ pub async fn report() -> HardwareReport {
     let wayland_display = env("WAYLAND_DISPLAY");
     let x11_display = env("DISPLAY");
     let xdg_session_type = env("XDG_SESSION_TYPE");
-    let dmabuf_value = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").ok();
+    let dmabuf_value = env_lossy(DMABUF_VAR);
     let render_node = first_render_node();
     let mut report = HardwareReport {
         session: session_kind(env("GDK_BACKEND").as_deref(), wayland_display.as_deref(), xdg_session_type.as_deref(), x11_display.as_deref()).to_string(),

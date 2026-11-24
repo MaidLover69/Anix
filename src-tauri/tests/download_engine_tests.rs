@@ -267,7 +267,7 @@ async fn a_host_that_answers_429_above_three_connections_ends_at_three_or_fewer(
     assert_eq!(report.fetched, 60, "429 is retried, not fatal");
     let host = host_key(&urls[0]).expect("host");
     assert!(limits.limit(&host) <= 3, "limit stayed at {}", limits.limit(&host));
-    assert!(limits.ceiling(&host).map_or(false, |c| c <= 3), "ceiling {:?}", limits.ceiling(&host));
+    assert!(limits.ceiling(&host).is_some_and(|c| c <= 3), "ceiling {:?}", limits.ceiling(&host));
 }
 
 #[tokio::test]
@@ -424,7 +424,7 @@ fn encrypted_segments_are_checked_by_size_and_content_type_only() {
     let dir = TempDir::new("encrypted-verify");
     let path = dir.0.join("seg0.ts");
     std::fs::write(&path, &ciphertext).unwrap();
-    assert!(verify_files_before_mux(&[path.clone()], &[true]).is_ok());
+    assert!(verify_files_before_mux(std::slice::from_ref(&path), &[true]).is_ok());
     assert!(verify_files_before_mux(&[path], &[false]).is_err(), "unencrypted segments still need video bytes");
 }
 

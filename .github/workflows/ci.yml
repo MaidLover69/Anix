@@ -106,7 +106,7 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Clippy (warnings are errors)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --keep-going -- -D warnings
 
       - name: Run Backend Unit & Integration Tests
         run: cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture

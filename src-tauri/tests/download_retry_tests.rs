@@ -343,7 +343,7 @@ async fn a_lookup_that_fails_once_then_succeeds_completes_without_a_manual_retry
     );
     let tmp = TempDir::new("lookup");
     let rec = record("retry-lookup", "sub");
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     let done = finished(&pool, &rec.id).await;
 
@@ -361,7 +361,7 @@ async fn a_failing_stream_is_replaced_by_another_stream_of_the_same_extension() 
     let x = FakeExtension::new("x", false, vec![Ok(streams)]);
     let tmp = TempDir::new("same-extension");
     let rec = record("retry-stream", "sub");
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     let done = finished(&pool, &rec.id).await;
 
@@ -406,7 +406,7 @@ async fn a_failed_player_stream_is_followed_by_another_stream_from_the_extension
     let tmp = TempDir::new("player");
     let rec = record("retry-player", "sub");
     downloads::queue_with_source(&rec.id, DownloadSource { url: player, ..DownloadSource::default() });
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     let done = finished(&pool, &rec.id).await;
 
@@ -426,7 +426,7 @@ async fn a_local_failure_is_not_tried_again() {
     let blocked = tmp.path().join("not-a-folder");
     std::fs::write(&blocked, b"x").unwrap();
     let rec = record("retry-local", "sub");
-    let pool = queue(&rec, &[x.clone()], &blocked).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), &blocked).await;
 
     let done = finished(&pool, &rec.id).await;
 
@@ -447,7 +447,7 @@ async fn cancelling_during_the_wait_stops_the_download_with_no_further_request()
     );
     let tmp = TempDir::new("cancel");
     let rec = record("retry-cancel", "sub");
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     // Waits for the note that a next try is coming, then cancels at once.
     let start = Instant::now();
@@ -483,7 +483,7 @@ async fn when_every_try_fails_the_row_fails_once_with_the_last_message() {
     let x = FakeExtension::new("x", false, vec![Ok(streams)]);
     let tmp = TempDir::new("all-fail");
     let rec = record("retry-all", "sub");
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     let done = finished(&pool, &rec.id).await;
 
@@ -523,7 +523,7 @@ async fn the_saved_part_of_one_stream_is_never_joined_with_another_stream() {
     );
     let tmp = TempDir::new("no-join");
     let rec = record("retry-join", "sub");
-    let pool = queue(&rec, &[x.clone()], tmp.path()).await;
+    let pool = queue(&rec, std::slice::from_ref(&x), tmp.path()).await;
 
     let done = finished(&pool, &rec.id).await;
 

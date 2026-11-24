@@ -229,7 +229,7 @@ fn pressure_error(error: &FetchError) -> bool {
 
 /// Three TS packets in a row start with the sync byte, from some offset below one packet.
 fn has_ts_sync(body: &[u8]) -> bool {
-    body.len() >= 188 * 2 + 1 && (0..188).any(|k| body[k] == 0x47 && body.get(k + 188) == Some(&0x47) && body.get(k + 376) == Some(&0x47))
+    body.len() > 188 * 2 && (0..188).any(|k| body[k] == 0x47 && body.get(k + 188) == Some(&0x47) && body.get(k + 376) == Some(&0x47))
 }
 
 /// Ok for the body of one media segment: not empty, as long as announced, not a web page or

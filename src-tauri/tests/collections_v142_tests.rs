@@ -199,7 +199,7 @@ fn the_cover_limit_is_200_mb_by_default_and_follows_the_setting() {
     // Out of range values are held to the allowed range.
     assert_eq!(image_cache::limit_bytes(&json!({ "image_cache_mb": 0 })), image_cache::MIN_LIMIT_MB * MIB);
     assert_eq!(image_cache::limit_bytes(&json!({ "image_cache_mb": 9_999_999 })), image_cache::MAX_LIMIT_MB * MIB);
-    assert!(image_cache::MIN_LIMIT_MB < 200 && 200 < image_cache::MAX_LIMIT_MB);
+    const { assert!(image_cache::MIN_LIMIT_MB < 200 && 200 < image_cache::MAX_LIMIT_MB) };
 }
 
 #[test]

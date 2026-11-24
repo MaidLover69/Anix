@@ -155,7 +155,7 @@ fn compositing_goes_off_only_after_three_unclean_exits_in_a_row() {
         assert!(safe_mode::compositing_needed(n), "{n} crashes turn compositing off");
     }
     assert_eq!(safe_mode::COMPOSITING_STARTS, 3);
-    assert!(safe_mode::COMPOSITING_STARTS > safe_mode::UNCLEAN_STARTS);
+    const { assert!(safe_mode::COMPOSITING_STARTS > safe_mode::UNCLEAN_STARTS) };
 }
 
 #[test]

@@ -8,7 +8,9 @@ Without --webdriver: start, real clicks and keys, stay alive 30 s, quit on SIGTE
 With --webdriver (only where WebKitWebDriver comes from the same WebKit build the AppImage bundles,
 i.e. Ubuntu 22.04): also link the clip as a local episode, play it 30 s through the stream proxy, and
 check a real click and the fullscreen key while it plays, and record how smoothly Home scrolls.
-Fails on an exit, a stopped web process (the app logs "web process stopped"), or leftover processes.
+Then starts it three more times to check safe mode (marker `1 1`, `1 2`, and a normal start) by the
+WebKit switches its web process gets. Fails on an exit, a stopped web process (the app logs "web
+process stopped"), wrong safe-mode switches, or leftover processes.
 Writes <out-dir>/result.json and screenshots; exit code 1 on any failure."""
 import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request
 
@@ -163,6 +165,71 @@ setTimeout(finish, 5000);  // a window that gets no animation frames still answe
 requestAnimationFrame(step);"""
 DIALOGS = "const b=[...document.querySelectorAll('[role=dialog] button')].find(x=>/^\\s*(Keep|Skip|Save|Continue|Done)\\b/.test(x.textContent)); if(b){b.click(); return true} return false"
 
+SAFE_VARS = ("WEBKIT_DISABLE_DMABUF_RENDERER", "ANIX_DMABUF_SET_BY_APP", "WEBKIT_DISABLE_COMPOSITING_MODE", "ANIX_SAFE_MODE_SET")
+# Safe mode as the real app applies it (AGENTS.md › crash handling): (name, marker or None, extra env,
+# the WebKit switches the web process must get, None = must be absent).
+SAFE_CASES = [
+    ("step 1 after 2 crashes", "1 1", {},
+     {"WEBKIT_DISABLE_DMABUF_RENDERER": "1", "ANIX_DMABUF_SET_BY_APP": "1", "WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}),
+    ("step 2 after 3 crashes, the user's own DMA-BUF value", "1 2", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"},
+     {"WEBKIT_DISABLE_DMABUF_RENDERER": "0", "ANIX_DMABUF_SET_BY_APP": None, "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"}),
+    ("normal start clears what safe mode set", None, {"WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"},
+     {"WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}),
+]
+
+
+def safe_mode_starts():
+    """Starts the AppImage once per SAFE_CASES entry and reads the env its web process got: the
+    switches are set in-process before WebKit starts, so only its children show them."""
+    data = os.path.dirname(LOG)
+    os.makedirs(data, exist_ok=True)
+    marker = os.path.join(data, "running.marker")
+    res["safe_mode"] = []
+    for name, mark, extra, want in SAFE_CASES:
+        if mark:
+            open(marker, "w").write(mark)
+        elif os.path.exists(marker):
+            os.remove(marker)
+        env = {k: v for k, v in ENV.items() if k not in SAFE_VARS}
+        env.update(extra)
+        proc = subprocess.Popen([APPIMAGE], env=env, stdout=open(os.path.join(OUT, "safe-mode-stdout.log"), "a"), stderr=subprocess.STDOUT)
+        got, t0 = None, time.time()
+        while got is None and time.time() - t0 < 60:
+            time.sleep(1)
+            for pid, comm in ours():
+                if comm.startswith("WebKitWebProces"):
+                    try:
+                        pairs = [e.split(b"=", 1) for e in open(f"/proc/{pid}/environ", "rb").read().split(b"\0") if b"=" in e]
+                    except OSError:
+                        continue
+                    got = {k.decode(): v.decode(errors="replace") for k, v in pairs if k.decode() in SAFE_VARS}
+                    break
+        if got is None:
+            fail(f"safe mode, {name}: no web process within 60 s")
+        else:
+            time.sleep(5)
+            if not web_process_ok():
+                fail(f"safe mode, {name}: the app or its web process stopped")
+            wrong = {k: got.get(k) for k, v in want.items() if got.get(k) != v}
+            if wrong:
+                fail(f"safe mode, {name}: web process env {wrong}, wanted {({k: want[k] for k in wrong})}")
+        for pid, comm in ours():
+            if comm.startswith("anix"):
+                os.kill(pid, signal.SIGTERM)
+        t1 = time.time()
+        while ours() and time.time() - t1 < 15:
+            time.sleep(0.5)
+        for pid, _ in ours():
+            os.kill(pid, signal.SIGKILL)
+        if proc.poll() is None:
+            proc.kill()
+        # One clean exit ends safe mode: a SIGTERM quit removes the marker.
+        if mark and os.path.exists(marker):
+            fail(f"safe mode, {name}: running.marker still there after a clean quit")
+        res["safe_mode"].append({"case": name, "env": got})
+        print("safe mode:", name, got, flush=True)
+
+
 # The runtime part of the file: a static one needs no libfuse2 on the host.
 needed = sh("sh", "-c", f"readelf -d '{APPIMAGE}' 2>/dev/null | grep NEEDED || true")
 res["runtime_needs_libfuse2"] = "libfuse.so.2" in needed
@@ -280,6 +347,10 @@ finally:
         driver.proc.terminate()
     if app and app.poll() is None:
         app.kill()
+    try:
+        safe_mode_starts()
+    except Exception as e:
+        fail(f"safe mode: {type(e).__name__}: {e}")
     text = log_text()
     shutil.copy(LOG, os.path.join(OUT, "anix.log")) if os.path.exists(LOG) else None
     if "web process stopped" in text:

@@ -9,9 +9,17 @@ A milder safe mode after crashes, and a newer SQLite library.
 - Settings › System says when the DMA-BUF renderer is off because of safe mode.
 - A variable you set yourself is never changed, and a normal start removes only what safe mode set.
 
+### Note for NVIDIA users
+- Safe mode was tested on six distributions (Ubuntu 22.04 and 24.04, Debian 12 and 13, Fedora, Arch) with software drawing, but **not on NVIDIA hardware**.
+- With NVIDIA's own driver, the DMA-BUF renderer is usually off already (unless you use embedded mpv or Fast drawing), so the first safe-mode step changes nothing there. If Anix still does not start cleanly, the next start also turns compositing off.
+- With embedded mpv on NVIDIA, Settings › System shows the NVIDIA tip instead of the note that safe mode turned the renderer off.
+- If Anix keeps crashing on an NVIDIA machine, please open an issue and say which driver you use.
+
 ### Under the hood
 - The database library is now sqlx 0.9.1 with the SQLite bundled by libsqlite3-sys 0.40 (SQLite 3.54.1), which has the fix for RUSTSEC-2026-0459. Existing data is kept as it is; no migration changed.
 - The unused `rsa` crate is no longer in the lock file (RUSTSEC-2023-0071), so the dependency audit runs without exceptions.
+- `cookie` 0.18.3 and `url` 2.5.9 fix two new advisories (RUSTSEC-2026-0594, RUSTSEC-2026-0592).
+- The release smoke test now starts each AppImage in both safe-mode steps and checks which WebKit settings it really uses.
 
 ## 1.4.2
 

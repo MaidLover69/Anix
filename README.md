@@ -164,6 +164,8 @@ From 1.3.0 on, videos play in an embedded mpv player by default (Settings › Pl
 
 - **The window is blank or the video does not show after switching to embedded mpv:** wait 15 seconds. Anix asks whether the player shows correctly and, without an answer, goes back to the web player and restarts by itself. The 15 seconds only count while the Anix window is in front and focused, and a notice in the notification centre says when this happened.
 - **Start once with the web player, whatever the setting says:** run `./Anix_1.4.3_amd64.AppImage --web-player`, or set `ANIX_PLAYER_ENGINE=web` (for example `ANIX_PLAYER_ENGINE=web ./Anix_1.4.3_amd64.AppImage`). Then pick the engine you want in Settings › Playback.
+- **Anix crashed and now starts in safe mode:** after two starts in a row that did not end cleanly, Anix starts with the web player and WebKit's DMA-BUF renderer off; after three or more it also turns compositing off. One clean exit ends safe mode. A value you set yourself in `WEBKIT_DISABLE_DMABUF_RENDERER` or `WEBKIT_DISABLE_COMPOSITING_MODE` is never changed.
+- **NVIDIA:** safe mode in 1.4.3 has not been tested on NVIDIA hardware yet. With NVIDIA's own driver the DMA-BUF renderer is usually off already, so only the second safe-mode step (compositing off) changes something there. If Anix keeps crashing on an NVIDIA machine, please open an issue and say which driver you use.
 - **Black picture with sound:** set Settings › Playback › Hardware decoding to *Always copy-back* (or *Off*). *Automatic* already uses copy-back unless a hidden self-test passed on your machine; Settings › System › Hardware video decoding shows its result.
 
 ---

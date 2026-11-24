@@ -8,7 +8,7 @@ Without --webdriver: start, real clicks and keys, stay alive 30 s, quit on SIGTE
 With --webdriver (only where WebKitWebDriver comes from the same WebKit build the AppImage bundles,
 i.e. Ubuntu 22.04): also link the clip as a local episode, play it 30 s through the stream proxy, and
 check a real click and the fullscreen key while it plays, and record how smoothly Home scrolls.
-Then starts it five more times to check safe mode (markers `1 1`, `1 2`, user values, a normal start) by the
+Then starts it four more times to check safe mode (markers `1 1`, `1 2`, a user value, a normal start) by the
 WebKit switches its web process gets. Fails on an exit, a stopped web process (the app logs "web
 process stopped"), wrong safe-mode switches, or leftover processes.
 Writes <out-dir>/result.json and screenshots; exit code 1 on any failure."""
@@ -170,17 +170,14 @@ SAFE_VARS = ("WEBKIT_DISABLE_DMABUF_RENDERER", "ANIX_DMABUF_SET_BY_APP", "WEBKIT
 # the WebKit switches the web process must get, None = must be absent).
 SAFE_CASES = [
     ("step 1 after 2 crashes", "1 1", {},
-     {"WEBKIT_DISABLE_DMABUF_RENDERER": "1", "ANIX_DMABUF_SET_BY_APP": "1", "WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}, False),
+     {"WEBKIT_DISABLE_DMABUF_RENDERER": "1", "ANIX_DMABUF_SET_BY_APP": "1", "WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}),
     ("step 2 after 3 crashes", "1 2", {},
-     {"WEBKIT_DISABLE_DMABUF_RENDERER": "1", "ANIX_DMABUF_SET_BY_APP": "1", "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"}, False),
-    ("step 1, the user's own DMA-BUF value", "1 1", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"},
-     {"WEBKIT_DISABLE_DMABUF_RENDERER": "0", "ANIX_DMABUF_SET_BY_APP": None, "WEBKIT_DISABLE_COMPOSITING_MODE": None}, False),
+     {"WEBKIT_DISABLE_DMABUF_RENDERER": "1", "ANIX_DMABUF_SET_BY_APP": "1", "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"}),
+    # The user's own off value. Not "0": forcing the renderer on fails where the base has no GLES.
+    ("step 2, the user's own DMA-BUF value", "1 2", {"WEBKIT_DISABLE_DMABUF_RENDERER": "yes"},
+     {"WEBKIT_DISABLE_DMABUF_RENDERER": "yes", "ANIX_DMABUF_SET_BY_APP": None, "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"}),
     ("normal start clears what safe mode set", None, {"WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"},
-     {"WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}, False),
-    # Recorded only: the user forces the DMA-BUF renderer on and safe mode turns compositing off.
-    # rc2 lost the web process here on Ubuntu 24.04 and Debian 12/13; safe mode never sets this itself.
-    ("step 2, the user's own DMA-BUF value", "1 2", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"},
-     {"WEBKIT_DISABLE_DMABUF_RENDERER": "0", "ANIX_DMABUF_SET_BY_APP": None, "WEBKIT_DISABLE_COMPOSITING_MODE": "1", "ANIX_SAFE_MODE_SET": "1"}, True),
+     {"WEBKIT_DISABLE_COMPOSITING_MODE": None, "ANIX_SAFE_MODE_SET": None}),
 ]
 
 
@@ -191,9 +188,7 @@ def safe_mode_starts():
     os.makedirs(data, exist_ok=True)
     marker = os.path.join(data, "running.marker")
     res["safe_mode"] = []
-    for name, mark, extra, want, informational in SAFE_CASES:
-        notes = []
-        bad = notes.append if informational else (lambda m: fail(m))
+    for name, mark, extra, want in SAFE_CASES:
         if mark:
             open(marker, "w").write(mark)
         elif os.path.exists(marker):
@@ -213,17 +208,17 @@ def safe_mode_starts():
                     got = {k.decode(): v.decode(errors="replace") for k, v in pairs if k.decode() in SAFE_VARS}
                     break
         if got is None:
-            bad(f"safe mode, {name}: no web process within 60 s")
+            fail(f"safe mode, {name}: no web process within 60 s")
         else:
             time.sleep(5)
             if not web_process_ok():
-                bad(f"safe mode, {name}: the app or its web process stopped")
+                fail(f"safe mode, {name}: the app or its web process stopped")
                 if os.environ.get("GITHUB_ACTIONS"):  # what the app printed last, readable without signing in
                     for line in open(os.path.join(OUT, "safe-mode-stdout.log"), errors="replace").read().splitlines()[-8:]:
                         print("::notice::safe mode app: " + line[:300].replace("%", "%25").replace("\r", "%0D"), flush=True)
             wrong = {k: got.get(k) for k, v in want.items() if got.get(k) != v}
             if wrong:
-                bad(f"safe mode, {name}: web process env {wrong}, wanted {({k: want[k] for k in wrong})}")
+                fail(f"safe mode, {name}: web process env {wrong}, wanted {({k: want[k] for k in wrong})}")
         for pid, comm in ours():
             if comm.startswith("anix"):
                 try:
@@ -242,10 +237,8 @@ def safe_mode_starts():
             proc.kill()
         # One clean exit ends safe mode: a SIGTERM quit removes the marker.
         if mark and os.path.exists(marker):
-            bad(f"safe mode, {name}: running.marker still there after a clean quit")
-        res["safe_mode"].append({"case": name, "env": got, "notes": notes})
-        if notes and os.environ.get("GITHUB_ACTIONS"):
-            print(f"::notice::safe mode, {name} (recorded only): {notes}", flush=True)
+            fail(f"safe mode, {name}: running.marker still there after a clean quit")
+        res["safe_mode"].append({"case": name, "env": got})
         print("safe mode:", name, got, flush=True)
 
 
